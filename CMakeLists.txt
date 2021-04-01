@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(Seastar REQUIRED)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts")
+
 # enable LTO/LTCG
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message("lto enabled in release build")
@@ -12,7 +14,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 else()
     message("address sanitizer enabled in debug build")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=leak")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
 endif()
 
 add_executable(seastar_playground main.cpp)
