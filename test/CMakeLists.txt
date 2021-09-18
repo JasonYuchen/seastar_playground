@@ -1,0 +1,11 @@
+project(rafter_test)
+
+set(SOURCES
+    base.cc
+    fragmented_temporary_buffer_test.cc)
+
+add_executable(${PROJECT_NAME} ${SOURCES})
+
+target_link_libraries(${PROJECT_NAME}
+    PUBLIC Seastar::seastar
+    PUBLIC gtest)

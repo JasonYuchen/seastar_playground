@@ -170,12 +170,12 @@ class segment {
   };
   segment() {
     file_ = seastar::open_file_dma(path_.string(), seastar::open_flags::create | seastar::open_flags::dsync | seastar::open_flags::rw);
+
     out_ = seastar::make_file_output_stream(file_);
-    header_.data = seastar::temporary_buffer<char>::aligned(file_.memory_dma_alignment(), header::HEADER_SIZE);
+    co_await header_.allocate(file_).set_term(0).set_vote(0).fill_checksum(0).dump_to(file_);
     header_.set_term(0);
     header_.set_vote(0);
     header_.fill_checksum(0);
-    file_.dma_write(0, header_.data.share());
     co_await out_.write(header_.data.share());
     co_await out_.flush();
   }
@@ -195,6 +195,9 @@ class segment {
     static constexpr uint64_t CHECKSUM_TYPE = 36;
     static constexpr uint64_t CHECKSUM = 40;
     header() = default;
+    header& allocate(seastar::file& file) {
+      data = seastar::temporary_buffer<char>::aligned(file_.memory_dma_alignment(), header::HEADER_SIZE);
+    }
     uint64_t term() const noexcept {
       return read_le<uint64_t>(data.get() + TERM);
     }
@@ -215,6 +218,9 @@ class segment {
       uint32_t checksum = 0; // calculate checksum
       write_le(checksum, data.get_write() + CHECKSUM);
       return *this;
+    }
+    seastar::future<> dump_to(seastar::file& file) {
+      co_return co_await file.dma_write(0, data.share());
     }
 
     seastar::temporary_buffer<char> data;
