@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(Seastar REQUIRED)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts -Wall -Werror")
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -21,7 +21,6 @@ add_subdirectory(3rd)
 add_subdirectory(test)
 
 set(SOURCES
-    main.cpp
     util/fragmented_temporary_buffer.cc)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
