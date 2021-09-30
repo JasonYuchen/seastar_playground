@@ -1,0 +1,8 @@
+BasedOnStyle: Google
+IndentWidth: 2
+Language: Cpp
+PointerAlignment: Left
+ColumnLimit: 80
+AlignEscapedNewlines: Right
+AllowShortLambdasOnASingleLine: All
+BreakConstructorInitializers: BeforeComma
