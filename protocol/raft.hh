@@ -6,8 +6,11 @@
 
 #include <stdint.h>
 
-#include <seastar/core/shared_ptr.hh>
+#include <span>
 #include <string>
+#include <vector>
+
+#include <seastar/core/shared_ptr.hh>
 
 namespace rafter::protocol {
 
@@ -140,6 +143,7 @@ struct log_entry {
 
 using log_entry_ptr = seastar::lw_shared_ptr<log_entry>;
 using log_entry_vector = std::vector<log_entry_ptr>;
+using log_entry_span = std::span<log_entry_ptr>;
 
 struct hard_state {
   uint64_t term = log_id::invalid_term;
@@ -179,6 +183,8 @@ struct hint {
   uint64_t high = 0;
 };
 
+using hint_vector = std::vector<hint>;
+
 struct message {
   message_type type = message_type::noop;
   uint64_t cluster = group_id::invalid_cluster;
@@ -204,6 +210,7 @@ struct message {
 };
 
 using message_ptr = seastar::lw_shared_ptr<message>;
+using message_vector = std::vector<message_ptr>;
 
 struct message_batch {
   uint64_t deployment_id = 0;
@@ -252,7 +259,9 @@ struct ready_to_read {
   struct hint context;
 };
 
-// UpdateCommit is used to describe how to commit the Update instance to
+using ready_to_read_vector = std::vector<ready_to_read>;
+
+// update_commit is used to describe how to commit the update instance to
 // progress the state of Raft.
 struct update_commit {
   // The last index known to be pushed to rsm for execution.
@@ -264,7 +273,7 @@ struct update_commit {
   uint64_t ready_to_read = log_id::invalid_index;
 };
 
-// Update is a collection of state, entries and messages that are expected to be
+// update is a collection of state, entries and messages that are expected to be
 // processed by Raft's upper layer to progress the Raft node modelled as a state
 // machine.
 struct update {
@@ -275,7 +284,37 @@ struct update {
   // Whether CommittedEntries can be applied without waiting for the Update
   // to be persisted to disk.
   bool fast_apply = false;
+  // entries_to_save are entries waiting to be stored onto persistent storage.
+  log_entry_vector entries_to_save;
+  // committed_entries are entries already committed in Raft and ready to be
+  // applied by rsm.
+  log_entry_vector committed_entries;
+  // dropped_entries is a list of entries dropped when no leader is available.
+  log_entry_vector dropped_entries;
+  // Whether there are more committed entries ready to be applied.
+  bool has_more_committed_entries = false;
+  // snapshot is the metadata of the snapshot ready to be applied.
+  snapshot_ptr snapshot;
+  // ready_to_reads provides a list of ReadIndex requests ready for local read.
+  ready_to_read_vector ready_to_reads;
+  // messages is a collection of outgoing messages to be sent to remote nodes.
+  // As stated above, replication messages can be immediately sent, all other
+  // messages must be sent after the persistent state and entries are saved
+  // onto persistent storage.
+  message_vector messages;
+  // last_applied is the actual last applied index reported by the rsm.
+  uint64_t LastApplied = log_id::invalid_index;
+  // update_commit contains info on how the Update instance can be committed
+  // to actually progress the state of Raft.
+  struct update_commit update_commit;
+  // dropped_read_indexes is a list of read index requests dropped when no
+  // leader is available.
+  hint_vector dropped_read_indexes;
 
+  bool has_update() const noexcept;
+  void validate() const;
+  void set_fast_apply() const noexcept;
+  void set_update_commit() const noexcept;
 };
 
 }  // namespace rafter::protocol

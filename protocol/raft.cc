@@ -93,4 +93,12 @@ const char* name(enum checksum_type type) {
   return types[static_cast<uint8_t>(type)];
 }
 
+bool log_entry::is_proposal() const noexcept {
+  return type != entry_type::config_change;
+}
+
+bool log_entry::is_config_change() const noexcept {
+  return type == entry_type::config_change;
+}
+
 }  // namespace rafter::protocol
