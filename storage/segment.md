@@ -2,7 +2,8 @@
 
 ## overall design
 
-The storage layer of the Raft protocol should persist the metadata and the log entries. Rafter uses the same design as the dragonboat that the log entries are kept in both memory and the disk.
+The storage layer of the Raft protocol should persist the metadata and the log entries. Rafter uses the same design as
+the dragonboat that the log entries are kept in both memory and the disk.
 
 TODO: illustrate the in_memory part
 
@@ -23,16 +24,42 @@ TODO: illustrate the snapshot organization
            marker first                                  last
 ```
 
-
 ## in-memory layer
 
 ## on-disk layer
 
-Since the log entries are indexed by consecutive `(term, index)` pairs, the rafter uses segmented log files to serve the Raft protocol with in-memory indexes to accelerate the lookup.
+### why not use KV store?
 
-Each segment contains metadata in header, log entries and an index in the tail. Only one active segment with a prefix `.log_inprogress` is writable and the remaining segments are archived and immutable. The index is a naive offset vector `[(term_1, offset_1), (term_2, offset_2), ...]` since all Raft log entries have consecutive indexes.
+The pattern of the Raft log entries is simple: append and persist, and the log entries are marked with consecutive
+numbers called log index.
 
-The active segment will be archived only when its size exceeds threshold **AND** the commit index surpasses the latest index of the segment, which ensures that the archived segments will not be overwritten. 
+A popular KV store (e.g. RocksDB) is considered too heavy since the Rafter respect the shared-nothing design in Seastar
+and each Raft cluster is handled within one shard. The rich feature set in KV store including concurrency control, 
+transaction, etc will not be used in Rafter.
+
+We design and implement a naive storage layer for Rafter using write ahead log, WAL. The design mainly refers to
+[etcd](), [braft](), [dragonboat]().
+
+### basic design
+
+All entries and hard states coming from the Raft module are serialized and appended to a segment file (WAL) with a
+corresponding in-memory index tracking each entry by its location tuple `(filename, offset)`.
+
+The WAL files are rolling with a threshold in size, a current active file has a prefix as `_inprogress` and all archived
+WAL files are immutable. The name of segment is a monotonic increasing number starting from 0.
+
+Log entry index is designed to be flexible and sparse: 1 index slot tracks 1 or more log entries within a single WAL
+file by recording the following fields:
+
+- start index of consecutive indexes
+- end index of consecutive indexes
+- name of the WAL file
+- offset in this WAL file
+- number of total bytes occupied by these indexes
+
+With this information, we can easily merge several indexes together when necessary.
+
+Log entry index is kept in memory and only rebuilt during crash recovery by replaying all existing segments.
 
 ```text
                      -------------- segment manager --------------
@@ -47,21 +74,17 @@ The active segment will be archived only when its size exceeds threshold **AND**
 memory            |                        |                        |
 ------------------|------------------------|------------------------|-------------
 disk(s)           |                        |                        |
-               00001.log               00056.log           00129.log_inprogress
+               00000.log               00056.log           00129.log_inprogress
              +-----------+           +-----------+            +-----------+
              |           |           |           |            |           |
              +-----------+           +-----------+            +-----------+
-```
 
-The files are organized as follows:
-
-```text
 rafter @ disk0
   |--<cluster_id:020d_node_id:020d>
   |    |--config
-  |    |--<start_index:020d>.log
-  |    |--<start_index:020d>.log
-  |    |--<start_index:020d>.log_inprogress
+  |    |--<seq:020d>.log
+  |    |--<seq:020d>.log
+  |    |--<seq:020d>.log_inprogress
   |    |--...
   |--<cluster_id:020d_node_id:020d>
   |--...
@@ -71,54 +94,50 @@ rafter @ disk1
   |--...
 ```
 
-A segment basically contains header (metadata), payload (entries), index as follows:
+### normal flow
 
-**The basic flow**: 
+- **write**
+  1. append/overwrite uncommitted log entries
+  2. update index
+  3. rolling if exceeds size threshold
+  4. fdatasync
+- **read**
+  1. query the log entry index to find out the locations of the entries
+  2. use locations to fetch the corresponding entries
+- **rolling**
+  1. TODO
 
-1. (optional) append/overwrite uncommitted log entries
-2. update header
-3. (optional) rolling
-4. fdatasync
+### recovery flow
 
-**The recovery flow**:
-
-1. parse active segment from header to index and truncate if necessary
-2. reconciliation to ensure all parts are consistent (e.g. the latest index in header should be equal to the last valid log entry)
-3. (optional) rolling
-4. (optional) fdatasync if any data reconciliation occurs
+1. parse all segments to rebuild logs and indexes
+2. truncate segments if any error occurs during recovery
 
 ```text
              segment
     +-----------------------+
-    | 64bit latest term     |  <-- Raft hard state
-    +-----------------------+
-    | 64bit latest index    |
-    +-----------------------+
-    | 64bit latest vote     |  <-- Raft hard state
-    +-----------------------+
-    | 64bit latest commit   |
-    +-----------------------+
-    | 64bit index offset    |  <-- filled when index is dumped
+    | 64bit length          |  <-- including the checksum
     +-----------------------+
     |  8bit checksum type   |
     +-----------------------+
-    | 32bit header chksum   |
+    | 32bit checksum        |
     +-----------------------+
-    |         ~4KiB         |  <-- reserve for O_DIRECT alignment
+    | bytes update          |  <-- serialized update structure
     +-----------------------+
-    | 64bit log term        |  <-- log entry, Raft hard state
-    | 64bit log index       |
-    |  8bit log type        |
-    |  8bit checksum type   |
-    | 32bit data length     |
-    | 32bit data chksum     |  <-- the checksum of data
-    | 32bit header chksum   |  <-- the checksum of previous fields
-    | bytes data            |
-    +-----------------------+
-    |        ......         |
-    +-----------------------+  <-- exceeds segment size threshold & commit index, archive this and prepare for rolling
-    |         index         |  <-- index is dumped at last
+    |         ....          |
     +-----------------------+
 ```
+
+### possible limitations
+
+1. Currently, each node has its own WAL files, which simplifies the implementation but has some limitations:
+
+   - if there are too many Raft groups, the number of file handlers maybe too large
+   - each WAL needs `fsync`, large number of WAL files introduce large number of `fsync` calls
+
+   In the future, we can have a 1 WAL module per shard scheme (like Seastar's disk scheduler) to reduce the number of 
+   files and make this WAL module multiplexed.
+
+2. The indexes are kept in the memory only, which may consume too much memory, in the future we can dump the indexes
+   into files and load these index files in need.
 
 ## snapshot organization
