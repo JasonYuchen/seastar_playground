@@ -33,12 +33,13 @@ TODO: illustrate the snapshot organization
 The pattern of the Raft log entries is simple: append and persist, and the log entries are marked with consecutive
 numbers called log index.
 
-A popular KV store (e.g. RocksDB) is considered too heavy since the Rafter respect the shared-nothing design in Seastar
-and each Raft cluster is handled within one shard. The rich feature set in KV store including concurrency control, 
-transaction, etc will not be used in Rafter.
+A popular KV store (e.g. RocksDB) is considered too heavy since the pattern is simple and the Rafter respect the
+shared-nothing design in Seastar (each Raft cluster is handled within one shard). The rich feature set in KV store such
+as concurrency control, transaction, etc will not be used in Rafter.
 
 We design and implement a naive storage layer for Rafter using write ahead log, WAL. The design mainly refers to
-[etcd](), [braft](), [dragonboat]().
+[etcd](https://github.com/etcd-io/etcd), [braft](https://github.com/baidu/braft), 
+[dragonboat](https://github.com/lni/dragonboat).
 
 ### basic design
 
@@ -96,21 +97,32 @@ rafter @ disk1
 
 ### normal flow
 
+*CAUTION: though all operations are handled in one thread/shard, there can still be data race among coroutines*
+
 - **write**
-  1. append/overwrite uncommitted log entries
+  1. append log entries, never overwrite
   2. update index
   3. rolling if exceeds size threshold
   4. fdatasync
 - **read**
   1. query the log entry index to find out the locations of the entries
-  2. use locations to fetch the corresponding entries
+  2. the index should block all requests with index < snapshot index even the segment may still exist
+  3. use locations to fetch the corresponding entries
 - **rolling**
-  1. TODO
-
+  1. create new segment
+  2. fdatasync
+- **compaction**
+  1. new snapshot is available, update the snapshot index in the index to block subsequent requests with start index <
+     snapshot index, like a read barrier
+  2. release segments with end index <= snapshot index, the release should start from small index and pause when the 
+     segment is currently being read
+  
 ### recovery flow
 
-1. parse all segments to rebuild logs and indexes
-2. truncate segments if any error occurs during recovery
+1. block all requests as the storage layer is being recovered
+2. parse all segments to rebuild logs and indexes
+3. truncate segments if any error occurs during recovery
+4. compact obsolete segments
 
 ```text
              segment
@@ -125,6 +137,12 @@ rafter @ disk1
     +-----------------------+
     |         ....          |
     +-----------------------+
+    
+only have to persist these fields in update:
+    - group_id
+    - state
+    - entries_to_save
+    - snapshot
 ```
 
 ### possible limitations
@@ -137,7 +155,7 @@ rafter @ disk1
    In the future, we can have a 1 WAL module per shard scheme (like Seastar's disk scheduler) to reduce the number of 
    files and make this WAL module multiplexed.
 
-2. The indexes are kept in the memory only, which may consume too much memory, in the future we can dump the indexes
+2. The indexes are kept in memory only, which may consume too much memory, in the future we can dump the indexes
    into files and load these index files in need.
 
 ## snapshot organization
