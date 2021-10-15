@@ -70,8 +70,6 @@ Log entry index is kept in memory and only rebuilt during crash recovery by repl
              +-----------+                 |                        | 
              |   meta    |                 |                        |
              +-----------+                 |                        |
-             |inmem index|                 |                        |
-             +-----------+                 |                        |
 memory            |                        |                        |
 ------------------|------------------------|------------------------|-------------
 disk(s)           |                        |                        |
@@ -94,6 +92,40 @@ rafter @ disk1
   |--<cluster_id:020d_node_id:020d>
   |--...
 ```
+
+### further considerations
+
+1. **one WAL for one Raft node**
+   - the design and implementation are easier and more straight forward (pro)
+   - indexes of same Raft node can be merged to reduce memory usage (pro)
+   - isolation among Raft nodes, no need to coordinate compaction (pro)
+   - if too many Raft groups are bootstrapped, the number of segments could be huge (con)
+2. **one WAL for one shard** (Seastar use thread-per-shard/core design) with multiple Raft nodes
+   - the total number of segments is small (pro)
+   - have to coordinate Raft nodes since the WAL is shared among all Raft nodes within one shard (con)
+   - the log entries of a Raft node is not consecutive, but so long as we are not frequently accessing the on-disk entries, it should not be an issue (?)
+   - if we restart the system with different number of shards, we need to reshard the existing segments (con)
+   
+   Some notes from commitlog design in ScyllaDB (the flow of replay commitlog):
+   1. list and reshard all existing segments
+   2. replay logs in each new shard
+   3. apply the mutations in target shard using `invoke_on` (i.e. the log replayed in new shard 1 may contain mutations belong to a foreign db in shard 3)
+   4. flush all memtables to disk to make the mutations durable
+   5. delete existing segments
+   see `/main.cc: replaying commit log` and `/db/commitlog/commitlog_replayer.cc: db::commitlog_replayer::recover` for more details
+
+   If Rafter use this way, then we should (changing shards is not allowed for now):
+   1. list and reshard all existing segments
+   2. replay logs in each new shard
+   3. send the Raft entry to target shard to reconstruct segment using `invoke_on`
+   4. trigger snapshot and compaction to retire existing segments
+   5. delete existing segments
+3. **sharding WALs for one shard**, N Raft nodes -> M WALs -> S shards
+   - the total number of segments is small (pro)
+   - have to coordinate (con)
+   - still have to reshard if M WALs changed (con)
+   - no need to reshard if Seastar's shard changed (pro)
+   - maybe too complicated to implement and manage (con)
 
 ### normal flow
 
@@ -154,8 +186,8 @@ only have to persist these fields in update:
 
    In the future, we can have a 1 WAL module per shard scheme (like Seastar's disk scheduler) to reduce the number of 
    files and make this WAL module multiplexed.
-
 2. The indexes are kept in memory only, which may consume too much memory, in the future we can dump the indexes
    into files and load these index files in need.
+3. The segment files are created in need, in the future we can use pre-allocation to reduce the average cost.
 
 ## snapshot organization

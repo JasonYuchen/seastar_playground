@@ -19,6 +19,10 @@ struct group_id {
   inline static constexpr uint64_t invalid_node = 0;
   uint64_t cluster = invalid_cluster;
   uint64_t node = invalid_node;
+  bool valid() const noexcept {
+    return cluster != invalid_cluster && node != invalid_node;
+  }
+  std::strong_ordering operator<=>(const group_id &) const = default;
 };
 
 struct log_id {
