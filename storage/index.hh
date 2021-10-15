@@ -1,0 +1,305 @@
+//
+// Created by jiancheng.cai on 2021/10/13.
+//
+
+#pragma once
+
+#include <stdint.h>
+
+#include <memory>
+#include <span>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "protocol/raft.hh"
+#include "util/util.hh"
+
+namespace rafter::storage {
+
+using protocol::group_id;
+
+class index {
+ public:
+  class entry {
+   public:
+    enum type {
+      normal, state, snapshot
+    };
+    // the raft group of this entry
+    group_id id;
+    // the first included raft log entry index
+    uint64_t start_index = 0;
+    // the last included raft log entry index
+    uint64_t end_index = 0;
+    // the filename of the segment file
+    uint64_t filename = 0;
+    // the offset of the raw data in the segment file
+    uint64_t offset = 0;
+    // the length of the raw data in the segment file
+    uint64_t length = 0;
+    // the type of the raw data
+    enum type type = type::normal;
+
+    bool empty() const noexcept {
+      return filename == 0;
+    }
+
+    bool is_normal() const noexcept {
+      return type == type::normal;
+    }
+
+    bool is_state() const noexcept {
+      return type == type::state;
+    }
+
+    bool is_snapshot() const noexcept {
+      return type == type::snapshot;
+    }
+
+    bool try_merge(entry& e) noexcept {
+      assert(id == e.id);
+      if (end_index + 1 == e.start_index &&
+          offset + length == e.offset &&
+          filename == e.filename &&
+          type == e.type) {
+        end_index = e.end_index;
+        length += e.length;
+        e = entry{};
+        return true;
+      }
+      return false;
+    }
+
+    // return (merged, need_more_merge)
+    std::pair<bool, bool> update(entry& e) noexcept {
+      if (try_merge(e)) {
+        return {true, false};
+      }
+      // overwrite
+      if (start_index == e.start_index) {
+        *this = std::exchange(e, {});
+        return {true, false};
+      }
+      // overwrite and need more merge
+      if (start_index > e.start_index) {
+        *this = std::exchange(e, {});
+        return {true, true};
+      }
+      // partial overwrite
+      if (start_index < e.start_index && e.start_index <= end_index) {
+        end_index = e.start_index - 1;
+      }
+      return {false, false};
+    }
+  };
+
+  index& set_compacted_to(uint64_t compacted_to) noexcept {
+    _compacted_to = std::max(_compacted_to, compacted_to);
+    return *this;
+  }
+
+  size_t size() const noexcept {
+    return _entries.size();
+  }
+
+  bool empty() const noexcept {
+    return _entries.empty();
+  }
+
+  index& append(entry e) {
+    _entries.emplace_back(std::move(e));
+    return *this;
+  }
+
+  index& update(entry e) {
+    if (empty()) {
+      _entries.emplace_back(std::move(e));
+      return *this;
+    }
+    auto last = _entries.back();
+    auto [merged, more] = last.update(e);
+    if (more) {
+      if (size() == 1) {
+        _entries.resize(1, e);
+        return *this;
+      }
+      _entries.pop_back();
+      update(e);
+      return *this;
+    }
+    _entries.back() = last;
+    if (!merged) {
+      _entries.emplace_back(std::move(e));
+    }
+    return *this;
+  }
+
+  // make it private
+  std::pair<uint64_t, bool> binary_search(
+      uint64_t start,
+      uint64_t end,
+      uint64_t raft_index) const noexcept {
+    if (start == end) {
+      if (_entries[start].start_index <= raft_index &&
+          _entries[start].end_index >= raft_index) {
+        return {start, true};
+      }
+      return {0, false};
+    }
+    uint64_t mid = start + (end - start) / 2;
+    if (_entries.front().start_index <= raft_index &&
+        _entries[mid + 1].end_index >= raft_index) {
+      return binary_search(start, mid, raft_index);
+    }
+    return binary_search(mid + 1, end, raft_index);
+  }
+
+  std::span<const entry> query(uint64_t low, uint64_t high) const noexcept {
+    // assert(low <= high)
+    if (_entries.empty()) {
+      return {};
+    }
+    auto [start, found] = binary_search(0, _entries.size(), low);
+    if (!found) {
+      return {};
+    }
+    uint64_t end = start;
+    for (; end < _entries.size(); ++end) {
+      if (high <= _entries[end].start_index) {
+        break;
+      }
+      if (end > start &&
+          _entries[end - 1].end_index + 1 != _entries[end].start_index) {
+        break;
+      }
+    }
+    return {_entries.begin() + start, _entries.begin() + end};
+  }
+
+  bool file_in_use(uint64_t filename) const noexcept {
+    for (auto&& e : _entries) {
+      if (e.filename == filename) {
+        return true;
+      }
+      if (e.filename > filename) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  // return the max filename of obsolete files
+  // any segment files with filename <= max obsolete filename can be deleted
+  uint64_t compaction() {
+    if (empty()) {
+      return UINT64_MAX;
+    }
+    uint64_t max_obsolete = _entries.front().filename - 1;
+    for (auto&& e : _entries) {
+      if (e.end_index <= _compacted_to) {
+        max_obsolete = e.filename;
+        if (!e.is_normal()) {
+          // throw not a regular entry error
+        }
+      }
+    }
+    return max_obsolete;
+  }
+
+  std::vector<uint64_t> remove_obsolete_files(uint64_t max_obsolete_filename) {
+    std::vector<uint64_t> obsolete_files;
+    uint64_t prev_filename = 0;
+    int i = 0;
+    for (; i < size(); ++i) {
+      auto&& e = _entries[i];
+      if (e.filename <= max_obsolete_filename && e.filename != prev_filename) {
+        obsolete_files.emplace_back(e.filename);
+        prev_filename = e.filename;
+      }
+      if (e.filename > max_obsolete_filename) {
+        break;
+      }
+    }
+    if (!obsolete_files.empty()) {
+      std::vector<entry> new_entries{_entries.begin() + i, _entries.end()};
+      _entries.swap(new_entries);
+    }
+    return obsolete_files;
+  }
+
+ private:
+  // entries within (0, _compacted_to) can be compacted
+  uint64_t _compacted_to = 0;
+  std::vector<entry> _entries;
+};
+
+class node_index {
+ public:
+  void clear() noexcept {
+    _snapshot = index::entry{};
+    _state = index::entry{};
+    _index = index{};
+  }
+
+  void update(index::entry entry, index::entry snapshot, index::entry state) {
+    _index.update(entry);
+    if (snapshot.start_index > _snapshot.start_index) {
+      _snapshot = snapshot;
+    }
+    if (!state.empty()) {
+      _state = state;
+    }
+  }
+
+  bool file_in_use(uint64_t filename) {
+    return _snapshot.filename == filename ||
+           _state.filename == filename ||
+           _index.file_in_use(filename);
+  }
+
+  std::span<const index::entry> query(
+      uint64_t low, uint64_t high) const noexcept {
+    return _index.query(low, high);
+  }
+
+  index::entry query_state() const noexcept {
+    return _state;
+  }
+
+  index::entry query_snapshot() const noexcept {
+    return _snapshot;
+  }
+
+  std::vector<uint64_t> compaction() {
+    auto max_obsolete = _index.compaction();
+    if (!_snapshot.empty()) {
+      max_obsolete = std::min(max_obsolete, _snapshot.filename - 1);
+    }
+    if (!_state.empty()) {
+      max_obsolete = std::min(max_obsolete, _state.filename - 1);
+    }
+    if (max_obsolete == 0 || max_obsolete == UINT64_MAX) {
+      return {};
+    }
+    return _index.remove_obsolete_files(max_obsolete);
+  }
+
+ private:
+  group_id _id;
+  index::entry _snapshot;
+  index::entry _state;
+  index _index;
+};
+
+class index_group {
+ public:
+
+ private:
+  std::unordered_map<
+      group_id, std::unique_ptr<node_index>, util::pair_hasher> _indexes;
+  std::unordered_map<
+      group_id, protocol::hard_state, util::pair_hasher> _states;
+};
+
+}  // namespace rafter::storage
