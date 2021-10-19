@@ -236,22 +236,4 @@ seastar::future<> segment::header::deserialize(file& file) {
   // TODO: do some validation
 }
 
-segment_manager::segment_manager(group_id id, filesystem::path data_dir)
-    : _group_id(id), _path(std::move(data_dir)) {
-  // TODO: setup WAL module
-  //  1. validate data_dir
-  //  2. parse existing segments
-  //  3. create active segment
-}
-
-future<> segment_manager::append(protocol::hard_state state,
-                                 std::span<protocol::log_entry_ptr> entries) {
-  auto bytes = co_await _active_segment->append(entries);
-  co_await _active_segment->update_hard_state(state);
-  if (bytes >= _rolling_size) {
-    co_await _active_segment->finalize();
-    // TODO: rolling
-  }
-}
-
 }  // namespace rafter::storage
