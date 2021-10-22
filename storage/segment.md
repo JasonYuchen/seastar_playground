@@ -7,8 +7,6 @@ the dragonboat that the log entries are kept in both memory and the disk.
 
 TODO: illustrate the in_memory part
 
-TODO: illustrate the on_disk part
-
 TODO: illustrate the snapshot organization
 
 ```text
@@ -47,9 +45,9 @@ All entries and hard states coming from the Raft module are serialized and appen
 corresponding in-memory index tracking each entry by its location tuple `(filename, offset)`.
 
 The WAL files are rolling with a threshold in size, a current active file has a prefix as `_inprogress` and all archived
-WAL files are immutable. The name of segment is a monotonic increasing number starting from 0.
+WAL files are immutable. The name of a segment has two parts, its prefix is the shard id and its suffix is a monotonic increasing number starting from 0.
 
-Log entry index is designed to be flexible and sparse: 1 index slot tracks 1 or more log entries within a single WAL
+Log entry index is designed to be flexible and sparse: 1 index slot tracks 1 update (1 or more log entries) within a single WAL
 file by recording the following fields:
 
 - start index of consecutive indexes
@@ -57,8 +55,6 @@ file by recording the following fields:
 - name of the WAL file
 - offset in this WAL file
 - number of total bytes occupied by these indexes
-
-With this information, we can easily merge several indexes together when necessary.
 
 Log entry index is kept in memory and only rebuilt during crash recovery by replaying all existing segments.
 
@@ -81,9 +77,9 @@ disk(s)           |                        |                        |
 rafter @ disk0
   |--<cluster_id:020d_node_id:020d>
   |    |--config
-  |    |--<seq:020d>.log
-  |    |--<seq:020d>.log
-  |    |--<seq:020d>.log_inprogress
+  |    |--<shard:03d seq:020d>.log
+  |    |--<shard:03d seq:020d>.log
+  |    |--<shard:03d seq:020d>.log_inprogress
   |    |--...
   |--<cluster_id:020d_node_id:020d>
   |--...
@@ -95,13 +91,14 @@ rafter @ disk1
 
 ### further considerations
 
-1. **one WAL for one Raft node**
+1. **one WAL per Raft node**
    - the design and implementation are easier and more straight forward (pro)
    - indexes of same Raft node can be merged to reduce memory usage (pro)
    - isolation among Raft nodes, no need to coordinate compaction (pro)
    - if too many Raft groups are bootstrapped, the number of segments could be huge (con)
-2. **one WAL for one shard** (Seastar use thread-per-shard/core design) with multiple Raft nodes
-   - the total number of segments is small (pro)
+   - as the segments number increases, the number of `async` call increases (con)
+2. **one WAL per shard** (Seastar use thread-per-shard/core design) one shard has multiple Raft nodes
+   - the total number of segments is small, equal to the number of shards (pro)
    - have to coordinate Raft nodes since the WAL is shared among all Raft nodes within one shard (con)
    - the log entries of a Raft node is not consecutive, but so long as we are not frequently accessing the on-disk entries, it should not be an issue (?)
    - if we restart the system with different number of shards, we need to reshard the existing segments (con)
@@ -120,7 +117,7 @@ rafter @ disk1
    3. send the Raft entry to target shard to reconstruct segment using `invoke_on`
    4. trigger snapshot and compaction to retire existing segments
    5. delete existing segments
-3. **sharding WALs for one shard**, N Raft nodes -> M WALs -> S shards
+4. **sharding WALs for one shard**, N Raft nodes -> M WALs -> S shards
    - the total number of segments is small (pro)
    - have to coordinate (con)
    - still have to reshard if M WALs changed (con)
@@ -138,15 +135,17 @@ rafter @ disk1
   4. fdatasync
 - **read**
   1. query the log entry index to find out the locations of the entries
-  2. the index should block all requests with index < snapshot index even the segment may still exist
+  2. the index should block all requests with index < snapshot index even the segment may still exist due to lazy garbage collection
   3. use locations to fetch the corresponding entries
+  4. trigger a compaction routine if the start index of this read <= gc start point, like read-triggered compaction 
 - **rolling**
   1. create new segment
   2. fdatasync
 - **compaction**
   1. new snapshot is available, update the snapshot index in the index to block subsequent requests with start index <
      snapshot index, like a read barrier
-  2. release segments with end index <= snapshot index, the release should start from small index and pause when the 
+  2. coordinate all Raft nodes to get a minimal snapshot index as a start point of garbage collection
+  3. release segments with end index <= gc start point, the release should start from small index and pause when the 
      segment is currently being read
   
 ### recovery flow
@@ -155,6 +154,7 @@ rafter @ disk1
 2. parse all segments to rebuild logs and indexes
 3. truncate segments if any error occurs during recovery
 4. compact obsolete segments
+5. ready for service
 
 ```text
              segment
@@ -166,6 +166,9 @@ rafter @ disk1
     | 32bit checksum        |
     +-----------------------+
     | bytes update          |  <-- serialized update structure
+    + +-------------------+ +
+    | |                   | |
+    | +-------------------+ |
     +-----------------------+
     |         ....          |
     +-----------------------+
@@ -179,15 +182,8 @@ only have to persist these fields in update:
 
 ### possible limitations
 
-1. Currently, each node has its own WAL files, which simplifies the implementation but has some limitations:
-
-   - if there are too many Raft groups, the number of file handlers maybe too large
-   - each WAL needs `fsync`, large number of WAL files introduce large number of `fsync` calls
-
-   In the future, we can have a 1 WAL module per shard scheme (like Seastar's disk scheduler) to reduce the number of 
-   files and make this WAL module multiplexed.
-2. The indexes are kept in memory only, which may consume too much memory, in the future we can dump the indexes
+1The indexes are kept in memory only, which may consume too much memory, in the future we can dump the indexes
    into files and load these index files in need.
-3. The segment files are created in need, in the future we can use pre-allocation to reduce the average cost.
+2The segment files are created in need, in the future we can use pre-allocation to reduce the average cost.
 
 ## snapshot organization
