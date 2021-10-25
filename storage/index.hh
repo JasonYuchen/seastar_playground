@@ -99,6 +99,10 @@ class index {
     return *this;
   }
 
+  uint64_t get_compacted_to() const noexcept {
+    return _compacted_to;
+  }
+
   size_t size() const noexcept {
     return _entries.size();
   }
@@ -230,12 +234,13 @@ class index {
 
  private:
   // entries within (0, _compacted_to) can be compacted
-  uint64_t _compacted_to = 0;
+  uint64_t _compacted_to = protocol::log_id::invalid_index;
   std::vector<entry> _entries;
 };
 
 class node_index {
  public:
+  explicit node_index(group_id id) : _id(id) {}
   void clear() noexcept {
     _snapshot = index::entry{};
     _state = index::entry{};
@@ -271,6 +276,10 @@ class node_index {
     return _snapshot;
   }
 
+  uint64_t get_compacted_to() const noexcept {
+    return _index.get_compacted_to();
+  }
+
   std::vector<uint64_t> compaction() {
     auto max_obsolete = _index.compaction();
     if (!_snapshot.empty()) {
@@ -294,12 +303,77 @@ class node_index {
 
 class index_group {
  public:
+  protocol::hard_state get_hard_state(group_id id) {
+    assert(id.valid());
+    return _states[id];
+  }
+
+  index_group& set_hard_state(group_id id, protocol::hard_state state) {
+    assert(id.valid());
+    _states[id] = state;
+    return *this;
+  }
+
+  node_index& get_node_index(group_id id) {
+    assert(id.valid());
+    if (_indexes.contains(id)) {
+      return *_indexes[id];
+    }
+    _indexes[id] = std::make_unique<node_index>(id);
+    return *_indexes[id];
+  }
+
+  std::span<const index::entry> query(
+      group_id id, uint64_t low, uint64_t high) {
+    assert(id.valid());
+    return get_node_index(id).query(low, high);
+  }
+
+  index::entry query_state(group_id id) {
+    assert(id.valid());
+    return get_node_index(id).query_state();
+  }
+
+  index::entry query_snapshot(group_id id) {
+    assert(id.valid());
+    return get_node_index(id).query_snapshot();
+  }
+
+  uint64_t compacted_to(group_id id) {
+    assert(id.valid());
+    return get_node_index(id).get_compacted_to();
+  }
+
+  index_group& set_in_use_filename(group_id id, uint64_t filename) {
+    assert(id.valid());
+    if (!_minimal_in_use_filenames.contains(id)) {
+      _minimal_in_use_filenames[id] = UINT64_MAX;
+    }
+    _minimal_in_use_filenames[id] = filename;
+    return *this;
+  }
+
+  index_group& clear_in_use_filename(group_id id) {
+    assert(id.valid());
+    _minimal_in_use_filenames[id] = UINT64_MAX;
+    return *this;
+  }
+
+  uint64_t minimal_in_use_filename() const noexcept {
+    uint64_t filename = UINT64_MAX;
+    for (const auto& [id, name] : _minimal_in_use_filenames) {
+      assert(id.valid());
+      filename = std::min(filename, name);
+    }
+    return filename;
+  }
 
  private:
   std::unordered_map<
       group_id, std::unique_ptr<node_index>, util::pair_hasher> _indexes;
   std::unordered_map<
       group_id, protocol::hard_state, util::pair_hasher> _states;
+  std::unordered_map<group_id, uint64_t> _minimal_in_use_filenames;
 };
 
 }  // namespace rafter::storage

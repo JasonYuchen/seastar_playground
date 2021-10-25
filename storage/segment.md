@@ -91,6 +91,8 @@ rafter @ disk1
 
 ### further considerations
 
+The snapshot files are always isolated since snapshotting is far less frequent. 
+
 1. **one WAL per Raft node**
    - the design and implementation are easier and more straight forward (pro)
    - indexes of same Raft node can be merged to reduce memory usage (pro)
@@ -127,6 +129,10 @@ rafter @ disk1
 ### normal flow
 
 *CAUTION: though all operations are handled in one thread/shard, there can still be data race among coroutines*
+
+Currently, we only allow one coroutine working as a Raft step engine to access
+the underlying storage engine because the WAL file are shared among all Raft 
+nodes in this shard (need synchronization if we allow more coroutines).
 
 - **write**
   1. append log entries, never overwrite
