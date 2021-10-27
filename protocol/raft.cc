@@ -101,4 +101,13 @@ bool log_entry::is_config_change() const noexcept {
   return type == entry_type::config_change;
 }
 
+bool update::has_update() const noexcept {
+  return snapshot ||
+         !state.is_empty() ||
+         !entries_to_save.empty() ||
+         !committed_entries.empty() ||
+         !messages.empty() ||
+         !ready_to_reads.empty() ||
+         !dropped_entries.empty();
+}
 }  // namespace rafter::protocol

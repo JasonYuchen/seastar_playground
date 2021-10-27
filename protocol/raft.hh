@@ -319,6 +319,7 @@ struct update {
   void validate() const;
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
+  uint64_t estimated_size() const noexcept;
 };
 
 }  // namespace rafter::protocol
