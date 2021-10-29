@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "protocol/raft.hh"
+#include "storage/index.hh"
 #include "util/fragmented_temporary_buffer.hh"
 #include "util/types.hh"
 
@@ -29,26 +30,27 @@ class segment {
  public:
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
-  static segment create(std::filesystem::path filepath);
-  static segment parse(std::filesystem::path filepath);
+  static seastar::future<std::unique_ptr<segment>> open(
+      std::filesystem::path filepath, bool existing = false);
+
 
   uint64_t bytes() const noexcept;
 
-  seastar::future<uint64_t> append(std::span<protocol::log_entry_ptr> entries);
-  seastar::future<> finalize();
+  // return the file length after appending the update
+  seastar::future<uint64_t> append(const protocol::update& update);
+  seastar::future<protocol::update> query(uint64_t offset) const;
   seastar::future<> sync();
+  seastar::future<std::vector<index::entry>> generate_index() const;
 
  private:
   segment() = default;
 
  private:
   // TODO: scheduling group
-  uint64_t _filename;
+  std::filesystem::path _filepath;
   seastar::file _file;
   uint64_t _bytes = 0;
-  bool _archived = false;
-  bool _loaded = false;
-  uint64_t _pos = 0;
+  uint64_t _aligned_pos = 0;
   std::string _tail;
 };
 

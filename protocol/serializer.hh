@@ -14,8 +14,8 @@ template<typename T>
 seastar::future<uint64_t> serialize(const struct update& up, T& out) {
   // TODO
 }
-template<typename T>
-static seastar::future<std::pair<T, uint64_t>> deserialize(T& in) {
+template<typename U, typename T>
+static seastar::future<std::pair<U, uint64_t>> deserialize(T& in) {
   // TODO
 }
 
