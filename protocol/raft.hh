@@ -320,6 +320,8 @@ struct update {
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
   uint64_t estimated_size() const noexcept;
+  uint64_t first_index() const noexcept;
+  uint64_t last_index() const noexcept;
 };
 
 }  // namespace rafter::protocol

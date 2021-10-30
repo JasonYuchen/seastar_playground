@@ -94,4 +94,20 @@ inline constexpr T ntoh(T t) {
   return t;
 }
 
+template <endian::detail::numerical T>
+inline constexpr T htole(T t) {
+  if constexpr (__BYTE_ORDER != __LITTLE_ENDIAN) {
+    return endian::detail::swapImpl<T, sizeof(T)>::swap(t);
+  }
+  return t;
+}
+
+template <endian::detail::numerical T>
+inline constexpr T letoh(T t) {
+  if constexpr (__BYTE_ORDER != __LITTLE_ENDIAN) {
+    return endian::detail::swapImpl<T, sizeof(T)>::swap(t);
+  }
+  return t;
+}
+
 }  // namespace rafter::util

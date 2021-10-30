@@ -29,9 +29,9 @@ class index {
     // the raft group of this entry
     group_id id;
     // the first included raft log entry index
-    uint64_t start_index = 0;
+    uint64_t first_index = 0;
     // the last included raft log entry index
-    uint64_t end_index = 0;
+    uint64_t last_index = 0;
     // the filename of the segment file
     uint64_t filename = 0;
     // the offset of the raw data in the segment file
@@ -59,11 +59,11 @@ class index {
 
     bool try_merge(entry& e) noexcept {
       assert(id == e.id);
-      if (end_index + 1 == e.start_index &&
+      if (last_index + 1 == e.first_index &&
           offset + length == e.offset &&
           filename == e.filename &&
           type == e.type) {
-        end_index = e.end_index;
+        last_index = e.last_index;
         length += e.length;
         e = entry{};
         return true;
@@ -77,18 +77,18 @@ class index {
         return {true, false};
       }
       // overwrite
-      if (start_index == e.start_index) {
+      if (first_index == e.first_index) {
         *this = std::exchange(e, {});
         return {true, false};
       }
       // overwrite and need more merge
-      if (start_index > e.start_index) {
+      if (first_index > e.first_index) {
         *this = std::exchange(e, {});
         return {true, true};
       }
       // partial overwrite
-      if (start_index < e.start_index && e.start_index <= end_index) {
-        end_index = e.start_index - 1;
+      if (first_index < e.first_index && e.first_index <= last_index) {
+        last_index = e.first_index - 1;
       }
       return {false, false};
     }
@@ -145,15 +145,15 @@ class index {
       uint64_t end,
       uint64_t raft_index) const noexcept {
     if (start == end) {
-      if (_entries[start].start_index <= raft_index &&
-          _entries[start].end_index >= raft_index) {
+      if (_entries[start].first_index <= raft_index &&
+          _entries[start].last_index >= raft_index) {
         return {start, true};
       }
       return {0, false};
     }
     uint64_t mid = start + (end - start) / 2;
-    if (_entries.front().start_index <= raft_index &&
-        _entries[mid + 1].end_index >= raft_index) {
+    if (_entries.front().first_index <= raft_index &&
+        _entries[mid + 1].last_index >= raft_index) {
       return binary_search(start, mid, raft_index);
     }
     return binary_search(mid + 1, end, raft_index);
@@ -170,11 +170,11 @@ class index {
     }
     uint64_t end = start;
     for (; end < _entries.size(); ++end) {
-      if (high <= _entries[end].start_index) {
+      if (high <= _entries[end].first_index) {
         break;
       }
       if (end > start &&
-          _entries[end - 1].end_index + 1 != _entries[end].start_index) {
+          _entries[end - 1].last_index + 1 != _entries[end].first_index) {
         break;
       }
     }
@@ -201,7 +201,7 @@ class index {
     }
     uint64_t max_obsolete = _entries.front().filename - 1;
     for (auto&& e : _entries) {
-      if (e.end_index <= _compacted_to) {
+      if (e.last_index <= _compacted_to) {
         max_obsolete = e.filename;
         if (!e.is_normal()) {
           // throw not a regular entry error
@@ -249,7 +249,7 @@ class node_index {
 
   void update(index::entry entry, index::entry snapshot, index::entry state) {
     _index.update(entry);
-    if (snapshot.start_index > _snapshot.start_index) {
+    if (snapshot.first_index > _snapshot.first_index) {
       _snapshot = snapshot;
     }
     if (!state.empty()) {
