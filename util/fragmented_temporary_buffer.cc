@@ -5,23 +5,58 @@
 #include "fragmented_temporary_buffer.hh"
 
 #include <seastar/core/align.hh>
+#include <seastar/core/coroutine.hh>
 
 using namespace seastar;
+using namespace std;
 
 namespace rafter::util {
 
-fragmented_temporary_buffer::fragmented_temporary_buffer(size_t size,
-                                                         size_t alignment) {
-  size = align_up(size, default_fragment_size);
-  auto count = size / default_fragment_size;
-  fragment_vector fragments;
-  fragments.reserve(count);
+fragmented_temporary_buffer::fragmented_temporary_buffer(
+    size_t size, size_t alignment, size_t fragment_size) {
+  size = align_up(size, fragment_size);
+  auto count = size / fragment_size;
   for (size_t i = 0; i < count; ++i) {
-    fragments.emplace_back(
-        temporary_buffer<char>::aligned(alignment, default_fragment_size));
+    add_fragment();
   }
-  _fragments = std::move(fragments);
   _bytes = size;
+  _alignment = alignment;
+}
+
+fragmented_temporary_buffer::fragmented_temporary_buffer(
+    fragment_list fragments, size_t bytes)
+  : _fragments(std::move(fragments)), _bytes(bytes) {}
+
+future<fragmented_temporary_buffer>
+fragmented_temporary_buffer::from_stream_exactly(
+    input_stream<char>& in, size_t size) {
+  fragment_list fragments;
+  auto left = size;
+  while (left) {
+    auto tmp = co_await in.read_up_to(left);
+    if (tmp.empty()) {
+      co_return fragmented_temporary_buffer();
+    }
+    left -= tmp.size();
+    fragments.emplace_back(std::move(tmp));
+  }
+  co_return fragmented_temporary_buffer(std::move(fragments), size);
+}
+
+future<fragmented_temporary_buffer>
+fragmented_temporary_buffer::from_stream_up_to(
+    input_stream<char>& in, size_t size) {
+  fragment_list fragments;
+  auto left = size;
+  while (left) {
+    auto tmp = co_await in.read_up_to(left);
+    if (tmp.empty()) {
+      break;
+    }
+    left -= tmp.size();
+    fragments.emplace_back(std::move(tmp));
+  }
+  co_return fragmented_temporary_buffer(std::move(fragments), size - left);
 }
 
 void fragmented_temporary_buffer::remove_prefix(size_t n) noexcept {
@@ -52,16 +87,16 @@ void fragmented_temporary_buffer::remove_suffix(size_t n) noexcept {
 
 fragmented_temporary_buffer::istream
 fragmented_temporary_buffer::as_istream() const noexcept {
-  return {_fragments.begin(), _bytes};
+  return istream{_fragments.begin(), _bytes};
 }
 
 fragmented_temporary_buffer::ostream
 fragmented_temporary_buffer::as_ostream() noexcept {
-  if (_fragments.size() != 1) {
-    return ostream::fragmented(_fragments.begin(), _bytes);
+  // usually we will write immediately, make sure we have at least 1 fragment
+  if (empty()) {
+    add_fragment();
   }
-  return ostream::simple(_fragments.begin()->get_write(),
-                         _fragments.begin()->size());
+  return ostream{*this, _fragments.begin(), _bytes};
 }
 
 fragmented_temporary_buffer::iterator
@@ -74,16 +109,22 @@ fragmented_temporary_buffer::end() const noexcept {
   return {};
 }
 
+void fragmented_temporary_buffer::add_fragment(size_t fragment_size) {
+  _fragments.emplace_back(
+      temporary_buffer<char>::aligned(_alignment, fragment_size));
+  _bytes += _fragments.back().size();
+}
+
 fragmented_temporary_buffer::iterator::iterator(
-    fragment_vector::const_iterator it, size_t left)
-    : _it(it), _current(it->get(), std::min(it->size(), left)), _left(left) {}
+    fragment_list::const_iterator it, size_t left)
+  : _it(it), _current(it->get(), std::min(it->size(), left)), _left(left) {}
 
 fragmented_temporary_buffer::iterator&
 fragmented_temporary_buffer::iterator::operator++() noexcept {
   _left -= _current.size();
   if (_left) {
     ++_it;
-    _current = std::string_view(_it->get(), std::min(_left, _it->size()));
+    _current = string_view(_it->get(), std::min(_left, _it->size()));
   }
   return *this;
 }
@@ -96,7 +137,7 @@ fragmented_temporary_buffer::iterator::operator++(int) noexcept {
 }
 
 fragmented_temporary_buffer::istream::istream(
-    fragment_vector::const_iterator it, size_t size) noexcept
+    fragment_list::const_iterator it, size_t size) noexcept
   : _current(it)
   , _curr_pos(size ? _current->get() : nullptr)
   , _curr_end(size ? _current->get() + _current->size() : nullptr)
@@ -129,7 +170,7 @@ fragmented_temporary_buffer::istream::read(size_t n) {
     _curr_pos += n;
     return v;
   }
-  // TODO: check range
+  check_range(n);
   auto v = view(_current, _curr_pos - _current->get(), n);
   n -= _curr_end - _curr_pos;
   next_fragment();
@@ -141,15 +182,15 @@ fragmented_temporary_buffer::istream::read(size_t n) {
   return v;
 }
 
-std::string fragmented_temporary_buffer::istream::read_string(size_t n) {
-  std::string s;
-  s.reserve(n);
+string fragmented_temporary_buffer::istream::read_string(size_t n) {
+  string s;
   if (_curr_end - _curr_pos >= n) [[likely]] {
     s.append(_curr_pos, n);
     _curr_pos += n;
     return s;
   }
-  // TODO: sheck range
+  check_range(n);
+  s.reserve(n);
   s.append(_curr_pos, _curr_end - _curr_pos);
   n -= _curr_end - _curr_pos;
   next_fragment();
@@ -175,8 +216,59 @@ void fragmented_temporary_buffer::istream::next_fragment() {
   }
 }
 
+void fragmented_temporary_buffer::istream::check_range(size_t size) {
+  if (_bytes_left < size) [[unlikely]] {
+    throw std::out_of_range(format(
+        "fragmented_temporary_buffer::istream read error, "
+        "want={}, left={}", size, _bytes_left));
+  }
+}
+
+fragmented_temporary_buffer::ostream::ostream(
+    fragmented_temporary_buffer& buffer,
+    fragment_list::iterator it,
+    size_t size) noexcept
+  : _buffer(buffer)
+  , _current(it)
+  , _curr_pos(size ? _current->get_write() : nullptr)
+  , _curr_end(size ? _current->get_write() + _current->size() : nullptr)
+  , _bytes_left(size) {}
+
+void fragmented_temporary_buffer::ostream::write(
+    const char* data, size_t size) {
+  if (_curr_end - _curr_pos < size) [[unlikely]] {
+    size_t left = size;
+    while (left) {
+      auto len = std::min(left, static_cast<size_t>(_curr_end - _curr_pos));
+      std::copy_n(data + size - left, len, _curr_pos);
+      left -= len;
+      if (left) {
+        next_fragment();
+      } else {
+        _curr_pos += len;
+      }
+    }
+    return;
+  }
+  std::copy_n(data, size, _curr_pos);
+  _curr_pos += size;
+}
+
+void fragmented_temporary_buffer::ostream::next_fragment() {
+  _bytes_left -= _current->size();
+  if (!_bytes_left) {
+    _buffer.add_fragment();
+    _current++;
+    _bytes_left += _current->size();
+  } else {
+    _current++;
+  }
+  _curr_pos = _current->get_write();
+  _curr_end = _current->get_write() + _current->size();
+}
+
 fragmented_temporary_buffer::view::view(
-    fragment_vector::const_iterator it, size_t pos, size_t size)
+    fragment_list::const_iterator it, size_t pos, size_t size)
   : _current(it)
   , _curr_pos(it->get() + pos)
   , _curr_size(std::min(it->size() - pos, size))
@@ -187,7 +279,7 @@ fragmented_temporary_buffer::view::iterator::operator++() noexcept {
   _left -= _current.size();
   if (_left) {
     ++_it;
-    _current = std::string_view{
+    _current = string_view{
         reinterpret_cast<const char*>(_it->get()),
         std::min(_left, _it->size())};
   }
@@ -202,8 +294,8 @@ fragmented_temporary_buffer::view::iterator::operator++(int) noexcept {
 }
 
 fragmented_temporary_buffer::view::iterator::iterator(
-    fragment_vector::const_iterator it,
-    std::string_view current,
+    fragment_list::const_iterator it,
+    string_view current,
     size_t left) noexcept
   : _it(it)
   , _left(left)

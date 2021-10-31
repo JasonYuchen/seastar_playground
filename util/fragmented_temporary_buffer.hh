@@ -4,26 +4,56 @@
 
 #pragma once
 
-#include <vector>
+#include <list>
 
 #include <seastar/core/iostream.hh>
-#include <seastar/core/simple-stream.hh>
 #include <seastar/core/temporary_buffer.hh>
 
 namespace rafter::util {
 
+// fragmented_temporary_buffer is not designed as a producer-consumer queue
+//
+// common use case 1: buffer data in memory and write to other module as a batch
+//
+// fragmented_temporary_buffer buffer(estimated_total_size);
+// buffer.as_ostream().write(some_data);
+// buffer.remove_suffix(buffer.bytes() - some_data.size()); // trim empty tail
+// for (auto buf : buffer) {
+//   other_system.use(buf);
+// }
+//
+// common use case 2: read from stream and prepare for deserialization
+//
+// auto buffer = fragmented_temporary_buffer::from_stream_exactly();
+// some_structure.deserialize(buffer.as_istream());
+
+// TODO: add tests for fragmented_temporary_buffer
+
 class fragmented_temporary_buffer {
-  using fragment_vector = std::vector<seastar::temporary_buffer<char>>;
+  using fragment_list = std::list<seastar::temporary_buffer<char>>;
 
  public:
-  class view;
+  class iterator;
   class istream;
-  // TODO: redesign ostream to make fragmented_temporary_buffer appendable
-  using ostream = seastar::memory_output_stream<fragment_vector::iterator>;
+  class ostream;
+  class view;
 
   static constexpr size_t default_fragment_size = 128 * 1024;
+  static constexpr size_t default_fragment_alignment = 4096;
 
-  fragmented_temporary_buffer(size_t bytes, size_t alignment);
+  fragmented_temporary_buffer() = default;
+
+  explicit fragmented_temporary_buffer(
+      size_t bytes,
+      size_t alignment = default_fragment_alignment,
+      size_t fragment_size = default_fragment_size);
+
+  fragmented_temporary_buffer(fragment_list fragments, size_t bytes);
+
+  static seastar::future<fragmented_temporary_buffer> from_stream_exactly(
+      seastar::input_stream<char>& in, size_t size);
+  static seastar::future<fragmented_temporary_buffer> from_stream_up_to(
+      seastar::input_stream<char>& in, size_t size);
 
   size_t bytes() const noexcept { return _bytes; }
 
@@ -33,25 +63,30 @@ class fragmented_temporary_buffer {
 
   void remove_suffix(size_t n) noexcept;
 
+  // read from current buffer
   istream as_istream() const noexcept;
 
+  // write to current buffer (will overwrite all existing content and add new
+  // fragments in need)
+  // do not use as_ostream after remove_prefix/remove_suffix
   ostream as_ostream() noexcept;
-
-  class iterator;
 
   iterator begin() const noexcept;
 
   iterator end() const noexcept;
 
+  void add_fragment(size_t fragment_size = default_fragment_size);
+
  private:
-  fragment_vector _fragments;
+  fragment_list _fragments;
   size_t _bytes = 0;
+  size_t _alignment = default_fragment_alignment;
 };
 
 class fragmented_temporary_buffer::iterator {
  public:
   iterator() = default;
-  iterator(fragment_vector::const_iterator it, size_t left);
+  iterator(fragment_list::const_iterator it, size_t left);
 
   const std::string_view &operator*() const noexcept { return _current; }
 
@@ -70,14 +105,14 @@ class fragmented_temporary_buffer::iterator {
   }
 
  private:
-  fragment_vector::const_iterator _it;
+  fragment_list::const_iterator _it;
   std::string_view _current;
   size_t _left = 0;
 };
 
 class fragmented_temporary_buffer::istream {
  public:
-  istream(fragment_vector::const_iterator it, size_t size) noexcept;
+  istream(fragment_list::const_iterator it, size_t size) noexcept;
 
   size_t bytes_left() const noexcept;
 
@@ -86,7 +121,7 @@ class fragmented_temporary_buffer::istream {
   template<typename T>
   T read() {
     if (_curr_end - _curr_pos < sizeof(T)) [[unlikely]] {
-      // TODO: check out of range
+      check_range(sizeof(T));
       T obj;
       size_t left = sizeof(T);
       while (left) {
@@ -113,18 +148,45 @@ class fragmented_temporary_buffer::istream {
 
  private:
   void next_fragment();
+  void check_range(size_t size);
 
  private:
-  fragment_vector::const_iterator _current;
+  fragment_list::const_iterator _current;
   const char* _curr_pos = nullptr;
   const char* _curr_end = nullptr;
+  size_t _bytes_left = 0;
+};
+
+class fragmented_temporary_buffer::ostream {
+ public:
+  explicit ostream(
+      fragmented_temporary_buffer& buffer,
+      fragment_list::iterator it,
+      size_t size) noexcept;
+
+  template<typename T>
+  requires std::is_integral_v<T>
+  void write(T data) {
+    write(reinterpret_cast<const char*>(&data), sizeof(T));
+  }
+
+  void write(const char* data, size_t size);
+
+ private:
+  void next_fragment();
+
+ private:
+  fragmented_temporary_buffer& _buffer;
+  fragment_list::iterator _current;
+  char* _curr_pos = nullptr;
+  char* _curr_end = nullptr;
   size_t _bytes_left = 0;
 };
 
 class fragmented_temporary_buffer::view {
  public:
   view() = default;
-  view(fragment_vector::const_iterator it, size_t pos, size_t size);
+  view(fragment_list::const_iterator it, size_t pos, size_t size);
 
   class iterator;
 
@@ -136,7 +198,7 @@ class fragmented_temporary_buffer::view {
   size_t size() const noexcept { return _total_size; }
 
  private:
-  fragment_vector::const_iterator _current;
+  fragment_list::const_iterator _current;
   const char* _curr_pos = nullptr;
   size_t _curr_size = 0;
   size_t _total_size = 0;
@@ -146,7 +208,7 @@ class fragmented_temporary_buffer::view::iterator {
  public:
   iterator() = default;
   iterator(
-      fragment_vector::const_iterator it,
+      fragment_list::const_iterator it,
       std::string_view current,
       size_t left) noexcept;
 
@@ -167,7 +229,7 @@ class fragmented_temporary_buffer::view::iterator {
   }
 
  private:
-  fragment_vector ::const_iterator _it;
+  fragment_list::const_iterator _it;
   size_t _left = 0;
   std::string_view _current;
 };
