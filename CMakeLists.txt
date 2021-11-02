@@ -22,17 +22,23 @@ add_subdirectory(test)
 
 set(SOURCES
     util/fragmented_temporary_buffer.cc
-    storage/segment_manager.h
-    storage/segment_manager.cc
-    storage/snapshot.cc
-    storage/snapshot.hh
-    storage/index.cc
-    storage/index.hh
-    storage/logdb.cc
-    storage/logdb.hh
+#    storage/segment_manager.h
+#    storage/segment_manager.cc
+#    storage/snapshot.cc
+#    storage/snapshot.hh
+#    storage/index.cc
+#    storage/index.hh
+#    storage/logdb.cc
+#    storage/logdb.hh
+    util/signal.cc
     util/util.hh)
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_library(${PROJECT_NAME} ${SOURCES})
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC Seastar::seastar)
+
+#add_executable(${PROJECT_NAME} ${SOURCES})
+#
+#target_link_libraries(${PROJECT_NAME}
+#    PUBLIC Seastar::seastar)

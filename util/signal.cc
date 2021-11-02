@@ -4,7 +4,8 @@
 
 #include "signal.hh"
 
-#include <seastar/core/reactor.hh
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/reactor.hh>
 
 using namespace seastar;
 

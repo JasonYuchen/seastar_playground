@@ -6,13 +6,28 @@
 
 #include "test/base.hh"
 
+using namespace rafter::test;
 using namespace rafter::util;
 
 // TODO: add test cases
-class fragmented_temporary_buffer_test : public rafter_test_base {};
+class fragmented_temporary_buffer_test
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<int> {
+ protected:
+  void SetUp() override {
+    auto segment_size = 8192 / GetParam();
+    _buffer = std::make_unique<fragmented_temporary_buffer>(segment_size);
+  }
 
-RAFTER_TEST_F(fragmented_temporary_buffer_test, one_fragment) {
-  l.info("running");
+  std::unique_ptr<fragmented_temporary_buffer> _buffer;
+};
+
+INSTANTIATE_TEST_SUITE_P(fragmented_temporary_buffer,
+                         fragmented_temporary_buffer_test,
+                         ::testing::Values(1, 2, 3));
+
+RAFTER_TEST(fragmented_temporary_buffer_test, zero_can_be_expanded) {
+  l.info("running case 1");
   EXPECT_TRUE(true);
   EXPECT_FALSE(false);
   co_return;
@@ -26,4 +41,9 @@ RAFTER_TEST_F(fragmented_temporary_buffer_test, one_fragment) {
   //  for (auto it = buffer.begin(); it != buffer.end(); it++, i++) {}
   //  EXPECT_EQ(i, 1);
   //  co_return;
+}
+
+RAFTER_TEST_P(fragmented_temporary_buffer_test, read_write) {
+  l.info("running case 2");
+  co_return;
 }
