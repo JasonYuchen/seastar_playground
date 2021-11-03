@@ -38,7 +38,12 @@ class segment {
 
   // return the file length after appending the update
   seastar::future<uint64_t> append(const protocol::update& update);
-  seastar::future<protocol::update> query(uint64_t offset) const;
+  // TODO(jason): add batch append method
+  //seastar::future<uint64_t> append(std::span<const protocol::update> updates);
+  seastar::future<protocol::update> query(const index::entry& entry) const;
+  // TODO(jason): add batch query method
+  //seastar::future<std::vector<protocol::update>> query(
+  //    std::span<const index::entry> entries) const;
   seastar::future<> sync();
   seastar::future<std::vector<index::entry>> generate_index() const;
 

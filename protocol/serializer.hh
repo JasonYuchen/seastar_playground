@@ -18,13 +18,10 @@ class o_adapter {
  public:
   explicit o_adapter(T& out) : out_(out) {}
   template<typename U>
+  requires std::is_integral_v<U>
   void write(U data) {
-    if constexpr (std::is_integral_v<U>) {
-      data = util::htole(data);
-      out_.write(reinterpret_cast<const char*>(&data), sizeof(U));
-    } else {
-      out_.write(data.data(), data.size());
-    }
+    data = util::htole(data);
+    out_.write(reinterpret_cast<const char*>(&data), sizeof(U));
   }
 
   void write(const char* data, size_t size) {

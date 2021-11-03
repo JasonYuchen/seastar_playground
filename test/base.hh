@@ -14,6 +14,8 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/reactor.hh>
 
+// TODO(jason): support parallel
+
 #define RAFTER_TEST_(test_suite_name, test_name, parent_class, parent_id)      \
   static_assert(sizeof(GTEST_STRINGIFY_(test_suite_name)) > 1,                 \
                 "test_suite_name must not be empty");                          \

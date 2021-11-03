@@ -39,6 +39,8 @@ future<uint64_t> segment::append(const protocol::update& update) {
     co_return _bytes;
   }
 
+  // TODO(jason): refine this routine with new fragmented_temporary_buffer
+
   auto estimated_size = update.estimated_size() + _tail.size();
   util::fragmented_temporary_buffer buffer(estimated_size,
                                            _file.memory_dma_alignment());
@@ -69,16 +71,25 @@ future<uint64_t> segment::append(const protocol::update& update) {
   co_return _bytes;
 }
 
-future<protocol::update> segment::query(uint64_t offset) const {
-  if (offset >= _bytes) {
-    l.error("query offset:{} >= size:{} of segment:{}",
-            offset, _bytes, _filepath.string());
+future<protocol::update> segment::query(const index::entry& entry) const {
+  if (entry.offset + entry.length > _bytes) {
+    l.error("query out of range, offset:{} + length:{} > size:{} of segment:{}",
+            entry.offset, entry.length, _bytes, _filepath.string());
     // TODO: refine exception type
     co_return coroutine::make_exception(std::out_of_range());
   }
   // TODO: tune file stream options
   auto in_stream = seastar::make_file_input_stream(_file, offset);
-  co_return protocol::update::deserialize(in_stream);
+  auto buffer = co_await util::fragmented_temporary_buffer::from_stream_exactly(
+      in_stream, entry.length);
+  co_return protocol::deserialize(in_stream);
+  protocol::update update;
+  auto length = co_await protocol::deserialize(update, buffer);
+  if (length != entry.length) {
+    l.error("inconsistent length, expect:{}, actual:{}", entry.length, length);
+    co_return coroutine::make_exception(std::out_of_range());
+  }
+  co_return update;
 }
 
 future<> segment::sync() {
@@ -86,6 +97,9 @@ future<> segment::sync() {
 }
 
 future<vector<index::entry>> segment::generate_index() const {
+
+  // TODO(jason): refine this routine with new fragmented_temporary_buffer
+
   auto filename = _filepath.filename().string();
   auto shard_id = std::stoull(filename.substr(0, 3));
   auto filename_id = std::stoull(filename.substr(3));
