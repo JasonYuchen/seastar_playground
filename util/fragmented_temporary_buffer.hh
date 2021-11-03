@@ -172,6 +172,8 @@ class fragmented_temporary_buffer::ostream {
 
   void write(const char* data, size_t size);
 
+  void fill(char c, size_t size);
+
  private:
   void next_fragment();
 
@@ -187,6 +189,11 @@ class fragmented_temporary_buffer::view {
  public:
   view() = default;
   view(fragment_list::const_iterator it, size_t pos, size_t size);
+  view(std::string_view s) noexcept;
+  view(const std::string& s) noexcept;
+
+  bool operator==(const view& rhs) const noexcept;
+  bool operator!=(const view& rhs) const noexcept;
 
   class iterator;
 

@@ -14,10 +14,11 @@ namespace rafter::util {
 
 fragmented_temporary_buffer::fragmented_temporary_buffer(
     size_t size, size_t alignment, size_t fragment_size) {
+  fragment_size = align_up(fragment_size, alignment);
   size = align_up(size, fragment_size);
   auto count = size / fragment_size;
   for (size_t i = 0; i < count; ++i) {
-    add_fragment();
+    add_fragment(fragment_size);
   }
   _bytes = size;
   _alignment = alignment;
@@ -217,7 +218,7 @@ void fragmented_temporary_buffer::istream::next_fragment() {
 }
 
 void fragmented_temporary_buffer::istream::check_range(size_t size) {
-  if (_bytes_left < size) [[unlikely]] {
+  if (bytes_left() < size) [[unlikely]] {
     throw std::out_of_range(format(
         "fragmented_temporary_buffer::istream read error, "
         "want={}, left={}", size, _bytes_left));
@@ -254,6 +255,25 @@ void fragmented_temporary_buffer::ostream::write(
   _curr_pos += size;
 }
 
+void fragmented_temporary_buffer::ostream::fill(char c, size_t size) {
+  if (_curr_end - _curr_pos < size) [[unlikely]] {
+    size_t left = size;
+    while (left) {
+      auto len = std::min(left, static_cast<size_t>(_curr_end - _curr_pos));
+      std::fill_n(_curr_pos, len, c);
+      left -= len;
+      if (left) {
+        next_fragment();
+      } else {
+        _curr_pos += len;
+      }
+    }
+    return;
+  }
+  std::fill_n(_curr_pos, size, c);
+  _curr_pos += size;
+}
+
 void fragmented_temporary_buffer::ostream::next_fragment() {
   _bytes_left -= _current->size();
   if (!_bytes_left) {
@@ -273,6 +293,40 @@ fragmented_temporary_buffer::view::view(
   , _curr_pos(it->get() + pos)
   , _curr_size(std::min(it->size() - pos, size))
   , _total_size(size) {}
+
+fragmented_temporary_buffer::view::view(std::string_view s) noexcept
+  : _curr_pos(s.data())
+  , _curr_size(s.size())
+  , _total_size(s.size()) {}
+
+fragmented_temporary_buffer::view::view(const std::string& s) noexcept
+  : _curr_pos(s.data())
+  , _curr_size(s.size())
+  , _total_size(s.size()) {}
+
+bool fragmented_temporary_buffer::view::operator==(
+    const view& rhs) const noexcept {
+  auto lhs_it = begin();
+  auto rhs_it = rhs.begin();
+  if (empty() || rhs.empty()) {
+    return empty() && rhs.empty();
+  }
+  auto lhs_fragment = *lhs_it;
+  auto rhs_fragment = *rhs_it;
+  while (lhs_it != end() && rhs_it != end()) {
+    if (lhs_fragment != rhs_fragment) {
+      return false;
+    }
+    ++lhs_it;
+    ++rhs_it;
+  }
+  return lhs_it == end() && rhs_it == rhs.end();
+}
+
+bool fragmented_temporary_buffer::view::operator!=(
+    const view& rhs) const noexcept {
+  return !(*this == rhs);
+}
 
 fragmented_temporary_buffer::view::iterator&
 fragmented_temporary_buffer::view::iterator::operator++() noexcept {
