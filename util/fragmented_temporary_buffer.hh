@@ -9,6 +9,8 @@
 #include <seastar/core/iostream.hh>
 #include <seastar/core/temporary_buffer.hh>
 
+#include "util/endian.hh"
+
 namespace rafter::util {
 
 // fragmented_temporary_buffer is not designed as a producer-consumer queue
@@ -119,6 +121,7 @@ class fragmented_temporary_buffer::istream {
   void skip(size_t n) noexcept;
 
   template<typename T>
+  requires std::is_integral_v<T>
   T read() {
     if (_curr_end - _curr_pos < sizeof(T)) [[unlikely]] {
       check_range(sizeof(T));
@@ -141,6 +144,18 @@ class fragmented_temporary_buffer::istream {
     std::copy_n(_curr_pos, sizeof(T), reinterpret_cast<char*>(&obj));
     _curr_pos += sizeof(T);
     return obj;
+  }
+
+  template<typename T>
+  requires std::is_integral_v<T>
+  T read_le() {
+    return letoh(read<T>());
+  }
+
+  template<typename T>
+  requires std::is_integral_v<T>
+  T read_be() {
+    return betoh(read<T>());
   }
 
   view read(size_t n);
@@ -170,9 +185,27 @@ class fragmented_temporary_buffer::ostream {
     write(reinterpret_cast<const char*>(&data), sizeof(T));
   }
 
+  template<typename T>
+  requires std::is_integral_v<T>
+  void write_le(T data) {
+    write(htole(data));
+  }
+
+  template<typename T>
+  requires std::is_integral_v<T>
+  void write_be(T data) {
+    write(htobe(data));
+  }
+
+  void write(std::string_view data) {
+    write(data.data(), data.size());
+  }
+
   void write(const char* data, size_t size);
 
   void fill(char c, size_t size);
+
+  void remove_suffix_to_fit() noexcept;
 
  private:
   void next_fragment();

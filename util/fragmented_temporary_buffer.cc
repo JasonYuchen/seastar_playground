@@ -274,6 +274,11 @@ void fragmented_temporary_buffer::ostream::fill(char c, size_t size) {
   _curr_pos += size;
 }
 
+void fragmented_temporary_buffer::ostream::remove_suffix_to_fit() noexcept {
+  auto left = _bytes_left ? _bytes_left - (_curr_pos - _current->get()) : 0;
+  _buffer.remove_suffix(left);
+}
+
 void fragmented_temporary_buffer::ostream::next_fragment() {
   _bytes_left -= _current->size();
   if (!_bytes_left) {
@@ -311,14 +316,28 @@ bool fragmented_temporary_buffer::view::operator==(
   if (empty() || rhs.empty()) {
     return empty() && rhs.empty();
   }
-  auto lhs_fragment = *lhs_it;
-  auto rhs_fragment = *rhs_it;
-  while (lhs_it != end() && rhs_it != end()) {
-    if (lhs_fragment != rhs_fragment) {
+  auto lhs_view = *lhs_it;
+  auto rhs_view = *rhs_it;
+  while (lhs_it != end() && rhs_it != rhs.end()) {
+    if (lhs_view.empty()) {
+      ++lhs_it;
+      if (lhs_it != end()) {
+        lhs_view = *lhs_it;
+      }
+    }
+    if (rhs_view.empty()) {
+      ++rhs_it;
+      if (rhs_it != rhs.end()) {
+        rhs_view = *rhs_it;
+      }
+    }
+
+    auto len = std::min(lhs_view.size(), rhs_view.size());
+    if (!std::equal(lhs_view.data(), lhs_view.data() + len, rhs_view.data())) {
       return false;
     }
-    ++lhs_it;
-    ++rhs_it;
+    lhs_view.remove_prefix(len);
+    rhs_view.remove_prefix(len);
   }
   return lhs_it == end() && rhs_it == rhs.end();
 }
@@ -357,7 +376,7 @@ fragmented_temporary_buffer::view::iterator::iterator(
 
 fragmented_temporary_buffer::view::iterator
 fragmented_temporary_buffer::view::begin() const noexcept {
-  return {_current, {_curr_pos, _curr_size}, _curr_size};
+  return {_current, {_curr_pos, _curr_size}, _total_size};
 }
 
 fragmented_temporary_buffer::view::iterator

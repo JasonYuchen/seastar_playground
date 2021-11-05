@@ -8,12 +8,83 @@
 
 #include "test/base.hh"
 
-using namespace rafter::test;
 using namespace rafter::util;
 using namespace std::string_view_literals;
 
 // TODO: add test cases
-class fragmented_temporary_buffer_test
+
+namespace {
+
+class fragmented_temporary_buffer_basic : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    _buffer = std::make_unique<fragmented_temporary_buffer>();
+  }
+
+  std::unique_ptr<fragmented_temporary_buffer> _buffer;
+};
+
+
+RAFTER_TEST_F(fragmented_temporary_buffer_basic, zero_can_be_expanded) {
+  auto os = _buffer->as_ostream();
+  os.write(123ULL);
+  os.write("number", 6);
+  _buffer->remove_suffix(_buffer->bytes() - 14);
+  EXPECT_EQ(_buffer->bytes(), 14);
+  auto is = _buffer->as_istream();
+  EXPECT_EQ(is.read<uint64_t>(), 123ULL);
+  EXPECT_EQ("number"sv, is.read(6));
+  EXPECT_EQ(_buffer->bytes(), 14);
+  co_return;
+}
+
+RAFTER_TEST_F(fragmented_temporary_buffer_basic, throw_if_out_of_range) {
+  auto is = _buffer->as_istream();
+  EXPECT_THROW(is.read(1), std::out_of_range);
+  auto os = _buffer->as_ostream();
+  os.write(1ULL);
+  _buffer->remove_suffix(_buffer->bytes() - 8);
+  is = _buffer->as_istream();
+  is.read<uint64_t>();
+  EXPECT_THROW(is.read(1), std::out_of_range);
+  co_return;
+}
+
+RAFTER_TEST_F(fragmented_temporary_buffer_basic, from_stream) {
+  // TODO
+  co_return;
+}
+
+class fragmented_temporary_buffer_fit
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<int> {
+ protected:
+  void SetUp() override {
+    _buffer = std::make_unique<fragmented_temporary_buffer>(64, 2, 16);
+  }
+
+  std::unique_ptr<fragmented_temporary_buffer> _buffer;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    fragmented_temporary_buffer,
+    fragmented_temporary_buffer_fit,
+    ::testing::Values(0, 7, 14, 21, 28, 35, 42, 49, 56, 63),
+    ::testing::PrintToStringParamName());
+
+RAFTER_TEST_P(fragmented_temporary_buffer_fit, remove_to_fit) {
+  std::string data(GetParam(), 'c');
+  auto os = _buffer->as_ostream();
+  os.write(data.data(), data.size());
+  os.remove_suffix_to_fit();
+  EXPECT_EQ(_buffer->bytes(), GetParam());
+  auto is = _buffer->as_istream();
+  EXPECT_EQ(is.bytes_left(), GetParam());
+  EXPECT_EQ(data, is.read(GetParam()));
+  co_return;
+}
+
+class fragmented_temporary_buffer_segment
     : public ::testing::Test,
       public ::testing::WithParamInterface<int> {
  protected:
@@ -32,45 +103,13 @@ class fragmented_temporary_buffer_test
   std::unique_ptr<fragmented_temporary_buffer> _buffer;
 };
 
-INSTANTIATE_TEST_SUITE_P(fragmented_temporary_buffer,
-                         fragmented_temporary_buffer_test,
-                         ::testing::Values(1, 2, 3),
-                         ::testing::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(
+    fragmented_temporary_buffer,
+    fragmented_temporary_buffer_segment,
+    ::testing::Values(1, 2, 3),
+    ::testing::PrintToStringParamName());
 
-RAFTER_TEST(fragmented_temporary_buffer_test, zero_can_be_expanded) {
-  fragmented_temporary_buffer buffer;
-  auto os = buffer.as_ostream();
-  os.write(123ULL);
-  os.write("number", 6);
-  buffer.remove_suffix(buffer.bytes() - 14);
-  EXPECT_EQ(buffer.bytes(), 14);
-  auto is = buffer.as_istream();
-  EXPECT_EQ(is.read<uint64_t>(), 123ULL);
-  EXPECT_EQ("number"sv, is.read(6));
-  EXPECT_EQ(buffer.bytes(), 14);
-  co_return;
-}
-
-RAFTER_TEST(fragmented_temporary_buffer_test, throw_if_out_of_range) {
-  fragmented_temporary_buffer buffer;
-  auto is = buffer.as_istream();
-  EXPECT_THROW(is.read(1), std::out_of_range);
-  auto os = buffer.as_ostream();
-  os.write(1ULL);
-  buffer.remove_suffix(buffer.bytes() - 8);
-  is = buffer.as_istream();
-  is.read<uint64_t>();
-  EXPECT_THROW(is.read(1), std::out_of_range);
-  co_return;
-}
-
-RAFTER_TEST(fragmented_temporary_buffer_test, from_stream) {
-  // TODO
-  co_return;
-}
-
-RAFTER_TEST_P(fragmented_temporary_buffer_test, read_write_across_fragments) {
-  // TODO
+RAFTER_TEST_P(fragmented_temporary_buffer_segment, read_write_across_fragments) {
   std::string all(4090, 0);
   auto os = _buffer->as_ostream();
   os.fill(0, 4090);
@@ -105,4 +144,6 @@ RAFTER_TEST_P(fragmented_temporary_buffer_test, read_write_across_fragments) {
   reassemble = reassemble.substr(0, all.size());
   EXPECT_EQ(reassemble, all);
   co_return;
+}
+
 }

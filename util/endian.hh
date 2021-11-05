@@ -110,4 +110,20 @@ inline constexpr T letoh(T t) {
   return t;
 }
 
+template <endian::detail::numerical T>
+inline constexpr T htobe(T t) {
+  if constexpr (__BYTE_ORDER == __LITTLE_ENDIAN) {
+    return endian::detail::swapImpl<T, sizeof(T)>::swap(t);
+  }
+  return t;
+}
+
+template <endian::detail::numerical T>
+inline constexpr T betoh(T t) {
+  if constexpr (__BYTE_ORDER == __LITTLE_ENDIAN) {
+    return endian::detail::swapImpl<T, sizeof(T)>::swap(t);
+  }
+  return t;
+}
+
 }  // namespace rafter::util
