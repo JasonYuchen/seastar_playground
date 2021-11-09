@@ -15,7 +15,8 @@ namespace rafter::util {
 namespace endian::detail {
 
 template <typename T>
-concept numerical = std::integral<T> || std::floating_point<T>;
+concept numerical =
+    std::integral<T> || std::floating_point<T> || std::is_enum_v<T>;
 
 template <numerical T, unsigned N>
 struct swapImpl;

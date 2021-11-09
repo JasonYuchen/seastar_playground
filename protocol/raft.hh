@@ -22,6 +22,9 @@ struct group_id {
   bool valid() const noexcept {
     return cluster != invalid_cluster && node != invalid_node;
   }
+  uint64_t bytes() const noexcept {
+    return 16;
+  }
   std::strong_ordering operator<=>(const group_id &) const = default;
 };
 
@@ -30,6 +33,9 @@ struct log_id {
   inline static constexpr uint64_t invalid_index = 0;
   uint64_t term = invalid_term;
   uint64_t index = invalid_index;
+  uint64_t bytes() const noexcept {
+    return 16;
+  }
   std::strong_ordering operator<=>(const log_id &) const = default;
 };
 
@@ -112,6 +118,7 @@ struct bootstrap {
   std::unordered_map<uint64_t, std::string> addresses;
   bool join = false;
   state_machine_type smtype = state_machine_type::regular;
+  uint64_t bytes() const noexcept;
 };
 
 using bootstrap_ptr = seastar::lw_shared_ptr<bootstrap>;
@@ -122,6 +129,7 @@ struct membership {
   std::unordered_map<uint64_t, std::string> observers;
   std::unordered_map<uint64_t, std::string> witnesses;
   std::unordered_map<uint64_t, bool> removed;
+  uint64_t bytes() const noexcept;
 };
 
 using membership_ptr = seastar::lw_shared_ptr<membership>;
@@ -135,6 +143,7 @@ struct log_entry {
   uint64_t responded_to;
   std::string payload;
 
+  uint64_t bytes() const noexcept;
   bool is_proposal() const noexcept;
   bool is_config_change() const noexcept;
   bool is_session_managed() const noexcept;
@@ -154,6 +163,7 @@ struct hard_state {
   uint64_t vote = group_id::invalid_node;
   uint64_t commit = log_id::invalid_index;
 
+  uint64_t bytes() const noexcept;
   bool is_empty() const noexcept;
 };
 
@@ -162,6 +172,8 @@ struct snapshot_file {
   uint64_t file_size = 0;
   std::string file_path;
   std::string metadata;
+
+  uint64_t bytes() const noexcept;
 };
 
 using snapshot_file_ptr = seastar::lw_shared_ptr<snapshot_file>;
@@ -285,11 +297,17 @@ struct update {
   // The current persistent state of a Raft node. It must be stored onto
   // persistent storage before any non-replication can be sent to other nodes.
   struct hard_state state;
+  // entries_to_save are entries waiting to be stored onto persistent storage.
+  // first_index is the first index of the entries_to_save
+  // last_index is the last index of the entries_to_save
+  uint64_t first_index = log_id::invalid_index;
+  uint64_t last_index = log_id::invalid_index;
+  log_entry_vector entries_to_save;
+  // snapshot is the metadata of the snapshot ready to be applied.
+  snapshot_ptr snapshot;
   // Whether CommittedEntries can be applied without waiting for the Update
   // to be persisted to disk.
   bool fast_apply = false;
-  // entries_to_save are entries waiting to be stored onto persistent storage.
-  log_entry_vector entries_to_save;
   // committed_entries are entries already committed in Raft and ready to be
   // applied by rsm.
   log_entry_vector committed_entries;
@@ -297,8 +315,6 @@ struct update {
   log_entry_vector dropped_entries;
   // Whether there are more committed entries ready to be applied.
   bool has_more_committed_entries = false;
-  // snapshot is the metadata of the snapshot ready to be applied.
-  snapshot_ptr snapshot;
   // ready_to_reads provides a list of ReadIndex requests ready for local read.
   ready_to_read_vector ready_to_reads;
   // messages is a collection of outgoing messages to be sent to remote nodes.
@@ -315,13 +331,12 @@ struct update {
   // leader is available.
   hint_vector dropped_read_indexes;
 
+  uint64_t bytes() const noexcept;
+  uint64_t meta_bytes() const noexcept;
   bool has_update() const noexcept;
   void validate() const;
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
-  uint64_t estimated_size() const noexcept;
-  uint64_t first_index() const noexcept;
-  uint64_t last_index() const noexcept;
 };
 
 }  // namespace rafter::protocol

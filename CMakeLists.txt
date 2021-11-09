@@ -21,16 +21,32 @@ add_subdirectory(3rd)
 add_subdirectory(test)
 
 set(SOURCES
-    util/fragmented_temporary_buffer.cc
-#    storage/segment_manager.h
-#    storage/segment_manager.cc
-#    storage/snapshot.cc
-#    storage/snapshot.hh
+#    core/raft.cc
+#    core/raft.hh
+#    protocol/client.hh
+    protocol/raft.cc
+    protocol/raft.hh
+    protocol/serializer.cc
+    protocol/serializer.hh
 #    storage/index.cc
 #    storage/index.hh
 #    storage/logdb.cc
 #    storage/logdb.hh
+#    storage/segment.cc
+#    storage/segment.hh
+#    storage/segment_manager.cc
+#    storage/segment_manager.hh
+#    storage/snapshot.cc
+#    storage/snapshot.hh
+    storage/segment.cc
+    storage/segment.hh
+    util/endian.hh
+    util/error.hh
+    util/fragmented_temporary_buffer.cc
+    util/fragmented_temporary_buffer.hh
     util/signal.cc
+    util/signal.hh
+    util/types.hh
     util/util.hh)
 
 add_library(${PROJECT_NAME} ${SOURCES})
