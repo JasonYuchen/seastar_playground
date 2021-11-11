@@ -140,10 +140,6 @@ bool log_entry::is_config_change() const noexcept {
   return type == entry_type::config_change;
 }
 
-uint64_t hard_state::bytes() const noexcept {
-  return sizeof(term) + sizeof(vote) + sizeof(commit);
-}
-
 uint64_t snapshot_file::bytes() const noexcept {
   return sizeof(file_id) +
          sizeof(file_size) +
@@ -155,7 +151,7 @@ uint64_t snapshot_file::bytes() const noexcept {
 
 bool update::has_update() const noexcept {
   return snapshot ||
-         !state.is_empty() ||
+         !state.empty() ||
          !entries_to_save.empty() ||
          !committed_entries.empty() ||
          !messages.empty() ||

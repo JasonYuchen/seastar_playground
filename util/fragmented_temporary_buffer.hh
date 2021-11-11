@@ -32,9 +32,9 @@ namespace rafter::util {
 // TODO: add tests for fragmented_temporary_buffer
 
 class fragmented_temporary_buffer {
+ public:
   using fragment_list = std::list<seastar::temporary_buffer<char>>;
 
- public:
   class iterator;
   class istream;
   class ostream;
@@ -120,8 +120,7 @@ class fragmented_temporary_buffer::istream {
 
   void skip(size_t n) noexcept;
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   T read() {
     if (_curr_end - _curr_pos < sizeof(T)) [[unlikely]] {
       check_range(sizeof(T));
@@ -146,14 +145,12 @@ class fragmented_temporary_buffer::istream {
     return obj;
   }
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   T read_le() {
     return letoh(read<T>());
   }
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   T read_be() {
     return betoh(read<T>());
   }
@@ -179,20 +176,17 @@ class fragmented_temporary_buffer::ostream {
       fragment_list::iterator it,
       size_t size) noexcept;
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   void write(T data) {
     write(reinterpret_cast<const char*>(&data), sizeof(T));
   }
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   void write_le(T data) {
     write(htole(data));
   }
 
-  template<typename T>
-  requires std::is_integral_v<T>
+  template<endian::detail::numerical T>
   void write_be(T data) {
     write(htobe(data));
   }

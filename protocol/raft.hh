@@ -163,8 +163,10 @@ struct hard_state {
   uint64_t vote = group_id::invalid_node;
   uint64_t commit = log_id::invalid_index;
 
-  uint64_t bytes() const noexcept;
-  bool is_empty() const noexcept;
+  uint64_t bytes() const noexcept {
+    return 24;
+  }
+  bool empty() const noexcept;
 };
 
 struct snapshot_file {
@@ -197,6 +199,10 @@ using snapshot_ptr = seastar::lw_shared_ptr<snapshot>;
 struct hint {
   uint64_t low = 0;
   uint64_t high = 0;
+
+  uint64_t bytes() const noexcept {
+    return 16;
+  }
 };
 
 using hint_vector = std::vector<hint>;

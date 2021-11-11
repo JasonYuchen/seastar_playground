@@ -28,6 +28,7 @@ namespace rafter::storage {
 
 class segment {
  public:
+  segment() = default;
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
   static seastar::future<std::unique_ptr<segment>> open(
@@ -46,9 +47,6 @@ class segment {
   //    std::span<const index::entry> entries) const;
   seastar::future<> sync();
   seastar::future<std::vector<index::entry>> generate_index() const;
-
- private:
-  segment() = default;
 
  private:
   // TODO: scheduling group

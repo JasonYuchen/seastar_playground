@@ -29,9 +29,9 @@ class index {
     // the raft group of this entry
     group_id id;
     // the first included raft log entry index
-    uint64_t first_index = 0;
+    uint64_t first_index = protocol::log_id::invalid_index;
     // the last included raft log entry index
-    uint64_t last_index = 0;
+    uint64_t last_index = protocol::log_id::invalid_index;
     // the filename of the segment file
     uint64_t filename = 0;
     // the offset of the raw data in the segment file
@@ -247,13 +247,23 @@ class node_index {
     _index = index{};
   }
 
-  void update(index::entry entry, index::entry snapshot, index::entry state) {
-    _index.update(entry);
-    if (snapshot.first_index > _snapshot.first_index) {
-      _snapshot = snapshot;
+  void update_entry(index::entry e) {
+    // TODO(jason): use append instead of update for now
+    if (e.first_index != protocol::log_id::invalid_index &&
+        e.last_index != protocol::log_id::invalid_index) {
+      _index.append(e);
     }
-    if (!state.empty()) {
-      _state = state;
+  }
+
+  void update_snapshot(index::entry e) {
+    if (e.first_index > _snapshot.first_index) {
+      _snapshot = e;
+    }
+  }
+
+  void update_state(index::entry e) {
+    if (!e.empty()) {
+      _state = e;
     }
   }
 
@@ -314,34 +324,34 @@ class index_group {
     return *this;
   }
 
-  node_index& get_node_index(group_id id) {
+  seastar::lw_shared_ptr<node_index> get_node_index(group_id id) {
     assert(id.valid());
     if (_indexes.contains(id)) {
-      return *_indexes[id];
+      return _indexes[id];
     }
-    _indexes[id] = std::make_unique<node_index>(id);
-    return *_indexes[id];
+    _indexes[id] = seastar::make_lw_shared<node_index>(id);
+    return _indexes[id];
   }
 
   std::span<const index::entry> query(
       group_id id, uint64_t low, uint64_t high) {
     assert(id.valid());
-    return get_node_index(id).query(low, high);
+    return get_node_index(id)->query(low, high);
   }
 
   index::entry query_state(group_id id) {
     assert(id.valid());
-    return get_node_index(id).query_state();
+    return get_node_index(id)->query_state();
   }
 
   index::entry query_snapshot(group_id id) {
     assert(id.valid());
-    return get_node_index(id).query_snapshot();
+    return get_node_index(id)->query_snapshot();
   }
 
   uint64_t compacted_to(group_id id) {
     assert(id.valid());
-    return get_node_index(id).get_compacted_to();
+    return get_node_index(id)->get_compacted_to();
   }
 
   index_group& set_in_use_filename(group_id id, uint64_t filename) {
@@ -370,7 +380,7 @@ class index_group {
 
  private:
   std::unordered_map<
-      group_id, std::unique_ptr<node_index>, util::pair_hasher> _indexes;
+      group_id, seastar::lw_shared_ptr<node_index>, util::pair_hasher> _indexes;
   std::unordered_map<
       group_id, protocol::hard_state, util::pair_hasher> _states;
   std::unordered_map<group_id, uint64_t> _minimal_in_use_filenames;
