@@ -22,7 +22,7 @@ struct raft_state {
 class segment_manager {
  public:
   // TODO: storage configuration class
-  segment_manager(protocol::group_id id, std::filesystem::path data_dir);
+  explicit segment_manager(std::filesystem::path data_dir);
 
   // TODO: implement logdb
   seastar::future<bool> append(const protocol::update& update);
@@ -39,10 +39,8 @@ class segment_manager {
   seastar::future<> rolling();
   seastar::future<> segement_gc_service();
   seastar::future<> compaction(node_index& ni);
-  void update_node_index(const protocol::update& update);
 
  private:
-  const protocol::group_id _group_id;
   bool _open = false;
   // segments dir, e.g. <data_dir>
   std::filesystem::path _path;
@@ -53,8 +51,8 @@ class segment_manager {
   uint64_t _next_filename = 0;
   // the minimal id of in-use segments
   uint64_t _minimal_in_use_filename = 0;
-  // the segments from old to new, the _segments.back() is the active segment
-  std::queue<std::unique_ptr<segment>> _segments;
+  // id -> segment, the _segments.rbegin() is the active segment
+  std::map<uint64_t, seastar::lw_shared_ptr<segment>> _segments;
   index_group _index_group;
   // segment ids ready for GC
   seastar::queue<uint64_t> _obsolete_queue;
