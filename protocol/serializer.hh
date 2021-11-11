@@ -7,101 +7,102 @@
 #include <seastar/core/future.hh>
 
 #include "protocol/raft.hh"
-#include "util/endian.hh"
+#include "util/fragmented_temporary_buffer.hh"
 
 namespace rafter::protocol {
 
 // TODO: design pipeline-style writer for checksum, compression, and so on
 
-template<typename T>
-class o_adapter {
- public:
-  explicit o_adapter(T& out) : out_(out) {}
-  template<typename U>
-  requires std::is_integral_v<U>
-  void write(U data) {
-    data = util::htole(data);
-    out_.write(reinterpret_cast<const char*>(&data), sizeof(U));
-  }
+uint64_t serialize(
+    const struct group_id& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-  void write(const char* data, size_t size) {
-    out_.write(data, size);
-  }
+uint64_t deserialize(
+    struct group_id& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
- private:
-  T& out_;
-};
+uint64_t serialize(
+    const struct bootstrap& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> serialize(const struct log_entry& obj, T& out) {
-  o_adapter o(out);
-  uint64_t total = 49 + obj.payload.size();
-  o.write(total);
-  o.write(obj.id.term);
-  o.write(obj.id.index);
-  o.write(obj.type);
-  o.write(obj.key);
-  o.write(obj.client_id);
-  o.write(obj.series_id);
-  o.write(obj.responded_to);
-  o.write(obj.payload);
-  co_return total;
-}
+uint64_t deserialize(
+    struct bootstrap& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
-template<typename T>
-seastar::future<uint64_t> deserialize(struct log_entry& obj, T& in) {
-  uint64_t total = in.read<uint64_t>();
-  obj.id.term = in.read<uint64_t>();
-  obj.id.index = in.read<uint64_t>();
-  obj.id.type = in.read<uint8_t>();
-  obj.key = in.read<uint64_t>();
-  obj.client_id = in.read<uint64_t>();
-  obj.series_id = in.read<uint64_t>();
-  obj.responded_to = in.read<uint64_t>();
-  obj.payload = in.read_string(total - 49);
-  co_return total;
-}
+uint64_t serialize(
+    const struct membership& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> serialize(const struct membership& obj, T& out) {
-  o_adapter o(out);
+uint64_t deserialize(
+    struct membership& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
-  // TODO
-}
+uint64_t serialize(
+    const struct log_entry& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> deserialize(struct membership& obj, T& in) {
-  // TODO
-}
+uint64_t deserialize(
+    struct log_entry& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
-template<typename T>
-seastar::future<uint64_t> serialize(const struct snapshot_file& obj, T& out) {
-  // TODO
-}
+uint64_t serialize(
+    const struct hard_state& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> deserialize(struct snapshot_file& obj, T& in) {
-  // TODO
-}
+uint64_t deserialize(
+    struct hard_state& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
-template<typename T>
-seastar::future<uint64_t> serialize(const struct snapshot& obj, T& out) {
-  // TODO
-}
+uint64_t serialize(
+    const struct snapshot_file& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> deserialize(struct snapshot& obj, T& in) {
-  // TODO
-}
+uint64_t deserialize(
+    struct snapshot_file& obj,
+    util::fragmented_temporary_buffer::istream& i);
 
-template<typename T>
-seastar::future<uint64_t> serialize(const struct update& obj, T& out) {
-  // TODO
-}
+uint64_t serialize(
+    const struct snapshot& obj,
+    util::fragmented_temporary_buffer::ostream& o);
 
-template<typename T>
-seastar::future<uint64_t> deserialize(struct update& obj, T& in) {
-  // TODO
-}
+uint64_t deserialize(
+    struct snapshot& obj,
+    util::fragmented_temporary_buffer::istream& i);
+
+uint64_t serialize(
+    const struct hint& obj,
+    util::fragmented_temporary_buffer::ostream& o);
+
+uint64_t deserialize(
+    struct hint& obj,
+    util::fragmented_temporary_buffer::istream& i);
+
+uint64_t serialize(
+    const struct message& obj,
+    util::fragmented_temporary_buffer::ostream& o);
+
+uint64_t deserialize(
+    struct message& obj,
+    util::fragmented_temporary_buffer::istream& i);
+
+uint64_t serialize(
+    const struct config_change& obj,
+    util::fragmented_temporary_buffer::ostream& o);
+
+uint64_t deserialize(
+    struct config_change& obj,
+    util::fragmented_temporary_buffer::istream& i);
+
+uint64_t serialize(
+    const struct update& obj,
+    util::fragmented_temporary_buffer::ostream& o);
+
+uint64_t deserialize(
+    struct update& obj,
+    util::fragmented_temporary_buffer::istream& i);
+
+seastar::future<uint64_t> deserialize_meta(
+    struct update& obj,
+    seastar::input_stream<char>& i);
 
 }  // namespace rafter::protocol
