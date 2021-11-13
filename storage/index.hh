@@ -72,7 +72,7 @@ class index {
     }
 
     // return (merged, need_more_merge)
-    std::pair<bool, bool> update(entry& e) noexcept {
+    std::pair<bool, bool> _update(entry& e) noexcept {
       if (try_merge(e)) {
         return {true, false};
       }
@@ -117,19 +117,38 @@ class index {
   }
 
   index& update(entry e) {
+    if (empty()) [[unlikely]] {
+      _entries.emplace_back(std::move(e));
+      return *this;
+    }
+    if (e.first_index == _entries.back().last_index + 1) [[likely]] {
+      _entries.emplace_back(std::move(e));
+      return *this;
+    }
+    return *this;
+    // TODO:
+    //  partial overwrite? need split index and relocate index positions
+    //  e.g.  entries: [1-4, 5-12, 13-55]
+    //        update a new index entry 9-14 (if the commit index = 4)
+    //        entries: [1-4, 5-9, 9-14, 15-55]
+  }
+
+  // we cannot easily update the indexes due to the underlying WAL serving more
+  // than 1 Raft group
+  index& _update(entry e) {
     if (empty()) {
       _entries.emplace_back(std::move(e));
       return *this;
     }
     auto last = _entries.back();
-    auto [merged, more] = last.update(e);
+    auto [merged, more] = last._update(e);
     if (more) {
       if (size() == 1) {
         _entries.resize(1, e);
         return *this;
       }
       _entries.pop_back();
-      update(e);
+      _update(e);
       return *this;
     }
     _entries.back() = last;
@@ -251,7 +270,7 @@ class node_index {
     // TODO(jason): use append instead of update for now
     if (e.first_index != protocol::log_id::invalid_index &&
         e.last_index != protocol::log_id::invalid_index) {
-      _index.append(e);
+      _index.update(e);
     }
   }
 

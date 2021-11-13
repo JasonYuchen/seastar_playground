@@ -16,6 +16,8 @@ segment_manager::segment_manager(filesystem::path data_dir)
   //  1. validate data_dir
   //  2. parse existing segments
   //  3. create active segment
+  file dir = co_await seastar::open_directory(data_dir);
+  dir.list_directory().done();
 }
 
 future<bool> segment_manager::append(const protocol::update& u) {

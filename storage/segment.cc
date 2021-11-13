@@ -129,6 +129,9 @@ future<vector<index::entry>> segment::generate_index() const {
       // TODO: determine index type
       entry.type = index::entry::type::normal;
       entry.id = update.group_id;
+      // TODO:
+      //  indexes may be relocated, so the first_index/last_index may be not the
+      //  actual ones, use node_index.update(e) to generate index
       entry.first_index = update.first_index;
       entry.last_index = update.last_index;
       entry.filename = filename_id;
