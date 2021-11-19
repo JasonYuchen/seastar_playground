@@ -13,13 +13,14 @@ class stop_signal {
  public:
   stop_signal();
   ~stop_signal();
-  seastar::future<> wait();
+  seastar::future<int> wait();
   bool stopping() const { return _caught; }
 
  private:
-  void signaled();
+  void signaled(int signum);
 
  private:
+  int _signum = 0;
   bool _caught = false;
   seastar::condition_variable _cond;
 };

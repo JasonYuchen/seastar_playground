@@ -28,14 +28,27 @@ void base::SetUp() {
           l.info("reactor engine starting...");
           rafter::util::stop_signal stop_signal;
           pr.set_value();
-          co_return co_await stop_signal.wait();
+          auto signum = co_await stop_signal.wait();
+          l.info("reactor engine exiting..., caught signal {}:{}",
+                 signum, ::strsignal(signum));
+          co_return;
         });
   });
   fut.wait();
 }
 
 void base::TearDown() {
-  l.info("shutting down reactor engine with SIGTERM...");
+  vector<std::future<void>> futs;
+  for (auto shard = 0; shard < smp::count; ++shard) {
+    futs.emplace_back(
+        alien::submit_to(
+            *alien::internal::default_instance,
+            shard,
+            [] { return make_ready_future<>(); }));
+  }
+  for (auto&& fut : futs) {
+    fut.wait();
+  }
   auto ret = ::pthread_kill(_engine_thread.native_handle(), SIGTERM);
   if (ret) {
     l.error("send SIGTERM failed: {}", ret);

@@ -12,8 +12,8 @@ using namespace seastar;
 namespace rafter::util {
 
 stop_signal::stop_signal() {
-  engine().handle_signal(SIGINT, [this] { signaled(); });
-  engine().handle_signal(SIGTERM, [this] { signaled(); });
+  engine().handle_signal(SIGINT, [this] { signaled(SIGINT); });
+  engine().handle_signal(SIGTERM, [this] { signaled(SIGTERM); });
 }
 
 stop_signal::~stop_signal() {
@@ -23,14 +23,16 @@ stop_signal::~stop_signal() {
   engine().handle_signal(SIGTERM, [] {});
 }
 
-future<> stop_signal::wait() {
-  co_return co_await _cond.wait([this] { return _caught; });
+future<int> stop_signal::wait() {
+  co_await _cond.wait([this] { return _caught; });
+  co_return _signum;
 }
 
-void stop_signal::signaled() {
+void stop_signal::signaled(int signum) {
   if (_caught) {
     return;
   }
+  _signum = signum;
   _caught = true;
   _cond.broadcast();
 }
