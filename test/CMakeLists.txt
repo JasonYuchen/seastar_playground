@@ -2,7 +2,8 @@ project(rafter_test)
 
 set(SOURCES
     base.cc
-    fragmented_temporary_buffer_test.cc)
+    storage_index_test.cc
+    util_fragmented_temporary_buffer_test.cc)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
