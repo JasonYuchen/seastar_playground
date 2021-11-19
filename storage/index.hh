@@ -99,7 +99,7 @@ class index {
     return *this;
   }
 
-  uint64_t get_compacted_to() const noexcept {
+  uint64_t compacted_to() const noexcept {
     return _compacted_to;
   }
 
@@ -125,12 +125,26 @@ class index {
       _entries.emplace_back(std::move(e));
       return *this;
     }
+    auto [idx, found] = binary_search(
+        0, _entries.size() - 1, e.first_index);
+    if (!found) [[unlikely]] {
+      return *this;
+    }
+    auto st = _entries.begin();
+    std::advance(st, idx + 1);
+    if (_entries[idx].first_index == e.first_index) {
+      std::advance(st, -1);
+    } else {
+      _entries[idx].last_index = e.first_index - 1;
+    }
+    _entries.erase(st, _entries.end());
+    _entries.emplace_back(std::move(e));
     return *this;
     // TODO:
     //  partial overwrite? need split index and relocate index positions
     //  e.g.  entries: [1-4, 5-12, 13-55]
     //        update a new index entry 9-14 (if the commit index = 4)
-    //        entries: [1-4, 5-9, 9-14, 15-55]
+    //        entries: [1-4, 5-9, 9-14] (all indexes > 14 will be dropped)
   }
 
   // we cannot easily update the indexes due to the underlying WAL serving more
@@ -172,7 +186,7 @@ class index {
     }
     uint64_t mid = start + (end - start) / 2;
     if (_entries.front().first_index <= raft_index &&
-        _entries[mid + 1].last_index >= raft_index) {
+        _entries[mid].last_index >= raft_index) {
       return binary_search(start, mid, raft_index);
     }
     return binary_search(mid + 1, end, raft_index);
@@ -183,7 +197,7 @@ class index {
     if (_entries.empty()) {
       return {};
     }
-    auto [start, found] = binary_search(0, _entries.size(), low);
+    auto [start, found] = binary_search(0, _entries.size() - 1, low);
     if (!found) {
       return {};
     }
@@ -245,8 +259,7 @@ class index {
       }
     }
     if (!obsolete_files.empty()) {
-      std::vector<entry> new_entries{_entries.begin() + i, _entries.end()};
-      _entries.swap(new_entries);
+      _entries.erase(_entries.begin(), _entries.begin() + i);
     }
     return obsolete_files;
   }
@@ -267,7 +280,6 @@ class node_index {
   }
 
   void update_entry(index::entry e) {
-    // TODO(jason): use append instead of update for now
     if (e.first_index != protocol::log_id::invalid_index &&
         e.last_index != protocol::log_id::invalid_index) {
       _index.update(e);
@@ -305,8 +317,12 @@ class node_index {
     return _snapshot;
   }
 
-  uint64_t get_compacted_to() const noexcept {
-    return _index.get_compacted_to();
+  uint64_t compacted_to() const noexcept {
+    return _index.compacted_to();
+  }
+
+  void set_compacted_to(uint64_t index) {
+    _index.set_compacted_to(index);
   }
 
   std::vector<uint64_t> compaction() {
@@ -370,7 +386,12 @@ class index_group {
 
   uint64_t compacted_to(group_id id) {
     assert(id.valid());
-    return get_node_index(id)->get_compacted_to();
+    return get_node_index(id)->compacted_to();
+  }
+
+  void set_compacted_to(group_id id, uint64_t index) {
+    assert(id.valid());
+    get_node_index(id)->set_compacted_to(index);
   }
 
   index_group& set_in_use_filename(group_id id, uint64_t filename) {
@@ -402,7 +423,8 @@ class index_group {
       group_id, seastar::lw_shared_ptr<node_index>, util::pair_hasher> _indexes;
   std::unordered_map<
       group_id, protocol::hard_state, util::pair_hasher> _states;
-  std::unordered_map<group_id, uint64_t> _minimal_in_use_filenames;
+  std::unordered_map<
+      group_id, uint64_t, util::pair_hasher> _minimal_in_use_filenames;
 };
 
 }  // namespace rafter::storage
