@@ -22,7 +22,7 @@ struct raft_state {
 class segment_manager {
  public:
   // TODO: storage configuration class
-  explicit segment_manager(std::filesystem::path data_dir);
+  explicit segment_manager(std::string log_dir);
 
   // TODO: implement logdb
   seastar::future<bool> append(const protocol::update& update);
@@ -35,6 +35,7 @@ class segment_manager {
   seastar::future<> sync();
 
  private:
+  seastar::future<> parse_existing_segments(seastar::directory_entry s);
   seastar::future<> ensure_enough_space();
   seastar::future<> rolling();
   seastar::future<> segement_gc_service();
@@ -43,9 +44,10 @@ class segment_manager {
  private:
   bool _open = false;
   // segments dir, e.g. <data_dir>
-  std::filesystem::path _path;
+  std::string _log_dir;
   // TODO: more options
   const uint64_t _rolling_size = 1024 * 1024 * 1024;
+  static constexpr char LOG_SUFFIX[] = "log";
   // used to allocate new segments
   // the format of a segment name is <shard_id:05d>_<segment_id:020d>
   uint64_t _next_filename = 0;

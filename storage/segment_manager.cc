@@ -4,20 +4,26 @@
 
 #include "segment_manager.hh"
 
+#include <seastar/core/reactor.hh>
+
 namespace rafter::storage {
 
 using namespace protocol;
 using namespace seastar;
 using namespace std;
 
-segment_manager::segment_manager(filesystem::path data_dir)
-    : _path(std::move(data_dir)) {
+segment_manager::segment_manager(string log_dir)
+    : _log_dir(std::move(log_dir)) {
   // TODO: setup WAL module
   //  1. validate data_dir
   //  2. parse existing segments
   //  3. create active segment
-  file dir = co_await seastar::open_directory(data_dir);
-  dir.list_directory().done();
+  file dir = co_await open_directory(_log_dir);
+  co_await dir.list_directory(parse_existing_segments).done();
+  if (_segments.empty()) {
+    co_await rolling();
+  }
+  co_await dir.close();
 }
 
 future<bool> segment_manager::append(const protocol::update& u) {
@@ -60,9 +66,25 @@ future<bool> segment_manager::append(const protocol::update& u) {
   }
   if (new_pos >= _rolling_size) {
     co_await rolling();
+    co_return false;
   }
   co_return
       u.snapshot || !u.entries_to_save.empty() || u.state.term || u.state.vote;
+}
+
+seastar::future<> segment_manager::rolling() {
+  _next_filename++;
+  if (!_segments.empty()) {
+    co_await _segments.rbegin()->second->sync();
+    co_await _segments.rbegin()->second->close();
+  }
+  filesystem::path p = fmt::format(
+      "{}/{:05d}_{:020d}.{}",
+      _log_dir, this_shard_id(), _next_filename, LOG_SUFFIX);
+  auto s = co_await segment::open(std::move(p));
+  _segments.emplace_hint(_segments.end(), std::move(s));
+  co_await sync_directory(_log_dir);
+  co_return;
 }
 
 }  // namespace rafter::storage

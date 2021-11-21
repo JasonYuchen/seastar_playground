@@ -32,8 +32,7 @@ class segment {
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
   static seastar::future<std::unique_ptr<segment>> open(
-      std::filesystem::path filepath, bool existing = false);
-
+      std::string filepath, bool existing = false);
 
   uint64_t bytes() const noexcept;
 
@@ -46,11 +45,12 @@ class segment {
   //seastar::future<std::vector<protocol::update>> query(
   //    std::span<const index::entry> entries) const;
   seastar::future<> sync();
+  seastar::future<> close();
   seastar::future<std::vector<index::entry>> generate_index() const;
 
  private:
   // TODO: scheduling group
-  std::filesystem::path _filepath;
+  std::string _filepath;
   seastar::file _file;
   uint64_t _bytes = 0;
   uint64_t _aligned_pos = 0;
