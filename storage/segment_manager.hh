@@ -23,6 +23,8 @@ class segment_manager {
  public:
   // TODO: storage configuration class
   explicit segment_manager(std::string log_dir);
+  ~segment_manager();
+  seastar::future<> shutdown();
 
   // TODO: implement logdb
   seastar::future<bool> append(const protocol::update& update);
@@ -38,15 +40,18 @@ class segment_manager {
   seastar::future<> parse_existing_segments(seastar::directory_entry s);
   seastar::future<> ensure_enough_space();
   seastar::future<> rolling();
-  seastar::future<> segement_gc_service();
+  seastar::future<> gc_service();
   seastar::future<> compaction(node_index& ni);
+  static std::pair<unsigned, uint64_t> parse_segment_name(
+      std::string_view name);
 
  private:
   bool _open = false;
   // segments dir, e.g. <data_dir>
-  std::string _log_dir;
+  const std::string _log_dir;
   // TODO: more options
-  const uint64_t _rolling_size = 1024 * 1024 * 1024;
+  static const uint64_t _rolling_size = 1024 * 1024 * 1024;
+  static const uint64_t _gc_queue_length = 100;
   static constexpr char LOG_SUFFIX[] = "log";
   // used to allocate new segments
   // the format of a segment name is <shard_id:05d>_<segment_id:020d>
@@ -58,6 +63,7 @@ class segment_manager {
   index_group _index_group;
   // segment ids ready for GC
   seastar::queue<uint64_t> _obsolete_queue;
+  seastar::future<> _gc_service;
 };
 
 }  // namespace rafter::storage

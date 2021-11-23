@@ -92,20 +92,8 @@ RAFTER_TEST_F(index_basic, binary_search) {
   co_return;
 }
 
-RAFTER_TEST_F(index_basic, rolling) {
-  co_await touch_directory("test_dir");
-  file dir = co_await open_directory("test_dir");
-  file f1 = co_await seastar::open_file_dma("test_dir/ok.txt", open_flags::create);
-  file f2 = co_await seastar::open_file_dma("test_dir/again.md", open_flags::create);
-  std::vector<std::string> entries;
-  co_await dir.list_directory([&entries](directory_entry entry) -> future<> {
-                std::cout << entry.name << std::endl;
-                entries.emplace_back(entry.name);
-                co_return;
-              }).done();
-  co_await seastar::remove_file("test_dir/ok.txt");
-  co_await seastar::remove_file("test_dir/again.md");
-  co_await seastar::remove_file("test_dir");
+RAFTER_TEST_F(index_basic, update) {
+
   co_return;
 }
 

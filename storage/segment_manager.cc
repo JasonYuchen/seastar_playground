@@ -4,6 +4,8 @@
 
 #include "segment_manager.hh"
 
+#include <charconv>
+
 #include <seastar/core/reactor.hh>
 
 namespace rafter::storage {
@@ -13,20 +15,34 @@ using namespace seastar;
 using namespace std;
 
 segment_manager::segment_manager(string log_dir)
-    : _log_dir(std::move(log_dir)) {
-  // TODO: setup WAL module
-  //  1. validate data_dir
-  //  2. parse existing segments
-  //  3. create active segment
-  file dir = co_await open_directory(_log_dir);
+    : _log_dir(std::move(log_dir)), _obsolete_queue(_gc_queue_length) {
+  file dir = co_await recursive_touch_directory(_log_dir);
   co_await dir.list_directory(parse_existing_segments).done();
-  if (_segments.empty()) {
-    co_await rolling();
-  }
+  // always write to a new file after bootstrap
+  _next_filename = _segments.empty() ? 0 : _segments.rbegin()->first;
+  co_await rolling();
   co_await dir.close();
+  _open = true;
+  _gc_service = segement_gc_service();
+}
+
+segment_manager::~segment_manager() {
+  if (_open) {
+    co_await shutdown();
+  }
+}
+
+future<> segment_manager::shutdown() {
+  _open = false;
+  // TODO(jason):
+  co_return co_await _gc_service.discard_result();
 }
 
 future<bool> segment_manager::append(const protocol::update& u) {
+  if (!_open) {
+    // TODO
+    co_return coroutine::make_exception(std::runtime_error("closed"));
+  }
   if (!u.snapshot && u.entries_to_save.empty() && u.state.empty()) {
     co_return false;
   }
@@ -72,15 +88,28 @@ future<bool> segment_manager::append(const protocol::update& u) {
       u.snapshot || !u.entries_to_save.empty() || u.state.term || u.state.vote;
 }
 
-seastar::future<> segment_manager::rolling() {
+future<> segment_manager::parse_existing_segments(directory_entry s) {
+  auto [shard_id, filename_id] = parse_segment_name(s.name);
+  if (shard_id != this_shard_id()) {
+    co_return;
+  }
+  auto seg = co_await segment::open(s.name, true);
+  co_await seg->list_index([this](const index::entry& e) -> future<> {
+    _index_group.update(e);
+    co_return;
+  });
+  _segments.emplace(filename_id, std::move(seg));
+  co_return;
+}
+
+future<> segment_manager::rolling() {
   _next_filename++;
   if (!_segments.empty()) {
     co_await _segments.rbegin()->second->sync();
     co_await _segments.rbegin()->second->close();
   }
-  filesystem::path p = fmt::format(
-      "{}/{:05d}_{:020d}.{}",
-      _log_dir, this_shard_id(), _next_filename, LOG_SUFFIX);
+  string p = fmt::format("{}/{:05d}_{:020d}.{}",
+                         _log_dir, this_shard_id(), _next_filename, LOG_SUFFIX);
   auto s = co_await segment::open(std::move(p));
   _segments.emplace_hint(_segments.end(), std::move(s));
   co_await sync_directory(_log_dir);
