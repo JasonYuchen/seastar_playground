@@ -24,7 +24,7 @@ class index {
   class entry {
    public:
     enum type {
-      normal, state, snapshot
+      normal, state, snapshot, compaction,
     };
     // the raft group of this entry
     group_id id;
@@ -55,6 +55,10 @@ class index {
 
     bool is_snapshot() const noexcept {
       return type == type::snapshot;
+    }
+
+    bool is_compaction() const noexcept {
+      return type == type::compaction;
     }
 
     bool try_merge(entry& e) noexcept {
@@ -193,7 +197,9 @@ class index {
   }
 
   std::span<const entry> query(uint64_t low, uint64_t high) const noexcept {
-    // assert(low <= high)
+    if (low <= _compacted_to) {
+      return {};
+    }
     if (_entries.empty()) {
       return {};
     }
@@ -279,20 +285,21 @@ class node_index {
     _index = index{};
   }
 
-  void update_entry(index::entry e) {
+  void update_entry(const index::entry& e) {
     if (e.first_index != protocol::log_id::invalid_index &&
         e.last_index != protocol::log_id::invalid_index) {
       _index.update(e);
     }
   }
 
-  void update_snapshot(index::entry e) {
+  void update_snapshot(const index::entry& e) {
     if (e.first_index > _snapshot.first_index) {
       _snapshot = e;
+      _index.set_compacted_to(_snapshot.first_index);
     }
   }
 
-  void update_state(index::entry e) {
+  void update_state(const index::entry& e) {
     if (!e.empty()) {
       _state = e;
     }
@@ -348,15 +355,10 @@ class node_index {
 
 class index_group {
  public:
+  index_group() = default;
   protocol::hard_state get_hard_state(group_id id) {
     assert(id.valid());
     return _states[id];
-  }
-
-  index_group& set_hard_state(group_id id, protocol::hard_state state) {
-    assert(id.valid());
-    _states[id] = state;
-    return *this;
   }
 
   seastar::lw_shared_ptr<node_index> get_node_index(group_id id) {
@@ -384,6 +386,45 @@ class index_group {
     return get_node_index(id)->query_snapshot();
   }
 
+  void update(
+      const protocol::update& u,
+      uint64_t filename,
+      uint64_t offset,
+      uint64_t length) {
+    assert(u.group_id.valid());
+    auto i = get_node_index(u.group_id);
+    index::entry e {
+        .id = u.group_id,
+        .filename = filename,
+        .offset = offset,
+        .length = length,
+    };
+    auto compactedTo = u.compactedTo();
+    if (compactedTo != protocol::log_id::invalid_index) {
+      i->set_compacted_to(compactedTo);
+    } else {
+      if (!u.entries_to_save.empty()) {
+        e.first_index = u.first_index;
+        e.last_index = u.last_index;
+        e.type = index::entry::type::normal;
+        i->update_entry(e);
+      }
+      if (!u.state.empty()) {
+        e.first_index = u.state.commit;
+        e.last_index = protocol::log_id::invalid_index;
+        e.type = index::entry::type::state;
+        i->update_state(e);
+        _states[u.group_id] = u.state;
+      }
+      if (u.snapshot) {
+        e.first_index = u.snapshot->log_id.index;
+        e.last_index = protocol::log_id::invalid_index;
+        e.type = index::entry::type::snapshot;
+        i->update_snapshot(e);
+      }
+    }
+  }
+
   uint64_t compacted_to(group_id id) {
     assert(id.valid());
     return get_node_index(id)->compacted_to();
@@ -394,19 +435,17 @@ class index_group {
     get_node_index(id)->set_compacted_to(index);
   }
 
-  index_group& set_in_use_filename(group_id id, uint64_t filename) {
+  void set_in_use_filename(group_id id, uint64_t filename) {
     assert(id.valid());
     if (!_minimal_in_use_filenames.contains(id)) {
       _minimal_in_use_filenames[id] = UINT64_MAX;
     }
     _minimal_in_use_filenames[id] = filename;
-    return *this;
   }
 
-  index_group& clear_in_use_filename(group_id id) {
+  void clear_in_use_filename(group_id id) {
     assert(id.valid());
     _minimal_in_use_filenames[id] = UINT64_MAX;
-    return *this;
   }
 
   uint64_t minimal_in_use_filename() const noexcept {

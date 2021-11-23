@@ -64,6 +64,7 @@ class segment_manager {
   // segment ids ready for GC
   seastar::queue<uint64_t> _obsolete_queue;
   seastar::future<> _gc_service;
+  seastar::shared_mutex _lock;
 };
 
 }  // namespace rafter::storage

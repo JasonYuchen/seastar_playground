@@ -50,36 +50,7 @@ future<bool> segment_manager::append(const protocol::update& u) {
   auto [file_id, segment] = *_segments.rbegin();
   auto pos = segment->bytes();
   auto new_pos = co_await segment->append(u);
-  if (!u.entries_to_save.empty()) {
-    ni->update_entry({
-        .id = u.group_id,
-        .first_index = u.first_index,
-        .last_index = u.last_index,
-        .filename = file_id,
-        .offset = pos,
-        .length = new_pos - pos,
-        .type = index::entry::type::normal});
-  }
-  if (!u.state.empty()) {
-    ni->update_state({
-        .id = u.group_id,
-        .first_index = log_id::invalid_index,
-        .last_index = log_id::invalid_index,
-        .filename = file_id,
-        .offset = pos,
-        .length = new_pos - pos,
-        .type = index::entry::type::state});
-  }
-  if (u.snapshot) {
-    ni->update_snapshot({
-        .id = u.group_id,
-        .first_index = u.snapshot->log_id.index,
-        .last_index = log_id::invalid_index,
-        .filename = file_id,
-        .offset = pos,
-        .length = new_pos - pos,
-        .type = index::entry::type::snapshot});
-  }
+  _index_group.update(u, file_id, pos, new_pos - pos);
   if (new_pos >= _rolling_size) {
     co_await rolling();
     co_return false;
@@ -94,10 +65,11 @@ future<> segment_manager::parse_existing_segments(directory_entry s) {
     co_return;
   }
   auto seg = co_await segment::open(s.name, true);
-  co_await seg->list_index([this](const index::entry& e) -> future<> {
-    _index_group.update(e);
-    co_return;
-  });
+  auto updater =
+      [this](const update& u, uint64_t fn, uint64_t offset, uint64_t len) {
+        _index_group.update(u, fn, offset, len);
+      };
+  co_await seg->list_update(updater);
   _segments.emplace(filename_id, std::move(seg));
   co_return;
 }
@@ -114,6 +86,15 @@ future<> segment_manager::rolling() {
   _segments.emplace_hint(_segments.end(), std::move(s));
   co_await sync_directory(_log_dir);
   co_return;
+}
+
+future<> segment_manager::gc_service() {
+  while (_open) {
+    co_await with_lock(_lock, []() -> future<> {
+      // TODO: collect obsolete logs and delete them
+      co_return;
+    });
+  }
 }
 
 }  // namespace rafter::storage
