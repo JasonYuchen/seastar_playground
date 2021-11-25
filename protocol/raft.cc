@@ -149,6 +149,17 @@ uint64_t snapshot_file::bytes() const noexcept {
          metadata.size();
 }
 
+uint64_t update::compactedTo() const noexcept {
+  if (entries_to_save.empty() &&
+      !snapshot &&
+      state.vote == group_id::invalid_node &&
+      state.term == log_id::invalid_term &&
+      state.commit != log_id::invalid_index) {
+    return state.commit;
+  }
+  return log_id::invalid_index;
+}
+
 bool update::has_update() const noexcept {
   return snapshot ||
          !state.empty() ||

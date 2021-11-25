@@ -337,6 +337,9 @@ struct update {
   // leader is available.
   hint_vector dropped_read_indexes;
 
+  // if this update is a compaction update, return compactedTo, otherwise return
+  // log_id::invalid_index
+  uint64_t compactedTo() const noexcept;
   uint64_t bytes() const noexcept;
   uint64_t meta_bytes() const noexcept;
   bool has_update() const noexcept;
