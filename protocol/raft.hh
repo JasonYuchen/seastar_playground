@@ -348,4 +348,6 @@ struct update {
   void set_update_commit() const noexcept;
 };
 
+using update_ptr = seastar::lw_shared_ptr<update>;
+
 }  // namespace rafter::protocol

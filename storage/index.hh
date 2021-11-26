@@ -9,6 +9,7 @@
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,8 @@
 namespace rafter::storage {
 
 using protocol::group_id;
+
+class segment;
 
 class index {
  public:
@@ -74,28 +77,6 @@ class index {
       }
       return false;
     }
-
-    // return (merged, need_more_merge)
-    std::pair<bool, bool> _update(entry& e) noexcept {
-      if (try_merge(e)) {
-        return {true, false};
-      }
-      // overwrite
-      if (first_index == e.first_index) {
-        *this = std::exchange(e, {});
-        return {true, false};
-      }
-      // overwrite and need more merge
-      if (first_index > e.first_index) {
-        *this = std::exchange(e, {});
-        return {true, true};
-      }
-      // partial overwrite
-      if (first_index < e.first_index && e.first_index <= last_index) {
-        last_index = e.first_index - 1;
-      }
-      return {false, false};
-    }
   };
 
   index& set_compacted_to(uint64_t compacted_to) noexcept {
@@ -144,36 +125,6 @@ class index {
     _entries.erase(st, _entries.end());
     _entries.emplace_back(std::move(e));
     return *this;
-    // TODO:
-    //  partial overwrite? need split index and relocate index positions
-    //  e.g.  entries: [1-4, 5-12, 13-55]
-    //        update a new index entry 9-14 (if the commit index = 4)
-    //        entries: [1-4, 5-9, 9-14] (all indexes > 14 will be dropped)
-  }
-
-  // we cannot easily update the indexes due to the underlying WAL serving more
-  // than 1 Raft group
-  index& _update(entry e) {
-    if (empty()) {
-      _entries.emplace_back(std::move(e));
-      return *this;
-    }
-    auto last = _entries.back();
-    auto [merged, more] = last._update(e);
-    if (more) {
-      if (size() == 1) {
-        _entries.resize(1, e);
-        return *this;
-      }
-      _entries.pop_back();
-      _update(e);
-      return *this;
-    }
-    _entries.back() = last;
-    if (!merged) {
-      _entries.emplace_back(std::move(e));
-    }
-    return *this;
   }
 
   // make it private
@@ -196,20 +147,23 @@ class index {
     return binary_search(mid + 1, end, raft_index);
   }
 
-  std::span<const entry> query(uint64_t low, uint64_t high) const noexcept {
-    if (low <= _compacted_to) {
+  std::span<const entry> query(protocol::hint range) const noexcept {
+    if (range.low > range.high) {
+      // TODO: throw
+    }
+    if (range.low <= _compacted_to) {
       return {};
     }
     if (_entries.empty()) {
       return {};
     }
-    auto [start, found] = binary_search(0, _entries.size() - 1, low);
+    auto [start, found] = binary_search(0, _entries.size() - 1, range.low);
     if (!found) {
       return {};
     }
     uint64_t end = start;
     for (; end < _entries.size(); ++end) {
-      if (high <= _entries[end].first_index) {
+      if (range.high <= _entries[end].first_index) {
         break;
       }
       if (end > start &&
@@ -238,7 +192,7 @@ class index {
     if (empty()) {
       return UINT64_MAX;
     }
-    uint64_t max_obsolete = _entries.front().filename - 1;
+    uint64_t max_obsolete = UINT64_MAX;
     for (auto&& e : _entries) {
       if (e.last_index <= _compacted_to) {
         max_obsolete = e.filename;
@@ -250,24 +204,14 @@ class index {
     return max_obsolete;
   }
 
-  std::vector<uint64_t> remove_obsolete_files(uint64_t max_obsolete_filename) {
-    std::vector<uint64_t> obsolete_files;
-    uint64_t prev_filename = 0;
-    int i = 0;
-    for (; i < size(); ++i) {
-      auto&& e = _entries[i];
-      if (e.filename <= max_obsolete_filename && e.filename != prev_filename) {
-        obsolete_files.emplace_back(e.filename);
-        prev_filename = e.filename;
-      }
-      if (e.filename > max_obsolete_filename) {
-        break;
-      }
-    }
-    if (!obsolete_files.empty()) {
-      _entries.erase(_entries.begin(), _entries.begin() + i);
-    }
-    return obsolete_files;
+   void remove_obsolete_entries(uint64_t max_obsolete_filename) {
+     auto it = _entries.begin();
+     for (; it != _entries.end(); ++it) {
+       if (it->filename > max_obsolete_filename) {
+         break;
+       }
+     }
+     _entries.erase(_entries.begin(), it);
   }
 
  private:
@@ -285,24 +229,29 @@ class node_index {
     _index = index{};
   }
 
-  void update_entry(const index::entry& e) {
+  bool update_entry(const index::entry& e) {
     if (e.first_index != protocol::log_id::invalid_index &&
         e.last_index != protocol::log_id::invalid_index) {
       _index.update(e);
+      return _filenames.insert(e.filename).second;
     }
+    return false;
   }
 
-  void update_snapshot(const index::entry& e) {
+  bool update_snapshot(const index::entry& e) {
     if (e.first_index > _snapshot.first_index) {
       _snapshot = e;
-      _index.set_compacted_to(_snapshot.first_index);
+      return _filenames.insert(e.filename).second;
     }
+    return false;
   }
 
-  void update_state(const index::entry& e) {
+  bool update_state(const index::entry& e) {
     if (!e.empty()) {
       _state = e;
+      return _filenames.insert(e.filename).second;
     }
+    return false;
   }
 
   bool file_in_use(uint64_t filename) {
@@ -311,9 +260,8 @@ class node_index {
            _index.file_in_use(filename);
   }
 
-  std::span<const index::entry> query(
-      uint64_t low, uint64_t high) const noexcept {
-    return _index.query(low, high);
+  std::span<const index::entry> query(protocol::hint range) const noexcept {
+    return _index.query(range);
   }
 
   index::entry query_state() const noexcept {
@@ -343,7 +291,17 @@ class node_index {
     if (max_obsolete == 0 || max_obsolete == UINT64_MAX) {
       return {};
     }
-    return _index.remove_obsolete_files(max_obsolete);
+    _index.remove_obsolete_entries(max_obsolete);
+    std::vector<uint64_t> obsoletes;
+    for (auto it = _filenames.begin(); it != _filenames.end(); ) {
+      if (*it <= max_obsolete) {
+        obsoletes.emplace_back(*it);
+        it = _filenames.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    return obsoletes;
   }
 
  private:
@@ -351,6 +309,7 @@ class node_index {
   index::entry _snapshot;
   index::entry _state;
   index _index;
+  std::unordered_set<uint64_t> _filenames;
 };
 
 class index_group {
@@ -371,9 +330,9 @@ class index_group {
   }
 
   std::span<const index::entry> query(
-      group_id id, uint64_t low, uint64_t high) {
+      group_id id, protocol::hint range) {
     assert(id.valid());
-    return get_node_index(id)->query(low, high);
+    return get_node_index(id)->query(range);
   }
 
   index::entry query_state(group_id id) {
@@ -386,7 +345,8 @@ class index_group {
     return get_node_index(id)->query_snapshot();
   }
 
-  void update(
+  // update the index and return if this filename is newly referenced
+  bool update(
       const protocol::update& u,
       uint64_t filename,
       uint64_t offset,
@@ -407,22 +367,23 @@ class index_group {
         e.first_index = u.first_index;
         e.last_index = u.last_index;
         e.type = index::entry::type::normal;
-        i->update_entry(e);
+        return i->update_entry(e);
       }
       if (!u.state.empty()) {
         e.first_index = u.state.commit;
         e.last_index = protocol::log_id::invalid_index;
         e.type = index::entry::type::state;
-        i->update_state(e);
         _states[u.group_id] = u.state;
+        return i->update_state(e);
       }
       if (u.snapshot) {
         e.first_index = u.snapshot->log_id.index;
         e.last_index = protocol::log_id::invalid_index;
         e.type = index::entry::type::snapshot;
-        i->update_snapshot(e);
+        return i->update_snapshot(e);
       }
     }
+    return false;
   }
 
   uint64_t compacted_to(group_id id) {
@@ -432,29 +393,10 @@ class index_group {
 
   void set_compacted_to(group_id id, uint64_t index) {
     assert(id.valid());
+    auto ni = get_node_index(id);
+    ni->set_compacted_to(index);
+    // TODO
     get_node_index(id)->set_compacted_to(index);
-  }
-
-  void set_in_use_filename(group_id id, uint64_t filename) {
-    assert(id.valid());
-    if (!_minimal_in_use_filenames.contains(id)) {
-      _minimal_in_use_filenames[id] = UINT64_MAX;
-    }
-    _minimal_in_use_filenames[id] = filename;
-  }
-
-  void clear_in_use_filename(group_id id) {
-    assert(id.valid());
-    _minimal_in_use_filenames[id] = UINT64_MAX;
-  }
-
-  uint64_t minimal_in_use_filename() const noexcept {
-    uint64_t filename = UINT64_MAX;
-    for (const auto& [id, name] : _minimal_in_use_filenames) {
-      assert(id.valid());
-      filename = std::min(filename, name);
-    }
-    return filename;
   }
 
  private:
@@ -462,8 +404,6 @@ class index_group {
       group_id, seastar::lw_shared_ptr<node_index>, util::pair_hasher> _indexes;
   std::unordered_map<
       group_id, protocol::hard_state, util::pair_hasher> _states;
-  std::unordered_map<
-      group_id, uint64_t, util::pair_hasher> _minimal_in_use_filenames;
 };
 
 }  // namespace rafter::storage
