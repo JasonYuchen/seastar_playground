@@ -179,8 +179,26 @@ uint64_t deserialize(
 
 uint64_t serialize(
     const struct snapshot& obj, fragmented_temporary_buffer::ostream& o) {
-  uint64_t total = 0;
-  // TODO
+  uint64_t total = obj.bytes();
+  o.write_le(total);
+  serialize(obj.group_id, o);
+  serialize(obj.log_id, o);
+  o.write_le(obj.file_path.size());
+  o.write(obj.file_path);
+  o.write_le(obj.file_size);
+  o.write_le(obj.membership.operator bool());
+  if (obj.membership) {
+    serialize(*obj.membership, o);
+  }
+  o.write_le(obj.files.size());
+  for (const auto& f : obj.files) {
+    serialize(*f, o);
+  }
+  o.write_le(obj.smtype);
+  o.write_le(obj.imported);
+  o.write_le(obj.witness);
+  o.write_le(obj.dummy);
+  o.write_le(obj.on_disk_index);
   return total;
 }
 

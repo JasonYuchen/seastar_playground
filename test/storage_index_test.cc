@@ -11,18 +11,17 @@ using namespace seastar;
 
 namespace {
 
-class index_basic : public ::testing::Test {
+class index_test : public ::testing::Test {
  protected:
   void SetUp() override {
     rafter::protocol::group_id id{1, 2};
-    uint64_t fn = 101;
     auto tp = index::entry::type::normal;
     index::entry es[] = {
         {
             .id = id,
             .first_index = 10,
             .last_index = 12,
-            .filename = fn,
+            .filename = 101,
             .offset = 100,
             .length = 10,
             .type = tp,
@@ -31,7 +30,7 @@ class index_basic : public ::testing::Test {
             .id = id,
             .first_index = 13,
             .last_index = 15,
-            .filename = fn,
+            .filename = 101,
             .offset = 110,
             .length = 20,
             .type = tp,
@@ -40,7 +39,7 @@ class index_basic : public ::testing::Test {
             .id = id,
             .first_index = 16,
             .last_index = 18,
-            .filename = fn,
+            .filename = 102,
             .offset = 130,
             .length = 30,
             .type = tp,
@@ -49,7 +48,7 @@ class index_basic : public ::testing::Test {
             .id = id,
             .first_index = 19,
             .last_index = 21,
-            .filename = fn,
+            .filename = 110,
             .offset = 160,
             .length = 40,
             .type = tp,
@@ -63,7 +62,7 @@ class index_basic : public ::testing::Test {
   rafter::storage::index idx;
 };
 
-RAFTER_TEST_F(index_basic, binary_search) {
+RAFTER_TEST_F(index_test, binary_search) {
   struct {
     uint64_t raft_index;
     uint64_t expected_idx;
@@ -92,7 +91,22 @@ RAFTER_TEST_F(index_basic, binary_search) {
   co_return;
 }
 
-RAFTER_TEST_F(index_basic, update) {
+RAFTER_TEST_F(index_test, update) {
+
+  co_return;
+}
+
+RAFTER_TEST_F(index_test, query) {
+
+  co_return;
+}
+
+RAFTER_TEST_F(index_test, compaction) {
+
+  co_return;
+}
+
+RAFTER_TEST_F(index_test, remove_obsolete_entries) {
 
   co_return;
 }

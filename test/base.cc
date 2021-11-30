@@ -57,6 +57,11 @@ void base::TearDown() {
   _engine_thread.join();
 }
 
+void base::submit(std::function<seastar::future<>()> func) {
+  seastar::alien::submit_to(
+      *seastar::alien::internal::default_instance, 0, std::move(func)).wait();
+}
+
 seastar::logger l{"rafter_test"};
 
 }  // namespace rafter::test
