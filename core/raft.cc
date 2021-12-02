@@ -4,6 +4,8 @@
 
 #include "raft.hh"
 
+#include "core/core.hh"
+
 namespace rafter::core {
 
 }  // namespace rafter::core

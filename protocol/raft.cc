@@ -110,7 +110,7 @@ const char* name(enum checksum_type type) {
 }
 
 uint64_t bootstrap::bytes() const noexcept {
-  return sizer(addresses) + sizeof(join) + sizeof(smtype);
+  return sizer(addresses) + sizeof(join) + sizeof(smtype) + 8;
 }
 
 uint64_t membership::bytes() const noexcept {
@@ -118,7 +118,7 @@ uint64_t membership::bytes() const noexcept {
          sizer(addresses) +
          sizer(observers) +
          sizer(witnesses) +
-         sizer(removed);
+         sizer(removed) + 8;
 }
 
 uint64_t log_entry::bytes() const noexcept {
@@ -129,7 +129,7 @@ uint64_t log_entry::bytes() const noexcept {
          sizeof(series_id) +
          sizeof(responded_to) +
          sizeof(payload.size()) +
-         payload.size();
+         payload.size() + 8;
 }
 
 bool log_entry::is_proposal() const noexcept {
@@ -146,7 +146,38 @@ uint64_t snapshot_file::bytes() const noexcept {
          sizeof(file_path.size()) +
          file_path.size() +
          sizeof(metadata.size()) +
-         metadata.size();
+         metadata.size() + 8;
+}
+
+uint64_t snapshot::bytes() const noexcept {
+  uint64_t size = this->group_id.bytes() +
+                  this->log_id.bytes() +
+                  sizeof(file_path.size()) +
+                  file_path.size() +
+                  sizeof(file_size) +
+                  sizeof(bool) +
+                  sizeof(files.size()) +
+                  sizeof(smtype) +
+                  sizeof(imported) +
+                  sizeof(witness) +
+                  sizeof(dummy) +
+                  sizeof(on_disk_index) + 8;
+  if (membership) {
+    size += membership->bytes();
+  }
+  for (const auto& f : files) {
+    size += f->bytes();
+  }
+  return size;
+}
+
+uint64_t config_change::bytes() const noexcept {
+  return sizeof(config_change_id) +
+         sizeof(type) +
+         sizeof(node) +
+         sizeof(address.size()) +
+         address.size() +
+         sizeof(initialize) + 8;
 }
 
 uint64_t update::compactedTo() const noexcept {
@@ -168,6 +199,30 @@ bool update::has_update() const noexcept {
          !messages.empty() ||
          !ready_to_reads.empty() ||
          !dropped_entries.empty();
+}
+
+uint64_t update::bytes() const noexcept {
+  uint64_t size = this->group_id.bytes() +
+                  this->state.bytes() +
+                  sizeof(first_index) +
+                  sizeof(last_index) +
+                  sizeof(entries_to_save.size()) +
+                  sizeof(bool) + 8;
+  if (snapshot) {
+    size += snapshot->bytes();
+  }
+  for (const auto& e : entries_to_save) {
+    size += e->bytes();
+  }
+  return size;
+}
+
+uint64_t update::meta_bytes() const noexcept {
+  return this->group_id.bytes() +
+         this->state.bytes() +
+         sizeof(first_index) +
+         sizeof(last_index) +
+         sizeof(bool) + 8;
 }
 
 }  // namespace rafter::protocol

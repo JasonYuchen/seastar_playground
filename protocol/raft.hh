@@ -137,10 +137,10 @@ using membership_ptr = seastar::lw_shared_ptr<membership>;
 struct log_entry {
   log_id id;
   entry_type type = entry_type::application;
-  uint64_t key;
-  uint64_t client_id;
-  uint64_t series_id;
-  uint64_t responded_to;
+  uint64_t key = 0;
+  uint64_t client_id = 0;
+  uint64_t series_id = 0;
+  uint64_t responded_to = 0;
   std::string payload;
 
   uint64_t bytes() const noexcept;
@@ -166,7 +166,11 @@ struct hard_state {
   uint64_t bytes() const noexcept {
     return 24;
   }
-  bool empty() const noexcept;
+  bool empty() const noexcept {
+    return term == log_id::invalid_term &&
+           vote == group_id::invalid_node &&
+           commit == log_id::invalid_index;
+  }
 };
 
 struct snapshot_file {
@@ -192,6 +196,8 @@ struct snapshot {
   bool witness = false;
   bool dummy = false;
   uint64_t on_disk_index = 0;
+
+  uint64_t bytes() const noexcept;
 };
 
 using snapshot_ptr = seastar::lw_shared_ptr<snapshot>;
@@ -229,6 +235,7 @@ struct message {
   bool is_response() const noexcept;
   bool is_leader_message() const noexcept;
   bool is_local_message() const noexcept;
+  uint64_t bytes() const noexcept;
 };
 
 using message_ptr = seastar::lw_shared_ptr<message>;
@@ -246,6 +253,8 @@ struct config_change {
   uint64_t node = 0;
   std::string address;
   bool initialize = false;
+
+  uint64_t bytes() const noexcept;
 };
 
 struct snapshot_header {
@@ -255,6 +264,8 @@ struct snapshot_header {
   uint32_t payload_checksum = 0;
   enum checksum_type checksum_type = checksum_type::crc32;
   enum compression_type compression_type = compression_type::no_compression;
+
+  uint64_t bytes() const noexcept;
 };
 
 struct snapshot_chunk {
@@ -274,6 +285,8 @@ struct snapshot_chunk {
   snapshot_file_ptr file_info;
   uint64_t on_disk_index = log_id::invalid_index;
   bool witness= false;
+
+  uint64_t bytes() const noexcept;
 };
 
 struct ready_to_read {
@@ -346,6 +359,8 @@ struct update {
   void validate() const;
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
+
+  std::string debug_string(bool detail) const;
 };
 
 using update_ptr = seastar::lw_shared_ptr<update>;
