@@ -7,6 +7,8 @@ find_package(Seastar REQUIRED)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts -Wall -Werror")
 
+# set(CMAKE_CXX_CLANG_TIDY "clang-tidy")
+
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 else()
@@ -28,19 +30,22 @@ set(SOURCES
     protocol/raft.hh
     protocol/serializer.cc
     protocol/serializer.hh
-#    storage/index.cc
-#    storage/index.hh
+    storage/index.cc
+    storage/index.hh
 #    storage/logdb.cc
 #    storage/logdb.hh
-#    storage/segment.cc
-#    storage/segment.hh
-#    storage/segment_manager.cc
-#    storage/segment_manager.hh
+    storage/segment.cc
+    storage/segment.hh
+    storage/segment_manager.cc
+    storage/segment_manager.hh
 #    storage/snapshot.cc
 #    storage/snapshot.hh
     storage/segment.cc
     storage/segment.hh
+    storage/storage.cc
+    storage/storage.hh
     util/endian.hh
+    util/error.cc
     util/error.hh
     util/fragmented_temporary_buffer.cc
     util/fragmented_temporary_buffer.hh

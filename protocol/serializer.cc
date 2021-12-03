@@ -13,6 +13,70 @@ using namespace std;
 
 using util::fragmented_temporary_buffer;
 
+class serializer_adapter {
+ public:
+  serializer_adapter(char* buf, size_t size)
+      : _buf(buf), _end(_buf + size), _cur(buf) {}
+
+  template<util::endian::detail::numerical T>
+  void write(T data) {
+    write(reinterpret_cast<const char*>(&data), sizeof(T));
+  }
+
+  template<util::endian::detail::numerical T>
+  void write_le(T data) {
+    write(htole(data));
+  }
+
+  template<util::endian::detail::numerical T>
+  void write_be(T data) {
+    write(htobe(data));
+  }
+
+  void write(const char* data, size_t size) {
+    if (_end - _cur < size) [[unlikely]] {
+      // TODO: throw
+    }
+    std::copy_n(data, size, _cur);
+    _cur += size;
+  }
+
+  template<util::endian::detail::numerical T>
+  T read() {
+    if (_end - _cur < sizeof(T)) [[unlikely]] {
+      // TODO: throw
+    }
+    T obj;
+    std::copy_n(_cur, sizeof(T), reinterpret_cast<char*>(&obj));
+    _cur += sizeof(T);
+    return obj;
+  }
+
+  template<util::endian::detail::numerical T>
+  T read_le() {
+    return letoh(read<T>());
+  }
+
+  template<util::endian::detail::numerical T>
+  T read_be() {
+    return betoh(read<T>());
+  }
+
+  std::string read_string(size_t n) {
+    if (_end - _cur < n) [[unlikely]] {
+      // TODO: throw
+    }
+    std::string obj{_cur, n};
+    _cur += n;
+    return obj;
+  }
+
+ private:
+  char* _buf;
+  char* _end;
+  char* _cur = 0;
+};
+
 // T is unordered_map<uint64_t, integral> or unordered_map<uint64_t, string>
 template<typename T>
 void dumper(T&& m, fragmented_temporary_buffer::ostream& o) {
@@ -191,8 +255,8 @@ uint64_t serialize(
     serialize(*obj.membership, o);
   }
   o.write_le(obj.files.size());
-  for (const auto& f : obj.files) {
-    serialize(*f, o);
+  for (const auto& file : obj.files) {
+    serialize(*file, o);
   }
   o.write_le(obj.smtype);
   o.write_le(obj.imported);
@@ -204,8 +268,28 @@ uint64_t serialize(
 
 uint64_t deserialize(
     struct snapshot& obj, fragmented_temporary_buffer::istream& i) {
-  uint64_t total = 0;
-  // TODO
+  auto total = i.read_le<uint64_t>();
+  deserialize(obj.group_id, i);
+  deserialize(obj.log_id, i);
+  obj.file_path = i.read_string(i.read_le<uint64_t>());
+  obj.file_size = i.read_le<uint64_t>();
+  if (i.read_le<bool>()) {
+    obj.membership = make_lw_shared<membership>();
+    deserialize(*obj.membership, i);
+  }
+  obj.files.resize(i.read_le<uint64_t>());
+  for (auto&& file : obj.files) {
+    file = make_lw_shared<snapshot_file>();
+    deserialize(*file, i);
+  }
+  obj.smtype = i.read_le<state_machine_type>();
+  obj.imported = i.read_le<bool>();
+  obj.witness = i.read_le<bool>();
+  obj.dummy = i.read_le<bool>();
+  obj.on_disk_index = i.read_le<uint64_t>();
+  if (total != obj.bytes()) [[unlikely]] {
+    // TODO: throw
+  }
   return total;
 }
 
@@ -239,14 +323,26 @@ uint64_t deserialize(
 
 uint64_t serialize(
     const struct config_change& obj, fragmented_temporary_buffer::ostream& o) {
-  // TODO
-  return 0;
+  uint64_t total = obj.bytes();
+  o.write_le(total);
+  o.write_le(obj.config_change_id);
+  o.write_le(obj.type);
+  o.write_le(obj.node);
+  o.write_le(obj.address.size());
+  o.write(obj.address);
+  o.write_le(obj.initialize);
+  return total;
 }
 
 uint64_t deserialize(
     struct config_change& obj, fragmented_temporary_buffer::istream& i) {
-  // TODO
-  return 0;
+  auto total = i.read_le<uint64_t>();
+  obj.config_change_id = i.read_le<uint64_t>();
+  obj.type = i.read_le<config_change_type>();
+  obj.node = i.read_le<uint64_t>();
+  obj.address = i.read_string(i.read_le<uint64_t>());
+  obj.initialize = i.read_le<bool>();
+  return total;
 }
 
 uint64_t serialize(
@@ -275,11 +371,10 @@ uint64_t deserialize(
   deserialize(obj.state, i);
   obj.first_index = i.read_le<uint64_t>();
   obj.last_index = i.read_le<uint64_t>();
-  auto size = i.read_le<uint64_t>();
-  obj.entries_to_save.clear();
-  obj.entries_to_save.reserve(size);
-  for (size_t j = 0; j < size; ++j) {
-    deserialize(*obj.entries_to_save.emplace_back(), i);
+  obj.entries_to_save.resize(i.read_le<uint64_t>());
+  for (auto&& entry : obj.entries_to_save) {
+    entry = make_lw_shared<log_entry>();
+    deserialize(*entry, i);
   }
   if (i.read_le<bool>()) {
     obj.snapshot = make_lw_shared<snapshot>();
