@@ -6,6 +6,9 @@
 
 #include <fmt/format.h>
 
+#include "storage/storage.hh"
+#include "util/error.hh"
+
 namespace rafter::storage {
 
 using namespace seastar;
@@ -81,7 +84,13 @@ index& index::update(index::entry e) {
   auto [idx, found] = binary_search(
       0, _entries.size() - 1, e.first_index);
   if (!found) [[unlikely]] {
-    return *this;
+    throw util::logic_error(
+        l,
+        util::code::out_of_range,
+        "index::update: first index {} out of range [{}, {}]",
+        e.first_index,
+        _entries.front().first_index,
+        _entries.back().last_index);
   }
   auto st = _entries.begin();
   std::advance(st, idx + 1);
@@ -113,9 +122,6 @@ pair<uint64_t, bool> index::binary_search(
 }
 
 span<const index::entry> index::query(protocol::hint range) const noexcept {
-  if (range.low > range.high) {
-    // TODO: throw
-  }
   if (range.low <= _compacted_to) {
     return {};
   }
@@ -126,13 +132,13 @@ span<const index::entry> index::query(protocol::hint range) const noexcept {
   if (!found) {
     return {};
   }
-  uint64_t end = start;
+  uint64_t end = start + 1;
   for (; end < _entries.size(); ++end) {
-    if (range.high <= _entries[end].first_index) {
+    if (range.high < _entries[end].first_index) {
       break;
     }
-    if (end > start &&
-        _entries[end - 1].last_index + 1 != _entries[end].first_index) {
+    if (_entries[end - 1].last_index + 1 !=
+        _entries[end].first_index) [[unlikely]] {
       break;
     }
   }
@@ -156,12 +162,21 @@ uint64_t index::compaction() {
     return UINT64_MAX;
   }
   uint64_t max_obsolete = UINT64_MAX;
-  for (auto&& e : _entries) {
-    if (e.last_index <= _compacted_to) {
-      max_obsolete = e.filename;
-      if (!e.is_normal()) {
-        // throw not a regular entry error
+  uint64_t prev_filename = _entries.front().filename;
+  for (size_t i = 1; i < _entries.size(); ++i) {
+    const auto& e = _entries[i];
+    const auto& prev_e = _entries[i-1];
+    if (!e.is_normal()) [[unlikely]] {
+      throw util::logic_error(
+          l,
+          util::code::out_of_range,
+          "index::compaction: invalid type in {}", e.debug_string());
+    }
+    if (e.filename != prev_filename) {
+      if (prev_e.last_index <= _compacted_to) {
+        max_obsolete = prev_e.filename;
       }
+      prev_filename = e.filename;
     }
   }
   return max_obsolete;
@@ -175,6 +190,10 @@ void index::remove_obsolete_entries(uint64_t max_obsolete_filename) {
     }
   }
   _entries.erase(_entries.begin(), it);
+}
+
+std::string index::debug_string() const {
+  return "NOT IMPLEMENTED";
 }
 
 void node_index::clear() noexcept {
@@ -274,6 +293,14 @@ lw_shared_ptr<node_index> index_group::get_node_index(group_id id) {
 
 span<const index::entry> index_group::query(group_id id, protocol::hint range) {
   assert(id.valid());
+  if (range.low > range.high) [[unlikely]] {
+    throw util::logic_error(
+        l,
+        util::code::out_of_range,
+        "index_group::query: invalid range [{}, {}]",
+        range.low,
+        range.high);
+  }
   return get_node_index(id)->query(range);
 }
 

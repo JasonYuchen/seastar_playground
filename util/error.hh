@@ -52,6 +52,11 @@ class base_error : std::runtime_error {
   enum code _e;
 };
 
+class runtime_error : public base_error {
+ public:
+  using base_error::base_error;
+};
+
 class io_error : public base_error {
  public:
   using base_error::base_error;
