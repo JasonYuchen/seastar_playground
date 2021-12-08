@@ -25,12 +25,13 @@ enum class code : uint8_t {
   corruption,
   failed_precondition,
   unknown,
+  invalid,
   num_of_codes,
 };
 
 const char* status_string(enum code e);
 
-class base_error : std::runtime_error {
+class base_error : public std::runtime_error {
  public:
   explicit base_error(enum code e)
       : std::runtime_error(status_string(e)), _e(e) {}

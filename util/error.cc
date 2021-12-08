@@ -19,6 +19,7 @@ const char* status_string(enum code e) {
       "cancelled",
       "corruption",
       "failed_precondition",
+      "invalid",
       "unknown"
   };
   static_assert(sizeof(s)/sizeof(s[0]) == static_cast<int>(code::num_of_codes));

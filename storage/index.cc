@@ -6,7 +6,7 @@
 
 #include <fmt/format.h>
 
-#include "storage/storage.hh"
+#include "storage/logger.hh"
 #include "util/error.hh"
 
 namespace rafter::storage {
@@ -159,9 +159,9 @@ bool index::file_in_use(uint64_t filename) const noexcept {
 
 uint64_t index::compaction() {
   if (empty()) {
-    return UINT64_MAX;
+    return 0;
   }
-  uint64_t max_obsolete = UINT64_MAX;
+  uint64_t max_obsolete = 0;
   uint64_t prev_filename = _entries.front().filename;
   for (size_t i = 1; i < _entries.size(); ++i) {
     const auto& e = _entries[i];
@@ -226,6 +226,7 @@ bool node_index::update_state(const index::entry& e) {
   }
   return false;
 }
+
 bool node_index::file_in_use(uint64_t filename) {
   return _snapshot.filename == filename ||
       _state.filename == filename ||
@@ -284,11 +285,13 @@ protocol::hard_state index_group::get_hard_state(group_id id) {
 
 lw_shared_ptr<node_index> index_group::get_node_index(group_id id) {
   assert(id.valid());
-  if (_indexes.contains(id)) {
-    return _indexes[id];
+  auto it = _indexes.find(id);
+  if (it != _indexes.end()) {
+    return it->second;
   }
-  _indexes[id] = make_lw_shared<node_index>(id);
-  return _indexes[id];
+  auto ni = make_lw_shared<node_index>(id);
+  _indexes[id] = ni;
+  return ni;
 }
 
 span<const index::entry> index_group::query(group_id id, protocol::hint range) {
