@@ -7,6 +7,8 @@
 #include <seastar/core/align.hh>
 #include <seastar/core/coroutine.hh>
 
+#include "util/error.hh"
+
 using namespace seastar;
 using namespace std;
 
@@ -219,9 +221,10 @@ void fragmented_temporary_buffer::istream::next_fragment() {
 
 void fragmented_temporary_buffer::istream::check_range(size_t size) {
   if (bytes_left() < size) [[unlikely]] {
-    throw std::out_of_range(format(
-        "fragmented_temporary_buffer::istream read error, "
-        "want={}, left={}", size, _bytes_left));
+    throw util::io_error(
+        util::code::short_read,
+        "fragmented_temporary_buffer::istream read error, want={}, left={}",
+        size, _bytes_left);
   }
 }
 
