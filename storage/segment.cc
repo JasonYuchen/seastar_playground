@@ -4,25 +4,25 @@
 
 #include "segment.hh"
 
-#include <charconv>
-#include <memory>
-
 #include <seastar/core/reactor.hh>
 
 #include "protocol/serializer.hh"
-#include "storage/storage.hh"
-#include "util/endian.hh"
+#include "storage/logger.hh"
+#include "util/error.hh"
 
 using namespace seastar;
 using namespace std;
 
 namespace rafter::storage {
 
-future<unique_ptr<segment>> segment::open(string filepath, bool existing) {
+future<unique_ptr<segment>> segment::open(
+    uint64_t filename, string filepath, bool existing) {
 
   // TODO: tune seastar::file_open_options
   l.debug("open segment:{}, existing:{}", filepath, existing);
+  assert(filename > 0);
   auto s = make_unique<segment>();
+  s->_filename = filename;
   s->_filepath = std::move(filepath);
   if (existing) {
     // an existing segment is read-only in a new start
@@ -32,7 +32,7 @@ future<unique_ptr<segment>> segment::open(string filepath, bool existing) {
   } else {
     s->_file = co_await open_file_dma(
         s->_filepath, open_flags::create | open_flags::rw);
-    s->_tail.reserve(s->_file.disk_write_dma_alignment());
+    s->_tail.reserve(util::fragmented_temporary_buffer::default_fragment_size);
   }
   co_return s;
 }
@@ -50,48 +50,135 @@ future<uint64_t> segment::append(const protocol::update& update) {
   out_stream.write(_tail);
   _tail.clear();
   written_bytes += protocol::serialize(update, out_stream);
-  out_stream.remove_suffix_to_fit();
-  assert(buffer.bytes() == written_bytes);
+  uint64_t last_chunk_remove = align_down(
+      buffer.bytes() - written_bytes, _file.disk_write_dma_alignment());
+  buffer.remove_suffix(last_chunk_remove);
 
   for (auto it : buffer) {
     assert(_aligned_pos % _file.disk_write_dma_alignment() == 0);
+    assert(it.size() % _file.disk_write_dma_alignment() == 0);
     auto bytes = co_await _file.dma_write(_aligned_pos, it.data(), it.size());
     if (bytes < it.size()) {
-      // TODO: throw short_write?
+      co_return coroutine::make_exception(util::io_error(
+          l, util::code::short_write,
+          "{} segment::append: short write, expect:{}, actual:{}",
+          update.group_id.to_string(), it.size(), bytes));
     }
-    auto aligned_bytes = align_down(bytes, _file.disk_write_dma_alignment());
-    _aligned_pos += aligned_bytes;
-    if (aligned_bytes < bytes) {
-      // should only occur once in the last iterator
-      _tail.append(it.data() + aligned_bytes, bytes - aligned_bytes);
+    if (written_bytes < it.size()) {
+      // the last chunk
+      _tail.append(it.data(), written_bytes);
+      written_bytes -= _tail.size();
+      break;
     }
+    _aligned_pos += bytes;
+    written_bytes -= bytes;
   }
-
-  assert(_bytes + written_bytes == _aligned_pos + _tail.size());
+  assert(written_bytes == 0);
   _bytes = _aligned_pos + _tail.size();
   co_return _bytes;
 }
 
-future<protocol::update> segment::query(const index::entry& entry) const {
-  if (entry.offset + entry.length > _bytes) {
-    l.error("query out of range, offset:{} + length:{} > size:{} of segment:{}",
-            entry.offset, entry.length, _bytes, _filepath);
-    // TODO: refine exception type
-    co_return coroutine::make_exception(std::out_of_range("segment::query"));
+future<> segment::query(
+    index::entry i,
+    function<seastar::future<>(const protocol::update& up)> f) const {
+  if (i.filename != _filename) [[unlikely]] {
+    throw util::logic_error(
+        l, util::code::failed_precondition,
+        "segment::query: filename mismatch, expect:{}, actual:{}",
+        i.filename, _filename);
   }
-  // TODO: tune file stream options
-  auto file_in_stream = seastar::make_file_input_stream(_file, entry.offset);
+  auto file_in_stream = make_file_input_stream(_file, i.offset);
   auto buffer = co_await util::fragmented_temporary_buffer::from_stream_exactly(
-      file_in_stream, entry.length);
+      file_in_stream, i.length);
   auto in_stream = buffer.as_istream();
-  protocol::update update;
-  auto read_bytes = protocol::deserialize(update, in_stream);
-  if (read_bytes != entry.length) {
-    l.error("inconsistent length, expect:{}, actual:{}",
-            entry.length, read_bytes);
-    co_return coroutine::make_exception(std::out_of_range("segment::query"));
+  protocol::update up;
+  protocol::deserialize(up, in_stream);
+  co_await f(up);
+  co_return;
+}
+
+future<> segment::query(
+    span<const index::entry> indexes,
+    protocol::log_entry_vector& entries,
+    size_t& left_bytes) const {
+  if (indexes.empty()) {
+    co_return;
   }
-  co_return update;
+  for (const auto& i : indexes) {
+    if (i.filename != _filename) [[unlikely]] {
+      throw util::logic_error(
+          l, util::code::failed_precondition,
+          "segment::query: filename mismatch, expect:{}, actual:{}",
+          i.filename, _filename);
+    }
+  }
+  uint64_t max_pos = indexes.back().offset + indexes.back().length;
+  if (max_pos > _bytes) {
+    throw util::logic_error(
+        l, util::code::out_of_range,
+        "segment::query: file size out-of-range, expect:{}, actual:{}",
+        max_pos, _bytes);
+  }
+
+  // TODO: tune file stream options
+  auto file_in_stream = make_file_input_stream(_file, indexes.front().offset);
+  util::fragmented_temporary_buffer::fragment_list fragments;
+  size_t size = 0;
+  size_t last_offset = indexes.front().offset;
+  for (const auto& i : indexes) {
+    co_await file_in_stream.skip(i.offset - last_offset);
+    fragments.emplace_back(co_await file_in_stream.read_exactly(i.length));
+    last_offset = i.offset + i.length;
+    size += i.length;
+    if (fragments.back().size() < i.length) {
+      throw util::io_error(
+          l, util::code::short_read,
+          "segment::query: short read, expect:{}, actual:{}",
+          i.length, fragments.back().size());
+    }
+  }
+  util::fragmented_temporary_buffer buffer{std::move(fragments), size};
+  auto in_stream = buffer.as_istream();
+  uint64_t expected_index = indexes.front().first_index;
+  for (const auto& i : indexes) {
+    protocol::update up;
+    auto length = protocol::deserialize(up, in_stream);
+    if (length != i.length) [[unlikely]] {
+      throw util::io_error(
+          l, util::code::corruption,
+          "{} segment::query: inconsistent update length found in segment:{}, "
+          "expect:{}, actual:{}",
+          up.group_id.to_string(), _filepath, i.length, length);
+    }
+    for (auto& ent : up.entries_to_save) {
+      if (ent->id.index < expected_index) {
+        continue;
+      }
+      if (ent->id.index > i.last_index) {
+        break;
+      }
+      if (ent->id.index != expected_index) [[unlikely]] {
+        throw util::io_error(
+            l, util::code::corruption,
+            "segment::query: log hole found in segment:{}, "
+            "expect:{}, actual:{}",
+            _filepath, expected_index, ent->id.index);
+      }
+      if (left_bytes < ent->bytes()) {
+        left_bytes = 0;
+        co_return;
+      }
+      entries.emplace_back(std::move(ent));
+      left_bytes -= ent->bytes();
+      expected_index++;
+    }
+  }
+
+  if (in_stream.bytes_left()) {
+    l.warn("segment::query: unexpected trailing data in segment:{}, {} bytes",
+           _filepath, in_stream.bytes_left());
+  }
+  co_return;
 }
 
 future<> segment::sync() {
@@ -103,49 +190,55 @@ future<> segment::close() {
 }
 
 future<> segment::list_update(
-    function<future<>(
-        const protocol::update&, uint64_t, uint64_t, uint64_t)> next) const {
-  // TODO(jason): refine this routine with new fragmented_temporary_buffer
-  string_view filename = _filepath;
-  filename.remove_prefix(filename.find_last_of('/') + 1);
-  unsigned shard_id = 0;
-  uint64_t filename_id = 0;
-  auto st = filename.data();
-  from_chars(st, st + 6, shard_id);
-  from_chars(st + 6, st + filename.size(), filename_id);
-  if (shard_id != seastar::this_shard_id()) {
-    l.error("parsing segment:{} generated by shard:{} in shard:{}",
-            _filepath, shard_id, seastar::this_shard_id());
-    // TODO: refine exception type
-    throw std::runtime_error("segment::generate_index");
-  }
-
-  l.debug("generate index for segment:{}", _filepath);
+    function<future<>(const protocol::update& up, index::entry e)> next) const {
+  l.info("reconstructing index for segment:{}", _filepath);
   if (_bytes == 0) {
     co_return;
   }
   // TODO: tune file stream options
-  uint64_t pos = 0;
-  auto in_stream = seastar::make_file_input_stream(_file, pos);
+  uint64_t offset = 0;
+  auto in_stream = seastar::make_file_input_stream(_file, offset);
   while (true) {
     try {
       // TODO: index::entry only need some metadata from update, avoid parsing
       //  the whole data
-      protocol::update update;
-      auto read_bytes = co_await protocol::deserialize_meta(update, in_stream);
-      if (read_bytes == 0) {
+      protocol::update up;
+      auto length = co_await protocol::deserialize_meta(up, in_stream);
+      if (length == 0) {
         break;
       }
-      co_await next(update, filename_id, pos, read_bytes);
-      pos += read_bytes;
-    } catch (std::exception &e) {
+      index::entry e {
+          .id = up.group_id,
+          .filename = _filename,
+          .offset = offset,
+          .length = length,
+      };
+      co_await next(up, e);
+      offset += length;
+    } catch (std::exception& e) {
       // TODO: refine exception type
       l.warn("corrupted data found in segment:{}, offset:{}",
-             _filepath, pos);
+             _filepath, offset);
       break;
     }
   }
   co_return;
+}
+
+segment::operator bool() const {
+  return _file.operator bool();
+}
+
+string segment::debug() const {
+  return fmt::format(
+      "segment[filename={}, fullpath={}, valid_file={}, bytes={}, "
+      "aligned_pos={}, tail_size={}]",
+      _filename,
+      _filepath,
+      _file.operator bool(),
+      _bytes,
+      _aligned_pos,
+      _tail.size());
 }
 
 }  // namespace rafter::storage

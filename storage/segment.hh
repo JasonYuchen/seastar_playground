@@ -28,28 +28,38 @@ namespace rafter::storage {
 
 class segment {
  public:
+  // TODO: use make_lw_shared and 2 phase construction
+  // TODO: use lock to protect append
   segment() = default;
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
   static seastar::future<std::unique_ptr<segment>> open(
-      std::string filepath, bool existing = false);
+      uint64_t filename, std::string filepath, bool existing = false);
 
   uint64_t bytes() const noexcept;
 
   // return the file length after appending the update
   seastar::future<uint64_t> append(const protocol::update& update);
-  // TODO(jason): add batch append method
-  //seastar::future<uint64_t> append(std::span<const protocol::update> updates);
-  seastar::future<protocol::update> query(const index::entry& entry) const;
-  // TODO(jason): add batch query method
-  //seastar::future<std::vector<protocol::update>> query(
-  //    std::span<const index::entry> entries) const;
+  seastar::future<> query(
+      index::entry i,
+      std::function<seastar::future<>(const protocol::update& up)> f) const;
+  // read segment and append saved entries to entries
+  seastar::future<> query(
+      std::span<const index::entry> indexes,
+      protocol::log_entry_vector& entries,
+      size_t& left_bytes) const;
   seastar::future<> sync();
   seastar::future<> close();
-  seastar::future<std::vector<index::entry>> generate_index() const;
+  seastar::future<> list_update(
+      std::function<seastar::future<>(
+          const protocol::update& up, index::entry e)> next) const;
+  operator bool() const;
+
+  std::string debug() const;
 
  private:
   // TODO: scheduling group
+  uint64_t _filename = 0;
   std::string _filepath;
   seastar::file _file;
   uint64_t _bytes = 0;
