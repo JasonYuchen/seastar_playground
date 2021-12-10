@@ -7,30 +7,31 @@
 #include <seastar/core/queue.hh>
 #include <seastar/core/shared_mutex.hh>
 
-#include "index.hh"
-#include "segment.hh"
+#include "nodehost/config.hh"
+#include "storage/index.hh"
+#include "storage/segment.hh"
 
 namespace rafter::storage {
 
 struct raft_state {
   protocol::hard_state hard_state;
-  uint64_t first_index;
-  uint64_t entry_count;
+  uint64_t first_index = protocol::log_id::invalid_index;
+  uint64_t entry_count = 0;
 };
 
 // sharded<segment_manager>
 class segment_manager {
  public:
   // TODO: storage configuration class
-  explicit segment_manager(std::string log_dir);
-  ~segment_manager();
+  explicit segment_manager(nodehost::config_ptr config);
+  ~segment_manager() = default;
   seastar::future<> start();
   seastar::future<> stop();
 
   // TODO: implement logdb
   seastar::future<bool> append(const protocol::update& up);
   seastar::future<> remove(protocol::group_id id, uint64_t index);
-  seastar::future<protocol::snapshot> query_snapshot(protocol::group_id id);
+  seastar::future<protocol::snapshot_ptr> query_snapshot(protocol::group_id id);
   seastar::future<raft_state> query_raft_state(
       protocol::group_id id, uint64_t last_index);
   seastar::future<protocol::log_entry_vector> query_entries(
@@ -40,6 +41,7 @@ class segment_manager {
   std::string debug_string() const noexcept;
 
  private:
+  void must_open() const;
   seastar::future<> parse_existing_segments(seastar::directory_entry s);
   seastar::future<> update_index(const protocol::update& up, index::entry e);
   seastar::future<> rolling();
@@ -49,12 +51,11 @@ class segment_manager {
       std::string_view name);
 
  private:
+  const nodehost::config_ptr _config;
   bool _open = false;
   // segments dir, e.g. <data_dir>
-  const std::string _log_dir;
+  std::string _log_dir;
   // TODO: more options
-  static const uint64_t _rolling_size = 1024 * 1024 * 1024;
-  static const uint64_t _gc_queue_length = 100;
   static constexpr char LOG_SUFFIX[] = "log";
   static constexpr uint64_t INVALID_FILENAME = 0;
   // used to allocate new segments
@@ -70,6 +71,7 @@ class segment_manager {
   std::optional<seastar::future<>> _gc_service;
 
   seastar::shared_mutex _mutex;
+  bool _need_sync = false;
 };
 
 }  // namespace rafter::storage
