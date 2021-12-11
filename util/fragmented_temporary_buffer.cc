@@ -16,11 +16,11 @@ namespace rafter::util {
 
 fragmented_temporary_buffer::fragmented_temporary_buffer(
     size_t size, size_t alignment, size_t fragment_size) {
-  fragment_size = align_up(fragment_size, alignment);
+  _fragment_size = align_up(fragment_size, alignment);
   size = align_up(size, fragment_size);
   auto count = size / fragment_size;
   for (size_t i = 0; i < count; ++i) {
-    add_fragment(fragment_size);
+    add_fragment(_fragment_size);
   }
   _bytes = size;
   _alignment = alignment;
@@ -97,7 +97,7 @@ fragmented_temporary_buffer::ostream
 fragmented_temporary_buffer::as_ostream() noexcept {
   // usually we will write immediately, make sure we have at least 1 fragment
   if (empty()) {
-    add_fragment();
+    add_fragment(_fragment_size);
   }
   return ostream{*this, _fragments.begin(), _bytes};
 }
@@ -285,7 +285,7 @@ void fragmented_temporary_buffer::ostream::remove_suffix_to_fit() noexcept {
 void fragmented_temporary_buffer::ostream::next_fragment() {
   _bytes_left -= _current->size();
   if (!_bytes_left) {
-    _buffer.add_fragment();
+    _buffer.add_fragment(_buffer._fragment_size);
     _current++;
     _bytes_left += _current->size();
   } else {

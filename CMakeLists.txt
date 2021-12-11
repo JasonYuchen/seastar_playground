@@ -23,8 +23,16 @@ add_subdirectory(3rd)
 add_subdirectory(test)
 
 set(SOURCES
-#    core/raft.cc
-#    core/raft.hh
+    core/logger.cc
+    core/logger.hh
+    core/raft.cc
+    core/raft.hh
+    nodehost/config.cc
+    nodehost/config.hh
+    nodehost/logger.cc
+    nodehost/logger.hh
+    nodehost/nodehost.cc
+    nodehost/nodehost.hh
 #    protocol/client.hh
     protocol/raft.cc
     protocol/raft.hh
@@ -34,16 +42,16 @@ set(SOURCES
     storage/index.hh
 #    storage/logdb.cc
 #    storage/logdb.hh
+    storage/logger.cc
+    storage/logger.hh
     storage/segment.cc
     storage/segment.hh
     storage/segment_manager.cc
     storage/segment_manager.hh
 #    storage/snapshot.cc
 #    storage/snapshot.hh
-    storage/segment.cc
-    storage/segment.hh
-    storage/storage.cc
-    storage/storage.hh
+    transport/logger.cc
+    transport/logger.hh
     util/endian.hh
     util/error.cc
     util/error.hh

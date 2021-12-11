@@ -55,6 +55,19 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, from_stream) {
   co_return;
 }
 
+RAFTER_TEST_F(fragmented_temporary_buffer_basic, fragment_size_is_honored) {
+  _buffer = std::make_unique<fragmented_temporary_buffer>(0, 1024, 2048);
+  EXPECT_EQ(_buffer->bytes(), 0);
+  auto os = _buffer->as_ostream();
+  os.fill(0, 4096);
+  EXPECT_EQ(_buffer->bytes(), 4096);
+  os.fill(0, 1024);
+  EXPECT_EQ(_buffer->bytes(), 6144);
+  os.remove_suffix_to_fit();
+  EXPECT_EQ(_buffer->bytes(), 5120);
+  co_return;
+}
+
 class fragmented_temporary_buffer_fit
     : public ::testing::Test,
       public ::testing::WithParamInterface<int> {

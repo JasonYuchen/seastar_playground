@@ -26,6 +26,7 @@ enum class code : uint8_t {
   failed_precondition,
   unknown,
   invalid,
+  no_data,
   num_of_codes,
 };
 

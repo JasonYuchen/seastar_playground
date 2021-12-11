@@ -83,6 +83,7 @@ class fragmented_temporary_buffer {
   fragment_list _fragments;
   size_t _bytes = 0;
   size_t _alignment = default_fragment_alignment;
+  size_t _fragment_size = default_fragment_size;
 };
 
 class fragmented_temporary_buffer::iterator {
