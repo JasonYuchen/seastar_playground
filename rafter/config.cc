@@ -4,10 +4,10 @@
 
 #include "config.hh"
 
-#include "nodehost/logger.hh"
+#include "rafter/logger.hh"
 #include "util/error.hh"
 
-namespace rafter::nodehost {
+namespace rafter {
 
 void config::validate() const {
   if (data_dir.empty()) {
@@ -15,4 +15,4 @@ void config::validate() const {
   }
 }
 
-}  // namespace rafter::nodehost
+}  // namespace rafter

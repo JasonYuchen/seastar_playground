@@ -27,12 +27,12 @@ set(SOURCES
     core/logger.hh
     core/raft.cc
     core/raft.hh
-    nodehost/config.cc
-    nodehost/config.hh
-    nodehost/logger.cc
-    nodehost/logger.hh
-    nodehost/nodehost.cc
-    nodehost/nodehost.hh
+    rafter/config.cc
+    rafter/config.hh
+    rafter/logger.cc
+    rafter/logger.hh
+    rafter/nodehost.cc
+    rafter/nodehost.hh
 #    protocol/client.hh
     protocol/raft.cc
     protocol/raft.hh
@@ -50,6 +50,8 @@ set(SOURCES
     storage/segment_manager.hh
 #    storage/snapshot.cc
 #    storage/snapshot.hh
+    storage/stats.cc
+    storage/stats.hh
     transport/logger.cc
     transport/logger.hh
     util/endian.hh

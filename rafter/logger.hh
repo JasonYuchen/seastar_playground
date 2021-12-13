@@ -6,8 +6,8 @@
 
 #include <seastar/util/log.hh>
 
-namespace rafter::nodehost {
+namespace rafter {
 
 extern seastar::logger l;
 
-}  // namespace rafter::nodehost
+}  // namespace rafter
