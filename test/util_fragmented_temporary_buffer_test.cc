@@ -159,4 +159,4 @@ RAFTER_TEST_P(fragmented_temporary_buffer_segment, read_write_across_fragments) 
   co_return;
 }
 
-}
+}  // namespace

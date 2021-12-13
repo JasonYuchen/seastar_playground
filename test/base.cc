@@ -34,7 +34,7 @@ void base::SetUp() {
           co_return;
         });
   });
-  fut.wait();
+  fut.get();
 }
 
 void base::TearDown() {
@@ -47,7 +47,7 @@ void base::TearDown() {
             [] { return make_ready_future<>(); }));
   }
   for (auto&& fut : futs) {
-    fut.wait();
+    fut.get();
   }
   auto ret = ::pthread_kill(_engine_thread.native_handle(), SIGTERM);
   if (ret) {
@@ -59,7 +59,7 @@ void base::TearDown() {
 
 void base::submit(std::function<seastar::future<>()> func) {
   seastar::alien::submit_to(
-      *seastar::alien::internal::default_instance, 0, std::move(func)).wait();
+      *seastar::alien::internal::default_instance, 0, std::move(func)).get();
 }
 
 seastar::logger l{"rafter_test"};

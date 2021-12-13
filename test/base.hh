@@ -53,7 +53,7 @@
         *seastar::alien::internal::default_instance,                           \
         0,                                                                     \
         [this] { return this->SeastarBody(); });                               \
-    fut.wait();                                                                \
+    fut.get();                                                                 \
   }                                                                            \
   seastar::future<>                                                            \
   GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::SeastarBody()
@@ -100,7 +100,7 @@
         *seastar::alien::internal::default_instance,                           \
         0,                                                                     \
         [this] { return this->SeastarBody(); });                               \
-    fut.wait();                                                                \
+    fut.get();                                                                 \
   }                                                                            \
   seastar::future<>                                                            \
   GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::SeastarBody()

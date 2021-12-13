@@ -5,6 +5,7 @@
 #pragma once
 
 #include <functional>
+#include <sstream>
 #include <type_traits>
 #include <utility>
 
@@ -18,5 +19,15 @@ struct pair_hasher {
            std::hash<std::remove_cvref_t<decltype(two)>>()(two);
   }
 };
+
+template<typename T>
+// TODO: concept
+std::string print(T items) {
+  std::stringstream ss;
+  for (const auto& item : items) {
+    ss << item.debug_string() << std::endl;
+  }
+  return ss.str();
+}
 
 }  // namespace rafter::util

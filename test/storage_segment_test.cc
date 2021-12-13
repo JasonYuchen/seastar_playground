@@ -7,6 +7,8 @@
 #include <random>
 
 #include "test/base.hh"
+#include "test/util.hh"
+#include "util/util.hh"
 
 using namespace rafter::protocol;
 using namespace rafter::storage;
@@ -20,86 +22,120 @@ namespace {
 class segment_test : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
+    _config = rafter::test::util::default_config();
     base::submit([]() -> future<> {
-      co_await recursive_touch_directory(test_dir);
+      co_await recursive_touch_directory(_config.data_dir);
     });
   }
 
   static void TearDownTestSuite() {
     base::submit([]() -> future<> {
-      co_await recursive_remove_directory(test_dir);
+      co_await recursive_remove_directory(_config.data_dir);
     });
   }
 
   void SetUp() override {
     base::submit([this]() -> future<> {
       _segment = co_await segment::open(
-          1, test_dir + "/" + test_file);
-      std::vector<index::entry> ies;
-      auto ups = generate_updates();
-      for (const auto& up : ups) {
-        auto&& ie = _indexes.emplace_back();
-        ie.id = up.group_id;
-        ie.first_index = up.first_index;
-        ie.last_index = up.last_index;
-        ie.filename = 1;
-        ie.offset = _segment->bytes();
-        ie.length = co_await _segment->append(up) - ie.offset;
-        ie.type = index::entry::type::normal;
-        EXPECT_EQ(ie.offset, 548 * ie.first_index / 5);
-        EXPECT_EQ(ie.length, 548);
-      }
+          _segment_filename,
+          segment::form_path(_config.data_dir, _segment_filename),
+          false);
     });
   }
 
   void TearDown() override {
     base::submit([this]() -> future<> {
+      _gids.clear();
+      _updates.clear();
+      _index_group = {};
       co_await _segment->close();
-      co_await remove_file(test_dir + "/" + test_file);
+      co_await remove_file(
+          segment::form_path(_config.data_dir, _segment_filename));
       // data created on a shard must also be released in this shard
       _segment.reset(nullptr);
     });
   }
 
-  std::vector<update> generate_updates() {
-    std::vector<update> updates;
-    hard_state state {.term = 1, .vote = 2, .commit = 0};
-    for (size_t i = 0; i < 10; ++i) {
-      auto&& up = updates.emplace_back();
-      up.group_id = {.cluster = 2, .node = 1};
-      state.term += i % 2;
-      state.commit++;
-      up.state = state;
-      up.first_index = i * 5 + 1;
-      up.last_index = (i + 1) * 5;
-      for (size_t j = up.first_index; j <= up.last_index; ++j) {
-        up.entries_to_save.emplace_back(make_lw_shared<log_entry>());
-        auto&& e = *up.entries_to_save.back();
-        e.id = {.term = state.term, .index = j};
-        e.payload = "test_payload";
-      }
-      up.snapshot = make_lw_shared<snapshot>();
-      auto&& sn = *up.snapshot;
-      sn.group_id = up.group_id;
-      sn.log_id = {.term = state.term, .index = up.last_index};
-      sn.file_path = "test_snapshot";
+  future<> fulfill_segment() {
+    EXPECT_TRUE(*_segment);
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::uniform_int_distribution<int> r(0, 100);
+    std::vector<std::vector<update>> gid_updates;
+    for (auto gid : _gids) {
+      gid_updates.emplace_back(
+          rafter::test::util::make_updates(gid, 10, 1, 3, 4));
     }
-    return updates;
+    for (size_t i = 0; i < 10; ++i) {
+      std::vector<update> shuffled;
+      for (size_t j = 0; j < _gids.size(); ++j) {
+        shuffled.emplace_back(gid_updates[j][i]);
+      }
+      std::shuffle(shuffled.begin(), shuffled.end(), g);
+      _updates.insert(_updates.end(), shuffled.begin(), shuffled.end());
+    }
+    for (const auto& up : _updates) {
+      index::entry ie;
+      ie.filename = 1;
+      ie.offset = _segment->bytes();
+      ie.length = co_await _segment->append(up) - ie.offset;
+      _index_group.update(up, ie);
+      _index.emplace_back(ie);
+    }
   }
 
-  static inline const std::string test_dir = "test_data";
-  static inline const std::string test_file = "00000_00000000000000000001.log";
+  static inline rafter::config _config;
+  static inline constexpr uint64_t _segment_filename = 1;
+  std::vector<group_id> _gids;
+  std::vector<update> _updates;
+  std::vector<index::entry> _index;
+  index_group _index_group;
   std::unique_ptr<segment> _segment;
-  std::vector<index::entry> _indexes;
 };
 
 RAFTER_TEST_F(segment_test, create) {
-  EXPECT_TRUE(*_segment);
-  l.info("{}", _segment->debug());
+  EXPECT_TRUE(*_segment) << _segment->debug_string();
+  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+  co_await fulfill_segment();
+  EXPECT_GT(_segment->bytes(), 0) << _segment->debug_string();
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, open) {
+RAFTER_TEST_F(segment_test, open_and_list) {
+  index_group ig;
+  std::vector<index::entry> ie;
+  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+  co_await fulfill_segment();
+  co_await _segment->list_update(
+      [&ig, &ie](const update& up, index::entry e) -> future<> {
+        ig.update(up, e);
+        ie.emplace_back(e);
+        co_return;
+      });
+  if (ig != _index_group || ie != _index) {
+    l.error("failed to list_update in an on-the-fly segment");
+    EXPECT_TRUE(false) << "Write:\n" << rafter::util::print(_index)
+                       << "Read:\n" << rafter::util::print(ie);
+  }
+
+  auto temp_segment = co_await segment::open(
+      _segment_filename,
+      segment::form_path(_config.data_dir, _segment_filename),
+      true);
+  EXPECT_TRUE(*temp_segment) << temp_segment->debug_string();
+  ig = index_group{};
+  ie.clear();
+  co_await _segment->list_update(
+      [&ig, &ie](const update& up, index::entry e) -> future<> {
+        ig.update(up, e);
+        ie.emplace_back(e);
+        co_return;
+      });
+  if (ig != _index_group || ie != _index) {
+    l.error("failed to list_update in an archived segment");
+    EXPECT_TRUE(false) << "Write:\n" << rafter::util::print(_index)
+                       << "Read:\n" << rafter::util::print(ie);
+  }
   co_return;
 }
 
@@ -120,10 +156,6 @@ RAFTER_TEST_F(segment_test, query_snapshot) {
 }
 
 RAFTER_TEST_F(segment_test, batch_query_entry) {
-  co_return;
-}
-
-RAFTER_TEST_F(segment_test, list_update) {
   co_return;
 }
 
