@@ -8,6 +8,7 @@
 
 #include "test/base.hh"
 #include "test/util.hh"
+#include "util/error.hh"
 #include "util/util.hh"
 
 using namespace rafter::protocol;
@@ -144,6 +145,20 @@ RAFTER_TEST_F(segment_test, append) {
 }
 
 RAFTER_TEST_F(segment_test, query_entry) {
+  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+  co_await fulfill_segment();
+  for (size_t i = 0; i < _updates.size(); ++i) {
+    auto up = co_await _segment->query(_index[i]);
+    if (!rafter::test::util::compare(up, _updates[i])) {
+      EXPECT_TRUE(false) << "inconsistent update";
+      l.error("the {} update not equal with {}", i, _index[i].debug_string());
+      co_return;
+    }
+  }
+  auto ie = _index[0];
+  ie.filename = _segment_filename + 1;
+  EXPECT_THROW(co_await _segment->query(ie), rafter::util::logic_error)
+      << "incorrect filename should be reported: " << _segment->debug_string();
   co_return;
 }
 

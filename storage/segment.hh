@@ -40,22 +40,29 @@ class segment {
 
   // return the file length after appending the update
   seastar::future<uint64_t> append(const protocol::update& update);
-  seastar::future<> query(
-      index::entry i,
-      std::function<seastar::future<>(const protocol::update& up)> f) const;
-  // read segment and append saved entries to entries
-  seastar::future<> query(
+  seastar::future<protocol::update> query(index::entry i) const;
+  // read segment and append saved entries to entries, return left bytes
+  seastar::future<size_t> query(
       std::span<const index::entry> indexes,
       protocol::log_entry_vector& entries,
-      size_t& left_bytes) const;
+      size_t left_bytes) const;
   seastar::future<> sync();
   seastar::future<> close();
+  seastar::future<> remove();
   seastar::future<> list_update(
       std::function<seastar::future<>(
           const protocol::update& up, index::entry e)> next) const;
   operator bool() const;
 
-  std::string debug() const;
+  static constexpr char SUFFIX[] = "log";
+  static constexpr uint64_t INVALID_FILENAME = 0;
+  // generate segment name, format {shard_id:05d}_{filename:020d}.log
+  static std::string form_name(uint64_t filename);
+  static std::string form_path(std::string_view dir, uint64_t filename);
+  // parse segment name, extract shard_id and filename
+  static std::pair<unsigned, uint64_t> parse_name(std::string_view name);
+
+  std::string debug_string() const;
 
  private:
   // TODO: scheduling group
