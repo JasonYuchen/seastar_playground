@@ -35,7 +35,6 @@ bool index::entry::is_compaction() const noexcept {
 }
 
 bool index::entry::try_merge(index::entry& e) noexcept {
-  assert(id == e.id);
   if (last_index + 1 == e.first_index &&
       offset + length == e.offset &&
       filename == e.filename &&
@@ -49,10 +48,8 @@ bool index::entry::try_merge(index::entry& e) noexcept {
 }
 
 std::string index::entry::debug_string() const {
-  return fmt::format("entry[gid:[{:05d}:{:05d}], fi:{}, li:{}, "
-      "fn:{}, off:{}, len:{}, type:{}]",
-      id.cluster, id.node, first_index, last_index,
-      filename, offset, length, type);
+  return fmt::format("entry[fi:{}, li:{}, fn:{}, off:{}, len:{}, type:{}]",
+      first_index, last_index, filename, offset, length, type);
 }
 
 index& index::set_compacted_to(uint64_t compacted_to) noexcept {
@@ -87,7 +84,8 @@ index& index::update(index::entry e) {
     throw util::logic_error(
         l,
         util::code::out_of_range,
-        "index::update: first index {} out of range [{}, {}]",
+        "{} index::update: first index {} out of range [{}, {}]",
+        _gid.to_string(),
         e.first_index,
         _entries.front().first_index,
         _entries.back().last_index);
@@ -159,10 +157,10 @@ bool index::file_in_use(uint64_t filename) const noexcept {
 
 uint64_t index::compaction() {
   if (empty()) {
-    return 0;
+    return UINT64_MAX;
   }
-  uint64_t max_obsolete = 0;
   uint64_t prev_filename = _entries.front().filename;
+  uint64_t max_obsolete = prev_filename - 1;
   for (size_t i = 1; i < _entries.size(); ++i) {
     const auto& e = _entries[i];
     const auto& prev_e = _entries[i-1];
@@ -182,24 +180,31 @@ uint64_t index::compaction() {
   return max_obsolete;
 }
 
-void index::remove_obsolete_entries(uint64_t max_obsolete_filename) {
+vector<uint64_t> index::remove_obsolete_entries(uint64_t max_obsolete_filename) {
+  vector<uint64_t> obsoletes;
   auto it = _entries.begin();
   for (; it != _entries.end(); ++it) {
     if (it->filename > max_obsolete_filename) {
       break;
     }
+    obsoletes.emplace_back(it->filename);
   }
   _entries.erase(_entries.begin(), it);
+  return obsoletes;
+}
+
+bool index::operator==(const index& rhs) const noexcept {
+  return _gid == rhs._gid &&
+         _compacted_to == rhs._compacted_to &&
+         _entries == rhs._entries;
+}
+
+bool index::operator!=(const index& rhs) const noexcept {
+  return !(*this == rhs);
 }
 
 std::string index::debug_string() const {
   return "NOT IMPLEMENTED";
-}
-
-void node_index::clear() noexcept {
-  _snapshot = index::entry{};
-  _state = index::entry{};
-  _index = index{};
 }
 
 bool node_index::update_entry(const index::entry& e) {
@@ -227,10 +232,14 @@ bool node_index::update_state(const index::entry& e) {
   return false;
 }
 
-bool node_index::file_in_use(uint64_t filename) {
+bool node_index::file_in_use(uint64_t filename) const noexcept {
   return _snapshot.filename == filename ||
       _state.filename == filename ||
       _index.file_in_use(filename);
+}
+
+bool node_index::file_in_tracking(uint64_t filename) const noexcept {
+  return _filenames.contains(filename);
 }
 
 span<const index::entry> node_index::query(
@@ -250,7 +259,7 @@ uint64_t node_index::compacted_to() const noexcept {
   return _index.compacted_to();
 }
 
-void node_index::set_compacted_to(uint64_t index) {
+void node_index::set_compacted_to(uint64_t index) noexcept {
   _index.set_compacted_to(index);
 }
 
@@ -276,6 +285,18 @@ vector<uint64_t> node_index::compaction() {
     }
   }
   return obsoletes;
+}
+
+bool node_index::operator==(const node_index& rhs) const noexcept {
+  return _gid == rhs._gid &&
+         _snapshot == rhs._snapshot &&
+         _state == rhs._state &&
+         _index == rhs._index &&
+         _filenames == rhs._filenames;
+}
+
+bool node_index::operator!=(const node_index& rhs) const noexcept {
+  return !(*this == rhs);
 }
 
 protocol::hard_state index_group::get_hard_state(group_id id) {
@@ -318,29 +339,30 @@ index::entry index_group::query_snapshot(group_id id) {
 }
 
 bool index_group::update(const protocol::update& u, index::entry e) {
-  assert(u.group_id.valid());
-  auto i = get_node_index(u.group_id);
-  auto compactedTo = u.compactedTo();
-  if (compactedTo != protocol::log_id::invalid_index) {
-    i->set_compacted_to(compactedTo);
+  assert(u.gid.valid());
+  auto i = get_node_index(u.gid);
+  auto compacted_to = u.compacted_to();
+  if (compacted_to != protocol::log_id::invalid_index) {
+    i->set_compacted_to(compacted_to);
     return false;
   }
   bool new_tracking = false;
-  if (!u.entries_to_save.empty()) {
+  if (u.first_index != protocol::log_id::invalid_index &&
+      u.last_index != protocol::log_id::invalid_index) {
     e.first_index = u.first_index;
     e.last_index = u.last_index;
     e.type = index::entry::type::normal;
-    new_tracking = new_tracking || i->update_entry(e);
+    new_tracking = i->update_entry(e);
   }
   if (!u.state.empty()) {
     e.first_index = u.state.commit;
     e.last_index = protocol::log_id::invalid_index;
     e.type = index::entry::type::state;
-    _states[u.group_id] = u.state;
+    _states[u.gid] = u.state;
     new_tracking = new_tracking || i->update_state(e);
   }
-  if (u.snapshot) {
-    e.first_index = u.snapshot->log_id.index;
+  if (u.snapshot_index != protocol::log_id::invalid_index) {
+    e.first_index = u.snapshot_index;
     e.last_index = protocol::log_id::invalid_index;
     e.type = index::entry::type::snapshot;
     new_tracking = new_tracking || i->update_snapshot(e);
@@ -355,7 +377,30 @@ uint64_t index_group::compacted_to(group_id id) {
 
 void index_group::set_compacted_to(group_id id, uint64_t index) {
   assert(id.valid());
-  auto ni = get_node_index(id);
-  ni->set_compacted_to(index);
+  get_node_index(id)->set_compacted_to(index);
 }
+
+bool index_group::operator==(const index_group& rhs) const noexcept {
+  if (_states != rhs._states) {
+    return false;
+  }
+  if (_indexes.size() != rhs._indexes.size()) {
+    return false;
+  }
+  for (const auto& [gid, idx] : _indexes) {
+    auto it = rhs._indexes.find(gid);
+    if (it == rhs._indexes.end()) {
+      return false;
+    }
+    if (*idx != *it->second) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool index_group::operator!=(const index_group& rhs) const noexcept {
+  return !(*this == rhs);
+}
+
 }  // namespace rafter::storage

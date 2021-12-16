@@ -8,7 +8,6 @@
 
 #include <string>
 
-#include <seastar/core/shared_ptr.hh>
 #include <seastar/core/units.hh>
 
 namespace rafter {
@@ -17,6 +16,7 @@ using seastar::KB;
 using seastar::MB;
 using seastar::GB;
 
+// config file is shared among all shards
 struct config {
   // TODO: add scheduling group configuration here
   // the absolute path of a directory for data (WAL, snapshot, etc) storage
@@ -29,8 +29,5 @@ struct config {
   void validate() const;
   // TODO: read from yaml?
 };
-
-// config file is shared among all shards
-using config_ptr = seastar::shared_ptr<config>;
 
 }  // namespace rafter

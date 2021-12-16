@@ -24,11 +24,9 @@ class index {
  public:
   class entry {
    public:
-    enum type {
+    enum type : uint8_t {
       normal, state, snapshot, compaction,
     };
-    // the raft group of this entry
-    group_id id;
     // the first included raft log entry index
     uint64_t first_index = protocol::log_id::invalid_index;
     // the last included raft log entry index
@@ -52,6 +50,8 @@ class index {
 
     std::string debug_string() const;
   };
+
+  index(group_id gid) : _gid(gid) {}
 
   index& set_compacted_to(uint64_t compacted_to) noexcept;
 
@@ -77,11 +77,15 @@ class index {
   // any segment files with filename <= max obsolete filename can be deleted
   uint64_t compaction();
 
-  void remove_obsolete_entries(uint64_t max_obsolete_filename);
+  std::vector<uint64_t> remove_obsolete_entries(uint64_t max_obsolete_filename);
+
+  bool operator==(const index& rhs) const noexcept;
+  bool operator!=(const index& rhs) const noexcept;
 
   std::string debug_string() const;
 
  private:
+  group_id _gid;
   // entries within (0, _compacted_to) can be compacted
   uint64_t _compacted_to = protocol::log_id::invalid_index;
   std::vector<entry> _entries;
@@ -90,8 +94,7 @@ class index {
 
 class node_index {
  public:
-  explicit node_index(group_id id) : _id(id) {}
-  void clear() noexcept;
+  explicit node_index(group_id gid) : _gid(gid), _index(gid) {}
 
   bool update_entry(const index::entry& e);
 
@@ -99,7 +102,9 @@ class node_index {
 
   bool update_state(const index::entry& e);
 
-  bool file_in_use(uint64_t filename);
+  bool file_in_use(uint64_t filename) const noexcept;
+
+  bool file_in_tracking(uint64_t filename) const noexcept;
 
   std::span<const index::entry> query(protocol::hint range) const noexcept;
 
@@ -109,12 +114,15 @@ class node_index {
 
   uint64_t compacted_to() const noexcept;
 
-  void set_compacted_to(uint64_t index);
+  void set_compacted_to(uint64_t index) noexcept;
 
   std::vector<uint64_t> compaction();
 
+  bool operator==(const node_index& rhs) const noexcept;
+  bool operator!=(const node_index& rhs) const noexcept;
+
  private:
-  group_id _id;
+  group_id _gid;
   index::entry _snapshot;
   index::entry _state;
   index _index;
@@ -141,6 +149,10 @@ class index_group {
   uint64_t compacted_to(group_id id);
 
   void set_compacted_to(group_id id, uint64_t index);
+
+  // for testing
+  bool operator==(const index_group& rhs) const noexcept;
+  bool operator!=(const index_group& rhs) const noexcept;
 
  private:
   std::unordered_map<
