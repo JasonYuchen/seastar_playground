@@ -64,4 +64,91 @@ vector<update> util::make_updates(
   return updates;
 }
 
+bool util::compare(const update &lhs, const update &rhs) noexcept {
+  if (lhs.gid != rhs.gid) {
+    return false;
+  }
+  if (lhs.state != rhs.state) {
+    return false;
+  }
+  if (lhs.first_index != rhs.first_index) {
+    return false;
+  }
+  if (lhs.last_index != rhs.last_index) {
+    return false;
+  }
+  if (lhs.snapshot_index != rhs.snapshot_index) {
+    return false;
+  }
+  if (lhs.entries_to_save.size() != rhs.entries_to_save.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.entries_to_save.size(); ++i) {
+    if (lhs.entries_to_save[i].operator bool() ^
+        rhs.entries_to_save[i].operator bool()) {
+      return false;
+    }
+    if (lhs.entries_to_save[i] &&
+        *lhs.entries_to_save[i] != *rhs.entries_to_save[i]) {
+      return false;
+    }
+  }
+  if (lhs.snapshot.operator bool() ^ rhs.snapshot.operator bool()) {
+    return false;
+  }
+  if (lhs.snapshot) {
+    return compare(*lhs.snapshot, *rhs.snapshot);
+  }
+  return true;
+}
+
+bool util::compare(
+    const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept {
+  if (lhs.group_id != rhs.group_id) {
+    return false;
+  }
+  if (lhs.log_id != rhs.log_id) {
+    return false;
+  }
+  if (lhs.file_path != rhs.file_path) {
+    return false;
+  }
+  if (lhs.file_size != rhs.file_size) {
+    return false;
+  }
+  if (lhs.membership.operator bool() ^ rhs.membership.operator bool()) {
+    return false;
+  }
+  if (lhs.membership && *lhs.membership != *rhs.membership) {
+    return false;
+  }
+  if (lhs.files.size() != rhs.files.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.files.size(); ++i) {
+    if (lhs.files[i].operator bool() ^ rhs.files[i].operator bool()) {
+      return false;
+    }
+    if (lhs.files[i] && *lhs.files[i] != *rhs.files[i]) {
+      return false;
+    }
+  }
+  if (lhs.smtype != rhs.smtype) {
+    return false;
+  }
+  if (lhs.imported != rhs.imported) {
+    return false;
+  }
+  if (lhs.witness != rhs.witness) {
+    return false;
+  }
+  if (lhs.dummy != rhs.dummy) {
+    return false;
+  }
+  if (lhs.on_disk_index != rhs.on_disk_index) {
+    return false;
+  }
+  return true;
+}
+
 }  // namespace rafter::test

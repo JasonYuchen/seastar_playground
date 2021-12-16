@@ -29,6 +29,10 @@ class util {
       size_t entry_interval,      // fill entries per entry_interval
       size_t state_interval,      // fill state per state_interval
       size_t snapshot_interval);  // fill snapshot per snapshot interval
+  static bool compare(
+      const protocol::update& lhs, const protocol::update& rhs) noexcept;
+  static bool compare(
+      const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept;
 };
 
 }  // namespace rafter::test

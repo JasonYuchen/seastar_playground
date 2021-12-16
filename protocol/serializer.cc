@@ -6,6 +6,8 @@
 
 #include <seastar/core/coroutine.hh>
 
+#include "util/error.hh"
+
 namespace rafter::protocol {
 
 using namespace seastar;
@@ -35,7 +37,7 @@ class serializer_adapter {
 
   void write(const char* data, size_t size) {
     if (_end - _cur < size) [[unlikely]] {
-      // TODO: throw
+      throw util::io_error(util::code::short_write);
     }
     std::copy_n(data, size, _cur);
     _cur += size;
@@ -44,7 +46,7 @@ class serializer_adapter {
   template<util::endian::detail::numerical T>
   T read() {
     if (_end - _cur < sizeof(T)) [[unlikely]] {
-      // TODO: throw
+      throw util::io_error(util::code::short_read);
     }
     T obj;
     std::copy_n(_cur, sizeof(T), reinterpret_cast<char*>(&obj));
@@ -64,7 +66,7 @@ class serializer_adapter {
 
   std::string read_string(size_t n) {
     if (_end - _cur < n) [[unlikely]] {
-      // TODO: throw
+      throw util::io_error(util::code::short_read);
     }
     std::string obj{_cur, n};
     _cur += n;
@@ -138,14 +140,21 @@ uint64_t deserialize(
 
 uint64_t serialize(
     const struct bootstrap& obj, fragmented_temporary_buffer::ostream& o) {
-  // TODO
-  return 0;
+  uint64_t total = obj.bytes();
+  o.write_le(total);
+  dumper(obj.addresses, o);
+  o.write_le(obj.join);
+  o.write_le(obj.smtype);
+  return total;
 }
 
 uint64_t deserialize(
     struct bootstrap& obj, fragmented_temporary_buffer::istream& i) {
-  // TODO
-  return 0;
+  auto total = i.read_le<uint64_t>();
+  loader(obj.addresses, i);
+  obj.join = i.read_le<bool>();
+  obj.smtype = i.read_le<state_machine_type>();
+  return total;
 }
 
 uint64_t serialize(
@@ -175,7 +184,7 @@ uint64_t serialize(
     const struct log_entry& obj, fragmented_temporary_buffer::ostream& o) {
   uint64_t total = obj.bytes();
   o.write_le(total);
-  serialize(obj.id, o);
+  serialize(obj.lid, o);
   o.write_le(obj.type);
   o.write_le(obj.key);
   o.write_le(obj.client_id);
@@ -189,7 +198,7 @@ uint64_t serialize(
 uint64_t deserialize(
     struct log_entry& obj, fragmented_temporary_buffer::istream& i) {
   auto total = i.read_le<uint64_t>();
-  deserialize(obj.id, i);
+  deserialize(obj.lid, i);
   obj.type = i.read_le<entry_type>();
   obj.key = i.read_le<uint64_t>();
   obj.client_id = i.read_le<uint64_t>();
@@ -197,7 +206,8 @@ uint64_t deserialize(
   obj.responded_to = i.read_le<uint64_t>();
   obj.payload = i.read_string(i.read_le<size_t>());
   if (total != obj.bytes()) [[unlikely]] {
-    // TODO: throw
+    throw util::io_error(
+        util::code::corruption, "deserialize log_entry failed");
   }
   return total;
 }
@@ -288,7 +298,7 @@ uint64_t deserialize(
   obj.dummy = i.read_le<bool>();
   obj.on_disk_index = i.read_le<uint64_t>();
   if (total != obj.bytes()) [[unlikely]] {
-    // TODO: throw
+    throw util::io_error(util::code::corruption, "deserialize snapshot failed");
   }
   return total;
 }
@@ -347,12 +357,14 @@ uint64_t deserialize(
 
 uint64_t serialize(
     const struct update& obj, fragmented_temporary_buffer::ostream& o) {
+  // TODO: introduce meta crc32
   uint64_t total = obj.bytes();
   o.write_le(total);
-  serialize(obj.group_id, o);
+  serialize(obj.gid, o);
   serialize(obj.state, o);
   o.write_le(obj.first_index);
   o.write_le(obj.last_index);
+  o.write_le(obj.snapshot_index);
   o.write_le(obj.entries_to_save.size());
   for (auto&& e : obj.entries_to_save) {
     serialize(*e, o);
@@ -367,10 +379,11 @@ uint64_t serialize(
 uint64_t deserialize(
     struct update& obj, fragmented_temporary_buffer::istream& i) {
   auto total = i.read_le<uint64_t>();
-  deserialize(obj.group_id, i);
+  deserialize(obj.gid, i);
   deserialize(obj.state, i);
   obj.first_index = i.read_le<uint64_t>();
   obj.last_index = i.read_le<uint64_t>();
+  obj.snapshot_index = i.read_le<uint64_t>();
   obj.entries_to_save.resize(i.read_le<uint64_t>());
   for (auto&& entry : obj.entries_to_save) {
     entry = make_lw_shared<log_entry>();
@@ -381,29 +394,38 @@ uint64_t deserialize(
     deserialize(*obj.snapshot, i);
   }
   if (total != obj.bytes()) [[unlikely]] {
-    // TODO: throw
+    throw util::io_error(util::code::corruption, "deserialize update failed");
   }
   return total;
 }
 
 future<uint64_t> deserialize_meta(struct update& obj, input_stream<char>& i) {
+  // TODO: introduce meta crc32
   fragmented_temporary_buffer::fragment_list fragments;
   fragments.emplace_back(co_await i.read_exactly(obj.meta_bytes()));
+  if (fragments.back().size() < obj.meta_bytes()) {
+    co_return 0;
+  }
   auto buffer = fragmented_temporary_buffer(
       std::move(fragments), obj.meta_bytes());
   auto in_stream = buffer.as_istream();
   auto total = in_stream.read_le<uint64_t>();
-  deserialize(obj.group_id, in_stream);
+  if (total < obj.meta_bytes()) {
+    // we have reached the trailing 0 due to alignment
+    co_return 0;
+  }
+  deserialize(obj.gid, in_stream);
   deserialize(obj.state, in_stream);
   obj.first_index = in_stream.read_le<uint64_t>();
   obj.last_index = in_stream.read_le<uint64_t>();
+  obj.snapshot_index = in_stream.read_le<uint64_t>();
   if (in_stream.bytes_left() > 0) [[unlikely]] {
-    // TODO: inconsistent length
+    co_return coroutine::make_exception(util::io_error(
+        util::code::corruption, "deserialize update meta failed"));
   }
   // skip to next update data position
   co_await i.skip(total - obj.meta_bytes());
   co_return total;
 }
-
 
 }  // namespace rafter::protocol

@@ -14,6 +14,18 @@
 
 namespace rafter::protocol {
 
+enum raft_role : uint8_t {
+  follower,
+  pre_candidate,
+  candidate,
+  leader,
+  observer,
+  witness,
+  num_of_role,
+};
+
+const char *name(enum raft_role role);
+
 struct group_id {
   inline static constexpr uint64_t invalid_cluster = 0;
   inline static constexpr uint64_t invalid_node = 0;
@@ -22,6 +34,7 @@ struct group_id {
   bool valid() const noexcept {
     return cluster != invalid_cluster && node != invalid_node;
   }
+  std::string to_string() const;
   uint64_t bytes() const noexcept {
     return 16;
   }
@@ -33,6 +46,7 @@ struct log_id {
   inline static constexpr uint64_t invalid_index = 0;
   uint64_t term = invalid_term;
   uint64_t index = invalid_index;
+  std::string to_string() const;
   uint64_t bytes() const noexcept {
     return 16;
   }
@@ -130,12 +144,22 @@ struct membership {
   std::unordered_map<uint64_t, std::string> witnesses;
   std::unordered_map<uint64_t, bool> removed;
   uint64_t bytes() const noexcept;
+  bool operator==(const membership& rhs) const noexcept {
+    return config_change_id == rhs.config_change_id &&
+           addresses == rhs.addresses &&
+           observers == rhs.observers &&
+           witnesses == rhs.witnesses &&
+           removed == rhs.removed;
+  }
+  bool operator!=(const membership& rhs) const noexcept {
+    return !(*this == rhs);
+  }
 };
 
 using membership_ptr = seastar::lw_shared_ptr<membership>;
 
 struct log_entry {
-  log_id id;
+  log_id lid;
   entry_type type = entry_type::application;
   uint64_t key = 0;
   uint64_t client_id = 0;
@@ -152,6 +176,8 @@ struct log_entry {
   bool is_noop_session() const noexcept;
   bool is_empty() const noexcept;
   bool is_regular() const noexcept;
+
+  std::strong_ordering operator<=>(const log_entry &) const = default;
 };
 
 using log_entry_ptr = seastar::lw_shared_ptr<log_entry>;
@@ -162,6 +188,8 @@ struct hard_state {
   uint64_t term = log_id::invalid_term;
   uint64_t vote = group_id::invalid_node;
   uint64_t commit = log_id::invalid_index;
+
+  std::strong_ordering operator<=>(const hard_state &) const = default;
 
   uint64_t bytes() const noexcept {
     return 24;
@@ -178,6 +206,8 @@ struct snapshot_file {
   uint64_t file_size = 0;
   std::string file_path;
   std::string metadata;
+
+  std::strong_ordering operator<=>(const snapshot_file &) const = default;
 
   uint64_t bytes() const noexcept;
 };
@@ -312,7 +342,7 @@ struct update_commit {
 // processed by Raft's upper layer to progress the Raft node modelled as a state
 // machine.
 struct update {
-  struct group_id group_id;
+  struct group_id gid;
   // The current persistent state of a Raft node. It must be stored onto
   // persistent storage before any non-replication can be sent to other nodes.
   struct hard_state state;
@@ -321,6 +351,7 @@ struct update {
   // last_index is the last index of the entries_to_save
   uint64_t first_index = log_id::invalid_index;
   uint64_t last_index = log_id::invalid_index;
+  uint64_t snapshot_index = log_id::invalid_index;
   log_entry_vector entries_to_save;
   // snapshot is the metadata of the snapshot ready to be applied.
   snapshot_ptr snapshot;
@@ -352,7 +383,8 @@ struct update {
 
   // if this update is a compaction update, return compactedTo, otherwise return
   // log_id::invalid_index
-  uint64_t compactedTo() const noexcept;
+  void fill_meta() noexcept;
+  uint64_t compacted_to() const noexcept;
   uint64_t bytes() const noexcept;
   uint64_t meta_bytes() const noexcept;
   bool has_update() const noexcept;
