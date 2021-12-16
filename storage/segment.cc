@@ -176,9 +176,9 @@ future<size_t> segment::query(
       if (left_bytes < ent->bytes()) {
         co_return 0;
       }
-      entries.emplace_back(std::move(ent));
       left_bytes -= ent->bytes();
       expected_index++;
+      entries.emplace_back(std::move(ent));
     }
   }
 

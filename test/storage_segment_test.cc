@@ -41,6 +41,8 @@ class segment_test : public ::testing::Test {
           _segment_filename,
           segment::form_path(_config.data_dir, _segment_filename),
           false);
+      _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+      co_await fulfill_segment();
     });
   }
 
@@ -50,8 +52,9 @@ class segment_test : public ::testing::Test {
       _updates.clear();
       _index_group = {};
       co_await _segment->close();
-      co_await remove_file(
-          segment::form_path(_config.data_dir, _segment_filename));
+      co_await _segment->remove();
+      EXPECT_FALSE(co_await file_exists(
+          segment::form_path(_config.data_dir, _segment_filename)));
       // data created on a shard must also be released in this shard
       _segment.reset(nullptr);
     });
@@ -105,8 +108,6 @@ RAFTER_TEST_F(segment_test, create) {
 RAFTER_TEST_F(segment_test, open_and_list) {
   index_group ig;
   std::vector<index::entry> ie;
-  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
-  co_await fulfill_segment();
   co_await _segment->list_update(
       [&ig, &ie](const update& up, index::entry e) -> future<> {
         ig.update(up, e);
@@ -140,13 +141,24 @@ RAFTER_TEST_F(segment_test, open_and_list) {
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, append) {
+RAFTER_TEST_F(segment_test, append_large_entry) {
+  update up;
+  up.first_index = 100;
+  up.last_index = 100;
+  auto en = up.entries_to_save.emplace_back(make_lw_shared<log_entry>());
+  en->payload = std::string(10 * MB, 'c');
+  index::entry ie;
+  ie.filename = 1;
+  ie.offset = _segment->bytes();
+  ie.length = co_await _segment->append(up) - ie.offset;
+  auto up2 = co_await _segment->query(ie);
+  if (!rafter::test::util::compare(up, up2)) {
+    EXPECT_TRUE(false) << "failed to append a 10 MiB entry";
+  }
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, query_entry) {
-  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
-  co_await fulfill_segment();
+RAFTER_TEST_F(segment_test, query) {
   for (size_t i = 0; i < _updates.size(); ++i) {
     auto up = co_await _segment->query(_index[i]);
     if (!rafter::test::util::compare(up, _updates[i])) {
@@ -162,15 +174,63 @@ RAFTER_TEST_F(segment_test, query_entry) {
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, query_state) {
+RAFTER_TEST_F(segment_test, batch_query) {
+  std::vector<index::entry> query;
+  log_entry_vector expected;
+  size_t entry_size = 0;
+  auto gid = _updates.front().gid;
+  for (size_t i = 0; i < _index.size(); ++i) {
+    if (_updates[i].gid != gid) {
+      continue;
+    }
+    auto& ie = query.emplace_back(_index[i]);
+    ie.first_index = _updates[i].first_index;
+    ie.last_index = _updates[i].last_index;
+    std::for_each(
+        _updates[i].entries_to_save.begin(),
+        _updates[i].entries_to_save.end(),
+        [&](auto e) {
+          expected.push_back(e);
+          entry_size += e->bytes();
+        });
+  }
+  log_entry_vector fetched;
+  auto left = co_await _segment->query(query, fetched, UINT64_MAX);
+  EXPECT_EQ(left, UINT64_MAX - entry_size);
+  update u1 {.entries_to_save = fetched};
+  update u2 {.entries_to_save = expected};
+  if (!rafter::test::util::compare(u1, u2)) {
+    EXPECT_TRUE(false) << fmt::format("batch query failed");
+  }
+
+  fetched.clear();
+  size_t cutoff = 10;
+  left = co_await _segment->query(query, fetched, entry_size - cutoff);
+  EXPECT_EQ(left, 0);
+  EXPECT_EQ(fetched.size() + 1, expected.size());
+  u1.entries_to_save = fetched;
+  u2.entries_to_save = expected;
+  u2.entries_to_save.pop_back();
+  if (!rafter::test::util::compare(u1, u2)) {
+    EXPECT_TRUE(false)
+        << fmt::format("batch query failed with size limitation {}",
+                       entry_size - cutoff);
+  }
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, query_snapshot) {
+RAFTER_TEST(static_segment_test, form_name) {
+  // TODO
   co_return;
 }
 
-RAFTER_TEST_F(segment_test, batch_query_entry) {
+RAFTER_TEST(static_segment_test, form_path) {
+  // TODO
+  co_return;
+}
+
+RAFTER_TEST(static_segment_test, parse_name) {
+  // TODO
   co_return;
 }
 

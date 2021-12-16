@@ -1,6 +1,6 @@
-# rafter storage
+# Rafter Storage
 
-## overall design
+## Overall Design
 
 The storage layer of the Raft protocol should persist the metadata and the log entries. Rafter uses the same design as
 the dragonboat that the log entries are kept in both memory and the disk.
@@ -22,39 +22,42 @@ TODO: illustrate the snapshot organization
            marker first                                  last
 ```
 
-## in-memory layer
+## In-memory Layer
 
-## on-disk layer
+TODO: illustrate the in-memory part
 
-### why not use KV store?
+## On-disk Layer
+
+### Why not use a KV store such as RocksDB?
 
 The pattern of the Raft log entries is simple: append and persist, and the log entries are marked with consecutive
 numbers called log index.
 
 A popular KV store (e.g. RocksDB) is considered too heavy since the pattern is simple and the Rafter respect the
 shared-nothing design in Seastar (each Raft cluster is handled within one shard). The rich feature set in KV store such
-as concurrency control, transaction, etc will not be used in Rafter.
+as concurrency control, transaction, etc, will not be used in Rafter.
 
 We design and implement a naive storage layer for Rafter using write ahead log, WAL. The design mainly refers to
 [etcd](https://github.com/etcd-io/etcd), [braft](https://github.com/baidu/braft), 
 [dragonboat](https://github.com/lni/dragonboat).
 
-### basic design
+### Basic Design
 
 All entries and hard states coming from the Raft module are serialized and appended to a segment file (WAL) with a
 corresponding in-memory index tracking each entry by its location tuple `(filename, offset)`.
 
-The WAL files are rolling with a threshold in size, a current active file has a prefix as `_inprogress` and all archived
-WAL files are immutable. The name of a segment has two parts, its prefix is the shard id and its suffix is a monotonic increasing number starting from 0.
+The WAL files are rolling with a threshold size, only the segment with the largest filename is the active segment, all 
+other WAL files are archived and immutable. The name of a segment has two parts, its prefix is the shard id and its 
+suffix is a monotonically increasing number starting from `1`.
 
-Log entry index is designed to be flexible and sparse: 1 index slot tracks 1 update (1 or more log entries) within a single WAL
-file by recording the following fields:
+Log entry index is designed to be flexible and sparse: 1 index slot tracks 1 update (1 or more log entries) within a 
+single WAL file by recording the following fields:
 
 - start index of consecutive indexes
 - end index of consecutive indexes
 - name of the WAL file
 - offset in this WAL file
-- number of total bytes occupied by these indexes
+- total bytes occupied by these entries
 
 Log entry index is kept in memory and only rebuilt during crash recovery by replaying all existing segments.
 
@@ -64,22 +67,22 @@ Log entry index is kept in memory and only rebuilt during crash recovery by repl
                    /                       |                       \
               segment ptr              segment ptr              segment ptr
              +-----------+                 |                        | 
-             |   meta    |                 |                        |
+             |meta/index |                 |                        |
              +-----------+                 |                        |
 memory            |                        |                        |
 ------------------|------------------------|------------------------|-------------
 disk(s)           |                        |                        |
-               00000.log               00056.log           00129.log_inprogress
-             +-----------+           +-----------+            +-----------+
-             |           |           |           |            |           |
-             +-----------+           +-----------+            +-----------+
+               00001.log                00056.log                00129.log
+             +-----------+            +-----------+            +-----------+
+             |           |            |           |            |           |
+             +-----------+            +-----------+            +-----------+
 
 rafter @ disk0
   |--<cluster_id:020d_node_id:020d>
   |    |--config
-  |    |--<shard:03d seq:020d>.log
-  |    |--<shard:03d seq:020d>.log
-  |    |--<shard:03d seq:020d>.log_inprogress
+  |    |--<shard:05d seq:020d>.log
+  |    |--<shard:05d seq:020d>.log
+  |    |--<shard:05d seq:020d>.log
   |    |--...
   |--<cluster_id:020d_node_id:020d>
   |--...
@@ -89,21 +92,26 @@ rafter @ disk1
   |--...
 ```
 
-### further considerations
+### Further Considerations
 
-The snapshot files are always isolated since snapshotting is far less frequent. 
+Currently, we implement the **one WAL per shard**. The snapshot files are always isolated since snapshotting is far less
+frequent. 
 
-1. **one WAL per Raft node**
-   - the design and implementation are easier and more straight forward (pro)
-   - indexes of same Raft node can be merged to reduce memory usage (pro)
-   - isolation among Raft nodes, no need to coordinate compaction (pro)
-   - if too many Raft groups are bootstrapped, the number of segments could be huge (con)
-   - as the segments number increases, the number of `async` call increases (con)
-2. **one WAL per shard** (Seastar use thread-per-shard/core design) one shard has multiple Raft nodes
-   - the total number of segments is small, equal to the number of shards (pro)
-   - have to coordinate Raft nodes since the WAL is shared among all Raft nodes within one shard (con)
-   - the log entries of a Raft node is not consecutive, but so long as we are not frequently accessing the on-disk entries, it should not be an issue (?)
-   - if we restart the system with different number of shards, we need to reshard the existing segments (con)
+1. **one WAL per Raft node**, `N Raft nodes -> N WALs`
+   - the design and implementation are easier and more straight forward (**pro**)
+   - indexes of same Raft node can be merged to reduce memory usage (**pro**)
+   - isolation among Raft nodes, no need to coordinate compaction, good for clusters with different workloads (**pro**)
+   - if too many Raft groups are bootstrapped, the number of segments could be huge (**con**)
+   - as the segments number increases, the number of `async` call increases (**con**)
+2. **one WAL per shard**, `N Raft nodes -> S WALs -> S shards`
+   - the total number of segments is small, equal to the number of shards (**pro**)
+   - maintain fewer files and issue fewer syscalls (**pro**)
+   - have to coordinate Raft nodes since the WAL is shared among all Raft nodes within one shard (**con**)
+   - the log entries of a Raft node is not consecutive, but so long as we are not frequently accessing the on-disk 
+     entries, it should not be an issue (**con**)
+   - if we restart the system with different number of shards, we need to reshard the existing segments (**con**)
+   - not good for clusters with different workloads, e.g. a "cold" node may hold references to many segments and block
+     segments' garbage collection procedure, may need an advanced GC design like LSM's compaction (**con**)
    
    Some notes from commitlog design in ScyllaDB (the flow of replay commitlog):
    1. list and reshard all existing segments
@@ -119,14 +127,14 @@ The snapshot files are always isolated since snapshotting is far less frequent.
    3. send the Raft entry to target shard to reconstruct segment using `invoke_on`
    4. trigger snapshot and compaction to retire existing segments
    5. delete existing segments
-4. **sharding WALs for one shard**, N Raft nodes -> M WALs -> S shards
-   - the total number of segments is small (pro)
-   - have to coordinate (con)
-   - still have to reshard if M WALs changed (con)
-   - no need to reshard if Seastar's shard changed (pro)
-   - maybe too complicated to implement and manage (con)
+3. **sharding WALs for one shard**, `N Raft nodes -> M WALs -> S shards`
+   - the total number of segments is small (**pro**)
+   - have to coordinate (**con**)
+   - still have to reshard if M WALs changed (**con**)
+   - no need to reshard if Seastar's shard changed (**pro**)
+   - maybe too complicated to implement and manage (**con**)
 
-### normal flow
+### Normal Flow
 
 *CAUTION: though all operations are handled in one thread/shard, there can still be data race among coroutines*
 
@@ -141,20 +149,19 @@ nodes in this shard (need synchronization if we allow more coroutines).
   4. fdatasync
 - **read**
   1. query the log entry index to find out the locations of the entries
-  2. the index should block all requests with index < snapshot index even the segment may still exist due to lazy garbage collection
+  2. the index should block all requests with index < snapshot index even the segment may still exist due to lazy 
+     garbage collection
   3. use locations to fetch the corresponding entries
   4. trigger a compaction routine if the start index of this read <= gc start point, like read-triggered compaction 
 - **rolling**
   1. create new segment
   2. fdatasync
 - **compaction**
-  1. new snapshot is available, update the snapshot index in the index to block subsequent requests with start index <
-     snapshot index, like a read barrier
-  2. coordinate all Raft nodes to get a minimal snapshot index as a start point of garbage collection
-  3. release segments with end index <= gc start point, the release should start from small index and pause when the 
-     segment is currently being read
+  1. append a compaction entry and the index will be updated accordingly
+  2. get obsolete segments from one node index and decrease the reference count of these segments
+  3. once a segment is no longer needed, push it to the gc queue for removal
   
-### recovery flow
+### Recovery Flow
 
 1. block all requests as the storage layer is being recovered
 2. parse all segments to rebuild logs and indexes
@@ -165,31 +172,31 @@ nodes in this shard (need synchronization if we allow more coroutines).
 ```text
              segment
     +-----------------------+
-    | 64bit length          |  <-- including the checksum
-    +-----------------------+
-    |  8bit checksum type   |
-    +-----------------------+
-    | 32bit checksum        |
-    +-----------------------+
     | bytes update          |  <-- serialized update structure
-    + +-------------------+ +
-    | |                   | |
-    | +-------------------+ |
     +-----------------------+
-    |         ....          |
+    | bytes update          |
+    +-----------------------+
+    |        ......         |
     +-----------------------+
     
 only have to persist these fields in update:
-    - group_id
-    - state
+    - gid (cluster id & node id)
+    - state (term, vote & commit)
     - entries_to_save
     - snapshot
 ```
 
-### possible limitations
+### Possible Limitations
 
-1The indexes are kept in memory only, which may consume too much memory, in the future we can dump the indexes
-   into files and load these index files in need.
-2The segment files are created in need, in the future we can use pre-allocation to reduce the average cost.
+1. The indexes are kept in memory only, which may consume too much memory, in the future we can **dump the indexes
+   into files** and load these index files in need.
+2. The segment files are created in need, in the future we can use **pre-allocation** to reduce the average cost.
+3. Raft clusters with different workloads may degrade the segments' garbage collection, a "code" node may prevent
+   segments from being collected, which may waste the disk space and slowdown the recovery. May need a Raft cluster
+   distribution policy to **allow users to separate hot and cold clusters**.
+4. The rolling is performed after writing to the segment, which means the segment is always larger than the rolling 
+   threshold. It should be better to check before writing to ensure all segments are not larger than the threshold
 
-## snapshot organization
+## Snapshot Organization
+
+TODO: design snapshot organization
