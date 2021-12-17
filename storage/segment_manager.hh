@@ -7,9 +7,10 @@
 #include <seastar/core/queue.hh>
 #include <seastar/core/shared_mutex.hh>
 
-#include "nodehost/config.hh"
+#include "rafter/config.hh"
 #include "storage/index.hh"
 #include "storage/segment.hh"
+#include "storage/stats.hh"
 
 namespace rafter::storage {
 
@@ -23,12 +24,14 @@ struct raft_state {
 class segment_manager {
  public:
   // TODO: storage configuration class
-  explicit segment_manager(nodehost::config_ptr config);
+  explicit segment_manager(const config& config);
   ~segment_manager() = default;
   seastar::future<> start();
   seastar::future<> stop();
+  stats stats() const noexcept;
 
   // TODO: implement logdb
+  // TODO: batch append
   seastar::future<bool> append(const protocol::update& up);
   seastar::future<> remove(protocol::group_id id, uint64_t index);
   seastar::future<protocol::snapshot_ptr> query_snapshot(protocol::group_id id);
@@ -46,21 +49,18 @@ class segment_manager {
   seastar::future<> update_index(const protocol::update& up, index::entry e);
   seastar::future<> rolling();
   seastar::future<> gc_service();
-  seastar::future<> compaction(node_index& ni);
-  static std::pair<unsigned, uint64_t> parse_segment_name(
-      std::string_view name);
+  seastar::future<> compaction(protocol::group_id id);
 
  private:
-  const nodehost::config_ptr _config;
+  const config& _config;
   bool _open = false;
   // segments dir, e.g. <data_dir>
   std::string _log_dir;
   // TODO: more options
-  static constexpr char LOG_SUFFIX[] = "log";
-  static constexpr uint64_t INVALID_FILENAME = 0;
+
   // used to allocate new segments
   // the format of a segment name is <shard_id:05d>_<segment_id:020d>
-  uint64_t _next_filename = INVALID_FILENAME;
+  uint64_t _next_filename = segment::INVALID_FILENAME;
   // id -> segment, the _segments.rbegin() is the active segment
   std::map<uint64_t, std::unique_ptr<segment>> _segments;
   // id -> reference count
@@ -70,8 +70,11 @@ class segment_manager {
   std::unique_ptr<seastar::queue<uint64_t>> _obsolete_queue;
   std::optional<seastar::future<>> _gc_service;
 
+  // guard the append operation which maybe invoked by multiple coroutines
   seastar::shared_mutex _mutex;
   bool _need_sync = false;
+
+  struct stats _stats;
 };
 
 }  // namespace rafter::storage

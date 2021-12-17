@@ -18,16 +18,17 @@ using namespace seastar;
 using namespace std;
 using util::code;
 
-segment_manager::segment_manager(nodehost::config_ptr config)
-    : _config(std::move(config)) {
+segment_manager::segment_manager(const config& config)
+    : _config(config) {
 }
 
 future<> segment_manager::start() {
-  _log_dir = filesystem::path(_config->data_dir).append("wal");
+  _log_dir = filesystem::path(_config.data_dir).append("wal");
+  co_await recursive_touch_directory(_log_dir);
   _obsolete_queue = std::make_unique<seastar::queue<uint64_t>>(
-      _config->wal_gc_queue_capacity);
+      _config.wal_gc_queue_capacity);
   l.info("segment_manager::start: dir:{}, rolling_size:{}, gc_queue_cap:{}",
-         _log_dir, _config->wal_rolling_size, _config->wal_gc_queue_capacity);
+         _log_dir, _config.wal_rolling_size, _config.wal_gc_queue_capacity);
   file dir = co_await open_directory(_log_dir);
   co_await dir.list_directory(
                   [this](auto e){ return parse_existing_segments(e); }).done();
@@ -35,8 +36,8 @@ future<> segment_manager::start() {
   _next_filename = _segments.empty() ? 1 : _segments.rbegin()->first + 1;
   co_await rolling();
   co_await dir.close();
-  _gc_service = gc_service();
   _open = true;
+  _gc_service = gc_service();
 }
 
 future<> segment_manager::stop() {
@@ -45,7 +46,10 @@ future<> segment_manager::stop() {
       util::runtime_error(code::closed)));
   co_await _gc_service->discard_result();
   l.info("segment_manager::stop: stopped");
-  co_return;
+}
+
+stats segment_manager::stats() const noexcept {
+  return _stats;
 }
 
 future<bool> segment_manager::append(const protocol::update& up) {
@@ -53,6 +57,11 @@ future<bool> segment_manager::append(const protocol::update& up) {
   if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
     co_return false;
   }
+  _stats._append++;
+  _stats._append_entry += up.entries_to_save.size();
+  _stats._append_state += !up.state.empty();
+  _stats._append_snap += up.snapshot.operator bool();
+
   auto prev_state = _index_group.get_hard_state(up.gid);
   bool need_sync =
       up.snapshot ||
@@ -70,7 +79,7 @@ future<bool> segment_manager::append(const protocol::update& up) {
         .offset = offset,
         .length = new_offset - offset,
     };
-    if (new_offset >= _config->wal_rolling_size) {
+    if (new_offset >= _config.wal_rolling_size) {
       co_await rolling();
       _need_sync = need_sync = false;
     }
@@ -82,30 +91,22 @@ future<bool> segment_manager::append(const protocol::update& up) {
 }
 
 future<> segment_manager::remove(group_id id, uint64_t index) {
-  update compaction {
+  _stats._remove++;
+  update comp {
       .gid = id,
       .state = {
           .commit = index,
       },
   };
-  co_await append(compaction);
-  auto ni = _index_group.get_node_index(id);
-  auto obsoletes = ni->compaction();
-  for (auto file : obsoletes) {
-    if (--_segments_ref_count[file] == 0) {
-      co_await _segments[file]->close();
-      _segments.erase(file);
-      _segments_ref_count.erase(file);
-      co_await _obsolete_queue->push_eventually(std::move(file));
-    }
-  }
-  co_return;
+  co_await append(comp);
+  co_await compaction(id);
 }
 
 future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
   static const char* err = "{gid} segment_manager::query_snapshot: {msg}";
-  auto ni = _index_group.get_node_index(id);
-  auto i = ni->query_snapshot();
+  _stats._query_snap++;
+
+  auto i = _index_group.query_snapshot(id);
   if (i.empty()) {
     co_return snapshot_ptr{};
   }
@@ -126,18 +127,36 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
 future<raft_state> segment_manager::query_raft_state(
     protocol::group_id id, uint64_t last_index) {
   static const char* err = "{gid} segment_manager::query_raft_state: {msg}";
-  auto ni = _index_group.get_node_index(id);
+  _stats._query_state++;
+
+  // TODO: read from segment or read from _index_group?
   auto st = _index_group.get_hard_state(id);
   if (st.empty()) {
     co_return coroutine::make_exception(util::runtime_error(
         l, code::no_data, err, id.to_string(), "no saved data"));
   }
-  // TODO
-  co_return raft_state{};
+  raft_state r;
+  r.hard_state = st;
+  auto ie = _index_group.query(id, {.low = last_index + 1, .high = UINT64_MAX});
+  if (!ie.empty()) {
+    uint64_t prev_idx = ie.front().first_index - 1;
+    for (auto e : ie) {
+      if (prev_idx + 1 != e.first_index) {
+        co_return coroutine::make_exception(util::logic_error(
+            l, code::failed_precondition, err, "gap found in indexes"));
+      }
+      prev_idx = e.last_index;
+    }
+    r.first_index = last_index + 1;
+    r.entry_count = ie.back().last_index - r.first_index;
+  }
+  co_return r;
 }
 
 future<protocol::log_entry_vector> segment_manager::query_entries(
     protocol::group_id id, protocol::hint range, uint64_t max_size) {
+  _stats._query_entry++;
+
   auto ni = _index_group.get_node_index(id);
   auto compacted_to = ni->compacted_to();
   if (range.low <= compacted_to) {
@@ -156,6 +175,7 @@ future<protocol::log_entry_vector> segment_manager::query_entries(
   uint64_t prev_filename = indexes.front().filename;
   for (size_t i = 1; i < indexes.size(); ++i) {
     if (indexes[i].filename != prev_filename) {
+      // TODO: check the continuity of entry's index
       max_size = co_await _segments[prev_filename]->query(
           indexes.subspan(start, count), entries, max_size);
       if (max_size == 0) {
@@ -176,11 +196,12 @@ future<protocol::log_entry_vector> segment_manager::query_entries(
 }
 
 seastar::future<> segment_manager::sync() {
-  co_return co_await with_lock(_mutex, [this]() ->future<> {
+  co_await with_lock(_mutex, [this]() ->future<> {
     // sometimes when a worker try to sync a segment, it maybe already synced by
     // another worker due to coroutine scheduling, and this worker's update is
     // included in that sync, skip
     if (_need_sync && !_segments.empty()) {
+      _stats._sync++;
       co_await _segments.rbegin()->second->sync();
     }
     _need_sync = false;
@@ -195,8 +216,8 @@ void segment_manager::must_open() const {
 }
 
 future<> segment_manager::parse_existing_segments(directory_entry s) {
-  auto [shard_id, filename] = parse_segment_name(s.name);
-  if (filename == INVALID_FILENAME) {
+  auto [shard_id, filename] = segment::parse_name(s.name);
+  if (filename == segment::INVALID_FILENAME) {
     l.warn("segment_manager::parse_existing_segments: invalid {}", s.name);
     co_return;
   }
@@ -205,12 +226,11 @@ future<> segment_manager::parse_existing_segments(directory_entry s) {
   }
   auto path = fmt::format("{}/{}", _log_dir, s.name);
   auto seg = co_await segment::open(filename, std::move(path), true);
+  _stats._new_segment++;
   co_await seg->list_update([this] (const auto& up, auto e) {
     return update_index(up, e);
   });
-
   _segments.emplace(filename, std::move(seg));
-  co_return;
 }
 
 future<> segment_manager::update_index(
@@ -222,18 +242,18 @@ future<> segment_manager::update_index(
 }
 
 future<> segment_manager::rolling() {
+  _stats._new_segment++;
   if (!_segments.empty()) {
     co_await _segments.rbegin()->second->sync();
-    co_await _segments.rbegin()->second->close();
+    // some nodes maybe still reading from this segment, leave it to compaction
+    // co_await _segments.rbegin()->second->close();
   }
-  auto p = fmt::format("{}/{:05d}_{:020d}.{}",
-                       _log_dir, this_shard_id(), _next_filename, LOG_SUFFIX);
+  auto p = segment::form_path(_log_dir, _next_filename);
   l.info("segment_manager::rolling: start new segment {}", p);
   auto s = co_await segment::open(_next_filename, std::move(p));
   _segments.emplace_hint(_segments.end(), _next_filename, std::move(s));
   co_await sync_directory(_log_dir);
   _next_filename++;
-  co_return;
 }
 
 future<> segment_manager::gc_service() {
@@ -241,38 +261,31 @@ future<> segment_manager::gc_service() {
     l.info("segment_manager::gc_service: online");
     while (_open) {
       auto filename = co_await _obsolete_queue->pop_eventually();
-      auto path = fmt::format("{}/{:05d}_{:020d}.{}",
-                              _log_dir, this_shard_id(), filename, LOG_SUFFIX);
-      co_await remove_file(path);
+      _stats._del_segment++;
+      co_await _segments[filename]->close();
+      co_await _segments[filename]->remove();
+      _segments.erase(filename);
+      // TODO: sync_directory once for multiple segments
       co_await sync_directory(_log_dir);
     }
   } catch (util::runtime_error& e) {
-    l.warn("segment_manager::gc_service: caught exception:{}", e.what());
+    if (e.error_code() != code::closed) {
+      l.error("segment_manager::gc_service: unexpected exception:{}", e.what());
+    }
   }
   l.info("segment_manager::gc_service: offline");
-  co_return;
 }
 
-pair<unsigned, uint64_t> segment_manager::parse_segment_name(string_view name) {
-  auto sep_pos = name.find('_');
-  auto suffix_pos = name.find('.');
-  if (sep_pos == string::npos || suffix_pos == string::npos) {
-    return {0, INVALID_FILENAME};
+future<> segment_manager::compaction(group_id id) {
+  auto ni = _index_group.get_node_index(id);
+  auto obsoletes = ni->compaction();
+  for (auto file : obsoletes) {
+    assert(_segments_ref_count.contains(file));
+    if (--_segments_ref_count[file] == 0) {
+      _segments_ref_count.erase(file);
+      co_await _obsolete_queue->push_eventually(std::move(file));
+    }
   }
-  name.remove_suffix(name.size() - suffix_pos);
-  unsigned shard_id = 0;
-  uint64_t filename = 0;
-  auto r = from_chars(name.data(), name.data() + sep_pos, shard_id);
-  if (r.ec != errc()) {
-    return {0, INVALID_FILENAME};
-  }
-  name.remove_prefix(sep_pos + 1);
-  r = from_chars(name.data(), name.data() + name.size(), filename);
-  if (r.ec != errc()) {
-    return {0, INVALID_FILENAME};
-  }
-  return {shard_id, filename};
 }
-
 
 }  // namespace rafter::storage
