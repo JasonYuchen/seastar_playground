@@ -79,65 +79,6 @@ class serializer_adapter {
   char* _cur = 0;
 };
 
-// T is unordered_map<uint64_t, integral> or unordered_map<uint64_t, string>
-template<typename T>
-void dumper(T&& m, fragmented_temporary_buffer::ostream& o) {
-  o.write_le(m.size());
-  for (auto&& [id, s] : m) {
-    o.write_le(id);
-    if constexpr (is_integral_v<remove_reference_t<decltype(s)>>) {
-      o.write_le(s);
-    } else {
-      o.write_le(s.size());
-      o.write(s);
-    }
-  }
-}
-
-// T is unordered_map<uint64_t, integral> or unordered_map<uint64_t, string>
-template<typename T>
-void loader(T&& m, fragmented_temporary_buffer::istream& i) {
-  auto size = i.read_le<uint64_t>();
-  m.clear();
-  for (size_t j = 0; j < size; ++j) {
-    auto id = i.read_le<uint64_t>();
-    using value_t = typename remove_reference_t<decltype(m)>::mapped_type;
-    if constexpr (is_integral_v<value_t>) {
-      m[id] = i.read_le<value_t>();
-    } else {
-      m[id] = i.read_string(i.read_le<uint64_t>());
-    }
-  }
-}
-
-uint64_t serialize(
-    const group_id& obj, fragmented_temporary_buffer::ostream& o) {
-  o.write_le(obj.cluster);
-  o.write_le(obj.node);
-  return obj.bytes();
-}
-
-uint64_t deserialize(
-    group_id& obj, fragmented_temporary_buffer::istream& i) {
-  obj.cluster = i.read_le<uint64_t>();
-  obj.node = i.read_le<uint64_t>();
-  return obj.bytes();
-}
-
-uint64_t serialize(
-    const log_id& obj, fragmented_temporary_buffer::ostream& o) {
-  o.write_le(obj.term);
-  o.write_le(obj.index);
-  return obj.bytes();
-}
-
-uint64_t deserialize(
-    log_id& obj, fragmented_temporary_buffer::istream& i) {
-  obj.term = i.read_le<uint64_t>();
-  obj.index = i.read_le<uint64_t>();
-  return obj.bytes();
-}
-
 uint64_t serialize(
     const struct bootstrap& obj, fragmented_temporary_buffer::ostream& o) {
   uint64_t total = obj.bytes();
@@ -321,14 +262,57 @@ uint64_t deserialize(
 
 uint64_t serialize(
     const struct message& obj, fragmented_temporary_buffer::ostream& o) {
-  // TODO
-  return 0;
+  uint64_t total = obj.bytes();
+  o.write_le(total);
+  o.write_le(obj.type);
+  o.write_le(obj.cluster);
+  o.write_le(obj.from);
+  o.write_le(obj.to);
+  o.write_le(obj.term);
+  o.write_le(obj.log_term);
+  o.write_le(obj.log_index);
+  o.write_le(obj.commit);
+  o.write_le(obj.witness);
+  o.write_le(obj.reject);
+  serialize(obj.hint, o);
+  o.write_le(obj.entries.size());
+  for (const auto& e : obj.entries) {
+    serialize(*e, o);
+  }
+  o.write_le(obj.snapshot.operator bool());
+  if (obj.snapshot) {
+    serialize(*obj.snapshot, o);
+  }
+  return total;
 }
 
 uint64_t deserialize(
     struct message& obj, fragmented_temporary_buffer::istream& i) {
-  // TODO
-  return 0;
+  auto total = i.read_le<uint64_t>();
+  obj.type = i.read_le<message_type>();
+  obj.cluster = i.read_le<uint64_t>();
+  obj.from = i.read_le<uint64_t>();
+  obj.to = i.read_le<uint64_t>();
+  obj.term = i.read_le<uint64_t>();
+  obj.log_term = i.read_le<uint64_t>();
+  obj.log_index = i.read_le<uint64_t>();
+  obj.commit = i.read_le<uint64_t>();
+  obj.witness = i.read_le<bool>();
+  obj.reject = i.read_le<bool>();
+  deserialize(obj.hint, i);
+  obj.entries.resize(i.read_le<uint64_t>());
+  for (auto&& entry : obj.entries) {
+    entry = make_lw_shared<log_entry>();
+    deserialize(*entry, i);
+  }
+  if (i.read_le<bool>()) {
+    obj.snapshot = make_lw_shared<snapshot>();
+    deserialize(*obj.snapshot, i);
+  }
+  if (total != obj.bytes()) [[unlikely]] {
+    throw util::io_error(util::code::corruption, "deserialize message failed");
+  }
+  return total;
 }
 
 uint64_t serialize(
@@ -353,79 +337,6 @@ uint64_t deserialize(
   obj.address = i.read_string(i.read_le<uint64_t>());
   obj.initialize = i.read_le<bool>();
   return total;
-}
-
-uint64_t serialize(
-    const struct update& obj, fragmented_temporary_buffer::ostream& o) {
-  // TODO: introduce meta crc32
-  uint64_t total = obj.bytes();
-  o.write_le(total);
-  serialize(obj.gid, o);
-  serialize(obj.state, o);
-  o.write_le(obj.first_index);
-  o.write_le(obj.last_index);
-  o.write_le(obj.snapshot_index);
-  o.write_le(obj.entries_to_save.size());
-  for (auto&& e : obj.entries_to_save) {
-    serialize(*e, o);
-  }
-  o.write_le(obj.snapshot.operator bool());
-  if (obj.snapshot) {
-    serialize(*obj.snapshot, o);
-  }
-  return total;
-}
-
-uint64_t deserialize(
-    struct update& obj, fragmented_temporary_buffer::istream& i) {
-  auto total = i.read_le<uint64_t>();
-  deserialize(obj.gid, i);
-  deserialize(obj.state, i);
-  obj.first_index = i.read_le<uint64_t>();
-  obj.last_index = i.read_le<uint64_t>();
-  obj.snapshot_index = i.read_le<uint64_t>();
-  obj.entries_to_save.resize(i.read_le<uint64_t>());
-  for (auto&& entry : obj.entries_to_save) {
-    entry = make_lw_shared<log_entry>();
-    deserialize(*entry, i);
-  }
-  if (i.read_le<bool>()) {
-    obj.snapshot = make_lw_shared<snapshot>();
-    deserialize(*obj.snapshot, i);
-  }
-  if (total != obj.bytes()) [[unlikely]] {
-    throw util::io_error(util::code::corruption, "deserialize update failed");
-  }
-  return total;
-}
-
-future<uint64_t> deserialize_meta(struct update& obj, input_stream<char>& i) {
-  // TODO: introduce meta crc32
-  fragmented_temporary_buffer::fragment_list fragments;
-  fragments.emplace_back(co_await i.read_exactly(obj.meta_bytes()));
-  if (fragments.back().size() < obj.meta_bytes()) {
-    co_return 0;
-  }
-  auto buffer = fragmented_temporary_buffer(
-      std::move(fragments), obj.meta_bytes());
-  auto in_stream = buffer.as_istream();
-  auto total = in_stream.read_le<uint64_t>();
-  if (total < obj.meta_bytes()) {
-    // we have reached the trailing 0 due to alignment
-    co_return 0;
-  }
-  deserialize(obj.gid, in_stream);
-  deserialize(obj.state, in_stream);
-  obj.first_index = in_stream.read_le<uint64_t>();
-  obj.last_index = in_stream.read_le<uint64_t>();
-  obj.snapshot_index = in_stream.read_le<uint64_t>();
-  if (in_stream.bytes_left() > 0) [[unlikely]] {
-    co_return coroutine::make_exception(util::io_error(
-        util::code::corruption, "deserialize update meta failed"));
-  }
-  // skip to next update data position
-  co_await i.skip(total - obj.meta_bytes());
-  co_return total;
 }
 
 }  // namespace rafter::protocol

@@ -27,3 +27,10 @@ TypeName(const TypeName&) = default;                \
 TypeName& operator=(const TypeName&) = default;     \
 TypeName(TypeName&&) noexcept = default;            \
 TypeName& operator=(TypeName&&) noexcept = default
+
+namespace rafter::util {
+
+template<typename T>
+struct type {};
+
+}  // namespace rafter::util
