@@ -6,6 +6,7 @@
 
 #include <random>
 
+#include "protocol/serializer.hh"
 #include "test/base.hh"
 #include "test/util.hh"
 #include "util/error.hh"
@@ -64,7 +65,6 @@ class segment_test : public ::testing::Test {
     EXPECT_TRUE(*_segment);
     std::random_device rd;
     std::mt19937 g(rd());
-    std::uniform_int_distribution<int> r(0, 100);
     std::vector<std::vector<update>> gid_updates;
     for (auto gid : _gids) {
       gid_updates.emplace_back(
@@ -99,8 +99,6 @@ class segment_test : public ::testing::Test {
 
 RAFTER_TEST_F(segment_test, create) {
   EXPECT_TRUE(*_segment) << _segment->debug_string();
-  _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
-  co_await fulfill_segment();
   EXPECT_GT(_segment->bytes(), 0) << _segment->debug_string();
   co_return;
 }
@@ -159,6 +157,9 @@ RAFTER_TEST_F(segment_test, append_large_entry) {
 }
 
 RAFTER_TEST_F(segment_test, query) {
+  auto stat = co_await file_stat(
+      segment::form_path(_config.data_dir, _segment_filename));
+  EXPECT_GE(stat.size, _index.back().offset + _index.back().length);
   for (size_t i = 0; i < _updates.size(); ++i) {
     auto up = co_await _segment->query(_index[i]);
     if (!rafter::test::util::compare(up, _updates[i])) {
@@ -186,13 +187,7 @@ RAFTER_TEST_F(segment_test, batch_query) {
     auto& ie = query.emplace_back(_index[i]);
     ie.first_index = _updates[i].first_index;
     ie.last_index = _updates[i].last_index;
-    std::for_each(
-        _updates[i].entries_to_save.begin(),
-        _updates[i].entries_to_save.end(),
-        [&](auto e) {
-          expected.push_back(e);
-          entry_size += e->bytes();
-        });
+    entry_size += rafter::test::util::extract_entries(_updates[i], expected);
   }
   log_entry_vector fetched;
   auto left = co_await _segment->query(query, fetched, UINT64_MAX);

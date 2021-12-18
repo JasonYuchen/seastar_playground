@@ -228,7 +228,7 @@ struct vector_serializer {
       c.resize(size);
       i.read(reinterpret_cast<char*>(c.data()), size * sizeof(T));
     } else {
-      deserialize_container(i, c, size);
+      deserialize_container<T>(i, c, size);
     }
     return c;
   }
@@ -292,13 +292,13 @@ struct unordered_map_serializer {
     m.reserve(size);
     while (size--) {
       K k = deserialize(i, type<K>());
-      V v = deserialize(i, type<K>());
+      V v = deserialize(i, type<V>());
       m.emplace(std::move(k), std::move(v));
     }
     return m;
   }
   template<typename Output>
-  static void write(Output& o, const std::map<K, V>& m) {
+  static void write(Output& o, const std::unordered_map<K, V>& m) {
     serialize(o, m.size());
     for (const auto& [k, v] : m) {
       serialize(o, k);

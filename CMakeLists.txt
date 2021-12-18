@@ -59,6 +59,7 @@ set(SOURCES
     util/error.hh
     util/fragmented_temporary_buffer.cc
     util/fragmented_temporary_buffer.hh
+    util/serializer.hh
     util/signal.cc
     util/signal.hh
     util/types.hh

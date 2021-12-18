@@ -21,7 +21,6 @@ struct pair_hasher {
 };
 
 template<typename T>
-// TODO: concept
 std::string print(T items) {
   std::stringstream ss;
   for (const auto& item : items) {

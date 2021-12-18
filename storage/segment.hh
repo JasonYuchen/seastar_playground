@@ -36,6 +36,7 @@ class segment {
   static seastar::future<std::unique_ptr<segment>> open(
       uint64_t filename, std::string filepath, bool existing = false);
 
+  uint64_t filename() const noexcept;
   uint64_t bytes() const noexcept;
 
   // return the file length after appending the update
@@ -59,6 +60,8 @@ class segment {
   // generate segment name, format {shard_id:05d}_{filename:020d}.log
   static std::string form_name(uint64_t filename);
   static std::string form_path(std::string_view dir, uint64_t filename);
+  static std::string form_path(
+      std::string_view dir, unsigned shard, uint64_t filename);
   // parse segment name, extract shard_id and filename
   static std::pair<unsigned, uint64_t> parse_name(std::string_view name);
 

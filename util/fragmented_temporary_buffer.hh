@@ -77,6 +77,8 @@ class fragmented_temporary_buffer {
 
   iterator end() const noexcept;
 
+  char* get_write(size_t index = 0);
+
   void add_fragment(size_t fragment_size = default_fragment_size);
 
  private:
@@ -155,6 +157,8 @@ class fragmented_temporary_buffer::istream {
   T read_be() {
     return betoh(read<T>());
   }
+
+  void read(char* data, size_t n);
 
   view read(size_t n);
   std::string read_string(size_t n);

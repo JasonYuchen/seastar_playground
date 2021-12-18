@@ -4,6 +4,7 @@
 
 #include <string_view>
 
+#include "util/error.hh"
 #include "util/fragmented_temporary_buffer.hh"
 
 #include "test/base.hh"
@@ -40,13 +41,13 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, zero_can_be_expanded) {
 
 RAFTER_TEST_F(fragmented_temporary_buffer_basic, throw_if_out_of_range) {
   auto is = _buffer->as_istream();
-  EXPECT_THROW(is.read(1), std::out_of_range);
+  EXPECT_THROW(is.read(1), rafter::util::io_error);
   auto os = _buffer->as_ostream();
   os.write(1ULL);
   _buffer->remove_suffix(_buffer->bytes() - 8);
   is = _buffer->as_istream();
   is.read<uint64_t>();
-  EXPECT_THROW(is.read(1), std::out_of_range);
+  EXPECT_THROW(is.read(1), rafter::util::io_error);
   co_return;
 }
 
@@ -93,7 +94,10 @@ RAFTER_TEST_P(fragmented_temporary_buffer_fit, remove_to_fit) {
   EXPECT_EQ(_buffer->bytes(), GetParam());
   auto is = _buffer->as_istream();
   EXPECT_EQ(is.bytes_left(), GetParam());
-  EXPECT_EQ(data, is.read(GetParam()));
+  // if read(0) will trigger a false UB alarm, avoid it
+  if (GetParam() > 0) {
+    EXPECT_EQ(data, is.read(GetParam()));
+  }
   co_return;
 }
 

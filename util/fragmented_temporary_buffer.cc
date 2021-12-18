@@ -112,6 +112,12 @@ fragmented_temporary_buffer::end() const noexcept {
   return {};
 }
 
+char* fragmented_temporary_buffer::get_write(size_t index) {
+  auto it = _fragments.begin();
+  std::advance(it, index);
+  return it->get_write();
+}
+
 void fragmented_temporary_buffer::add_fragment(size_t fragment_size) {
   _fragments.emplace_back(
       temporary_buffer<char>::aligned(_alignment, fragment_size));
@@ -164,6 +170,21 @@ void fragmented_temporary_buffer::istream::skip(size_t n) noexcept {
     }
   }
   _curr_pos += n;
+}
+
+void fragmented_temporary_buffer::istream::read(char* data, size_t n) {
+  if (_curr_end - _curr_pos >= n) [[likely]] {
+    std::copy_n(_curr_pos, n, data);
+    _curr_pos += n;
+    return;
+  }
+  check_range(n);
+  auto pos = data;
+  auto view = read(n);
+  for (auto v : view) {
+    std::copy_n(v.data(), v.size(), pos);
+    pos += v.size();
+  }
 }
 
 fragmented_temporary_buffer::view
@@ -224,7 +245,7 @@ void fragmented_temporary_buffer::istream::check_range(size_t size) {
     throw util::io_error(
         util::code::short_read,
         "fragmented_temporary_buffer::istream read error, want={}, left={}",
-        size, _bytes_left);
+        size, bytes_left());
   }
 }
 

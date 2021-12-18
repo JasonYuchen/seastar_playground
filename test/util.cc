@@ -14,7 +14,7 @@ using namespace std;
 
 config util::default_config() {
   return config{
-      .data_dir = "test_data/wal",
+      .data_dir = "test_data",
       .wal_rolling_size = 100UL * KB,  // a smaller size to make more segments
   };
 }
@@ -62,6 +62,18 @@ vector<update> util::make_updates(
     }
   }
   return updates;
+}
+
+size_t util::extract_entries(const update &up, log_entry_vector &entries) {
+  size_t size = 0;
+  std::for_each(
+      up.entries_to_save.begin(),
+      up.entries_to_save.end(),
+      [&](auto e) {
+        entries.push_back(e);
+        size += e->bytes();
+      });
+  return size;
 }
 
 bool util::compare(const update &lhs, const update &rhs) noexcept {

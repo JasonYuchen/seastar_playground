@@ -361,4 +361,24 @@ class index_group_test : public ::testing::Test {
   }
 };
 
+RAFTER_TEST_F(index_group_test, update_compaction) {
+  // TODO
+  co_return;
+}
+
+RAFTER_TEST_F(index_group_test, update_entry) {
+  // TODO
+  co_return;
+}
+
+RAFTER_TEST_F(index_group_test, update_state) {
+  // TODO
+  co_return;
+}
+
+RAFTER_TEST_F(index_group_test, update_snapshot) {
+  // TODO
+  co_return;
+}
+
 }  // namespace

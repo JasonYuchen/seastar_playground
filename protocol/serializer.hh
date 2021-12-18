@@ -91,6 +91,97 @@ template<> struct serializer<bootstrap> {
   }
 };
 
+template<> struct serializer<membership> {
+  template<typename Input>
+  static membership read(Input& i) {
+    membership v;
+    v.config_change_id = deserialize(i, type<uint64_t>());
+    v.addresses = deserialize(i, type<decltype(membership::addresses)>());
+    v.observers = deserialize(i, type<decltype(membership::observers)>());
+    v.witnesses = deserialize(i, type<decltype(membership::witnesses)>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const membership& v) {
+    serialize(o, v.config_change_id);
+    serialize(o, v.addresses);
+    serialize(o, v.observers);
+    serialize(o, v.witnesses);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    skip(i, type<uint64_t>());
+    skip(i, type<decltype(membership::addresses)>());
+    skip(i, type<decltype(membership::observers)>());
+    skip(i, type<decltype(membership::witnesses)>());
+  }
+};
+
+template<> struct serializer<log_entry> {
+  template<typename Input>
+  static log_entry read(Input& i) {
+    log_entry v;
+    v.lid = deserialize(i, type<log_id>());
+    v.type = deserialize(i, type<entry_type>());
+    v.key = deserialize(i, type<uint64_t>());
+    v.client_id = deserialize(i, type<uint64_t>());
+    v.series_id = deserialize(i, type<uint64_t>());
+    v.responded_to = deserialize(i, type<uint64_t>());
+    v.payload = deserialize(i, type<std::string>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const log_entry& v) {
+    serialize(o, v.lid);
+    serialize(o, v.type);
+    serialize(o, v.key);
+    serialize(o, v.client_id);
+    serialize(o, v.series_id);
+    serialize(o, v.responded_to);
+    serialize(o, v.payload);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    skip(i, type<log_id>());
+    skip(i, type<entry_type>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<std::string>());
+  }
+};
+
+// special handler as lw_shared_ptr in log_entry_vector cannot be null
+template<> struct serializer<log_entry_vector> {
+  template<typename Input>
+  static log_entry_vector read(Input& i) {
+    auto size = deserialize(i, type<uint64_t>());
+    log_entry_vector v;
+    v.reserve(size);
+    while (size--) {
+      v.emplace_back(seastar::make_lw_shared<log_entry>(
+          deserialize(i, type<log_entry>())));
+    }
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const log_entry_vector& v) {
+    serialize(o, v.size());
+    for (const auto& e : v) {
+      assert(e);
+      serialize(o, *e);
+    }
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    auto size = deserialize(i, type<uint64_t>());
+    while (size--) {
+      skip(i, type<log_entry>());
+    }
+  }
+};
+
 template<> struct serializer<hard_state> {
   template<typename Input>
   static hard_state read(Input& i) {
@@ -112,10 +203,180 @@ template<> struct serializer<hard_state> {
   }
 };
 
+template<> struct serializer<snapshot_file> {
+  template<typename Input>
+  static snapshot_file read(Input& i) {
+    snapshot_file v;
+    v.file_id = deserialize(i, type<uint64_t>());
+    v.file_size = deserialize(i, type<uint64_t>());
+    v.file_path = deserialize(i, type<std::string>());
+    v.metadata = deserialize(i, type<std::string>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const snapshot_file& v) {
+    serialize(o, v.file_id);
+    serialize(o, v.file_size);
+    serialize(o, v.file_path);
+    serialize(o, v.metadata);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<std::string>());
+    skip(i, type<std::string>());
+  }
+};
+
+template<> struct serializer<snapshot> {
+  template<typename Input>
+  static snapshot read(Input& i) {
+    snapshot v;
+    v.group_id = deserialize(i, type<group_id>());
+    v.log_id = deserialize(i, type<log_id>());
+    v.file_path = deserialize(i, type<std::string>());
+    v.file_size = deserialize(i, type<uint64_t>());
+    v.membership = deserialize(i, type<membership_ptr>());
+    v.files = deserialize(i, type<decltype(snapshot::files)>());
+    v.smtype = deserialize(i, type<state_machine_type>());
+    v.imported = deserialize(i, type<bool>());
+    v.witness = deserialize(i, type<bool>());
+    v.dummy = deserialize(i, type<bool>());
+    v.on_disk_index = deserialize(i, type<uint64_t>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const snapshot& v) {
+    serialize(o, v.group_id);
+    serialize(o, v.log_id);
+    serialize(o, v.file_path);
+    serialize(o, v.file_size);
+    serialize(o, v.membership);
+    serialize(o, v.files);
+    serialize(o, v.smtype);
+    serialize(o, v.imported);
+    serialize(o, v.witness);
+    serialize(o, v.dummy);
+    serialize(o, v.on_disk_index);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    skip(i, type<group_id>());
+    skip(i, type<log_id>());
+    skip(i, type<std::string>());
+    skip(i, type<uint64_t>());
+    skip(i, type<membership_ptr>());
+    skip(i, type<decltype(snapshot::files)>());
+    skip(i, type<state_machine_type>());
+    skip(i, type<bool>());
+    skip(i, type<bool>());
+    skip(i, type<bool>());
+    skip(i, type<uint64_t>());
+  }
+};
+
+template<> struct serializer<hint> {
+  template<typename Input>
+  static hint read(Input& i) {
+    hint v;
+    v.low = deserialize(i, type<uint64_t>());
+    v.high = deserialize(i, type<uint64_t>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const hint& v) {
+    serialize(o, v.low);
+    serialize(o, v.high);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    i.skip(16);
+  }
+};
+
+template<> struct serializer<message> {
+  template<typename Input>
+  static message read(Input& i) {
+    message v;
+    v.type = deserialize(i, type<message_type>());
+    v.cluster = deserialize(i, type<uint64_t>());
+    v.from = deserialize(i, type<uint64_t>());
+    v.to = deserialize(i, type<uint64_t>());
+    v.term = deserialize(i, type<uint64_t>());
+    v.lid = deserialize(i, type<log_id>());
+    v.commit = deserialize(i, type<uint64_t>());
+    v.witness = deserialize(i, type<bool>());
+    v.reject = deserialize(i, type<bool>());
+    v.hint = deserialize(i, type<hint>());
+    v.entries = deserialize(i, type<log_entry_vector>());
+    v.snapshot = deserialize(i, type<snapshot_ptr>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const message& v) {
+    serialize(o, v.type);
+    serialize(o, v.cluster);
+    serialize(o, v.from);
+    serialize(o, v.to);
+    serialize(o, v.term);
+    serialize(o, v.lid);
+    serialize(o, v.commit);
+    serialize(o, v.witness);
+    serialize(o, v.reject);
+    serialize(o, v.hint);
+    serialize(o, v.entries);
+    serialize(o, v.snapshot);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    i.skip(i, type<message_type>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<log_id>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<bool>());
+    i.skip(i, type<bool>());
+    i.skip(i, type<hint>());
+    i.skip(i, type<log_entry_vector>());
+    i.skip(i, type<snapshot_ptr>());
+  }
+};
+
+template<> struct serializer<config_change> {
+  template<typename Input>
+  static config_change read(Input& i) {
+    config_change v;
+    v.config_change_id = deserialize(i, type<uint64_t>());
+    v.type = deserialize(i, type<config_change_type>());
+    v.node = deserialize(i, type<uint64_t>());
+    v.address = deserialize(i, type<std::string>());
+    v.initialize = deserialize(i, type<bool>());
+    return v;
+  }
+  template<typename Output>
+  static void write(Output& o, const config_change& v) {
+    serialize(o, v.config_change_id);
+    serialize(o, v.type);
+    serialize(o, v.node);
+    serialize(o, v.address);
+    serialize(o, v.initialize);
+  }
+  template<typename Input>
+  static void skip(Input& i) {
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<config_change_type>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<std::string>());
+    i.skip(i, type<bool>());
+  }
+};
+
 template<> struct serializer<update> {
   template<typename Input>
   static update read(Input& i) {
-    deserialize(i, type<uint64_t>());
     update v;
     v.gid = deserialize(i, type<group_id>());
     v.state = deserialize(i, type<hard_state>());
@@ -128,15 +389,6 @@ template<> struct serializer<update> {
   }
   template<typename Output>
   static void write(Output& o, const update& v) {
-    seastar::measuring_output_stream mo;
-    serialize(mo, v.gid);
-    serialize(mo, v.state);
-    serialize(mo, v.first_index);
-    serialize(mo, v.last_index);
-    serialize(mo, v.snapshot_index);
-    serialize(mo, v.entries_to_save);
-    serialize(mo, v.snapshot);
-    serialize(o, mo.size());
     serialize(o, v.gid);
     serialize(o, v.state);
     serialize(o, v.first_index);
@@ -147,7 +399,13 @@ template<> struct serializer<update> {
   }
   template<typename Input>
   static void skip(Input& i) {
-    i.skip(deserialize(i, type<uint64_t>()));
+    i.skip(i, type<group_id>());
+    i.skip(i, type<hard_state>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<uint64_t>());
+    i.skip(i, type<log_entry_vector>());
+    i.skip(i, type<snapshot_ptr>());
   }
 };
 
@@ -156,6 +414,11 @@ template<> struct serializer<update> {
 namespace rafter::protocol {
 
 // TODO: design pipeline-style writer for checksum, compression, and so on
+
+// TODO: double check pointer<T> serialization
+//  by default, a bool will be appended to indicate the pointer's existence,
+//  but when faced with pointers in a container, the pointers cannot be null,
+//  avoid this redundant bool by template specialization
 
 struct serializer {};
 
@@ -167,6 +430,13 @@ void write(serializer, Output& o, const T& v) {
 template<typename T, typename Input>
 T read(serializer, Input& i, util::type<T>) {
   return util::deserialize(i, util::type<T>());
+}
+
+template<typename T>
+size_t sizer(const T& obj) {
+  seastar::measuring_output_stream mo;
+  write(serializer{}, mo, obj);
+  return mo.size();
 }
 
 }  // namespace rafter::protocol
