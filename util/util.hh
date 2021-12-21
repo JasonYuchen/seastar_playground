@@ -12,7 +12,7 @@
 namespace rafter::util {
 
 struct pair_hasher {
-  template<typename T>
+  template <typename T>
   std::size_t operator()(T&& pair) const noexcept {
     auto&& [one, two] = pair;
     return std::hash<std::remove_cvref_t<decltype(one)>>()(one) ^
@@ -20,7 +20,7 @@ struct pair_hasher {
   }
 };
 
-template<typename T>
+template <typename T>
 std::string print(T items) {
   std::stringstream ss;
   for (const auto& item : items) {

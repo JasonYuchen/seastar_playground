@@ -15,61 +15,70 @@ namespace rafter::util {
 
 using namespace protocol;
 
-template<> struct serializer<raft_role>
-    : public detail::numeric_serializer<raft_role> {};
-template<> struct serializer<message_type>
-    : public detail::numeric_serializer<message_type> {};
-template<> struct serializer<entry_type>
-    : public detail::numeric_serializer<entry_type> {};
-template<> struct serializer<config_change_type>
-    : public detail::numeric_serializer<config_change_type> {};
-template<> struct serializer<state_machine_type>
-    : public detail::numeric_serializer<state_machine_type> {};
-template<> struct serializer<compression_type>
-    : public detail::numeric_serializer<compression_type> {};
-template<> struct serializer<checksum_type>
-    : public detail::numeric_serializer<checksum_type> {};
+template <>
+struct serializer<raft_role> : public detail::numeric_serializer<raft_role> {};
+template <>
+struct serializer<message_type>
+  : public detail::numeric_serializer<message_type> {};
+template <>
+struct serializer<entry_type>
+  : public detail::numeric_serializer<entry_type> {};
+template <>
+struct serializer<config_change_type>
+  : public detail::numeric_serializer<config_change_type> {};
+template <>
+struct serializer<state_machine_type>
+  : public detail::numeric_serializer<state_machine_type> {};
+template <>
+struct serializer<compression_type>
+  : public detail::numeric_serializer<compression_type> {};
+template <>
+struct serializer<checksum_type>
+  : public detail::numeric_serializer<checksum_type> {};
 
-template<> struct serializer<group_id> {
-  template<typename Input>
+template <>
+struct serializer<group_id> {
+  template <typename Input>
   static group_id read(Input& i) {
     group_id v;
     v.cluster = deserialize(i, type<uint64_t>());
     v.node = deserialize(i, type<uint64_t>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const group_id& v) {
     serialize(o, v.cluster);
     serialize(o, v.node);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(16);
   }
 };
 
-template<> struct serializer<log_id> {
-  template<typename Input>
+template <>
+struct serializer<log_id> {
+  template <typename Input>
   static log_id read(Input& i) {
     log_id v;
     v.term = deserialize(i, type<uint64_t>());
     v.index = deserialize(i, type<uint64_t>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const log_id& v) {
     serialize(o, v.term);
     serialize(o, v.index);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(16);
   }
 };
 
-template<> struct serializer<bootstrap> {
-  template<typename Input>
+template <>
+struct serializer<bootstrap> {
+  template <typename Input>
   static bootstrap read(Input& i) {
     bootstrap v;
     v.addresses = deserialize(i, type<decltype(bootstrap::addresses)>());
@@ -77,13 +86,13 @@ template<> struct serializer<bootstrap> {
     v.smtype = deserialize(i, type<state_machine_type>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const bootstrap& v) {
     serialize(o, v.addresses);
     serialize(o, v.join);
     serialize(o, v.smtype);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     skip(i, type<decltype(bootstrap::addresses)>());
     skip(i, type<bool>());
@@ -91,8 +100,9 @@ template<> struct serializer<bootstrap> {
   }
 };
 
-template<> struct serializer<membership> {
-  template<typename Input>
+template <>
+struct serializer<membership> {
+  template <typename Input>
   static membership read(Input& i) {
     membership v;
     v.config_change_id = deserialize(i, type<uint64_t>());
@@ -101,14 +111,14 @@ template<> struct serializer<membership> {
     v.witnesses = deserialize(i, type<decltype(membership::witnesses)>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const membership& v) {
     serialize(o, v.config_change_id);
     serialize(o, v.addresses);
     serialize(o, v.observers);
     serialize(o, v.witnesses);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     skip(i, type<uint64_t>());
     skip(i, type<decltype(membership::addresses)>());
@@ -117,8 +127,9 @@ template<> struct serializer<membership> {
   }
 };
 
-template<> struct serializer<log_entry> {
-  template<typename Input>
+template <>
+struct serializer<log_entry> {
+  template <typename Input>
   static log_entry read(Input& i) {
     log_entry v;
     v.lid = deserialize(i, type<log_id>());
@@ -130,7 +141,7 @@ template<> struct serializer<log_entry> {
     v.payload = deserialize(i, type<std::string>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const log_entry& v) {
     serialize(o, v.lid);
     serialize(o, v.type);
@@ -140,7 +151,7 @@ template<> struct serializer<log_entry> {
     serialize(o, v.responded_to);
     serialize(o, v.payload);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     skip(i, type<log_id>());
     skip(i, type<entry_type>());
@@ -153,8 +164,9 @@ template<> struct serializer<log_entry> {
 };
 
 // special handler as lw_shared_ptr in log_entry_vector cannot be null
-template<> struct serializer<log_entry_vector> {
-  template<typename Input>
+template <>
+struct serializer<log_entry_vector> {
+  template <typename Input>
   static log_entry_vector read(Input& i) {
     auto size = deserialize(i, type<uint64_t>());
     log_entry_vector v;
@@ -165,7 +177,7 @@ template<> struct serializer<log_entry_vector> {
     }
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const log_entry_vector& v) {
     serialize(o, v.size());
     for (const auto& e : v) {
@@ -173,7 +185,7 @@ template<> struct serializer<log_entry_vector> {
       serialize(o, *e);
     }
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     auto size = deserialize(i, type<uint64_t>());
     while (size--) {
@@ -182,8 +194,9 @@ template<> struct serializer<log_entry_vector> {
   }
 };
 
-template<> struct serializer<hard_state> {
-  template<typename Input>
+template <>
+struct serializer<hard_state> {
+  template <typename Input>
   static hard_state read(Input& i) {
     hard_state v;
     v.term = deserialize(i, type<uint64_t>());
@@ -191,20 +204,21 @@ template<> struct serializer<hard_state> {
     v.commit = deserialize(i, type<uint64_t>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const hard_state& v) {
     serialize(o, v.term);
     serialize(o, v.vote);
     serialize(o, v.commit);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(24);
   }
 };
 
-template<> struct serializer<snapshot_file> {
-  template<typename Input>
+template <>
+struct serializer<snapshot_file> {
+  template <typename Input>
   static snapshot_file read(Input& i) {
     snapshot_file v;
     v.file_id = deserialize(i, type<uint64_t>());
@@ -213,14 +227,14 @@ template<> struct serializer<snapshot_file> {
     v.metadata = deserialize(i, type<std::string>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const snapshot_file& v) {
     serialize(o, v.file_id);
     serialize(o, v.file_size);
     serialize(o, v.file_path);
     serialize(o, v.metadata);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     skip(i, type<uint64_t>());
     skip(i, type<uint64_t>());
@@ -229,8 +243,9 @@ template<> struct serializer<snapshot_file> {
   }
 };
 
-template<> struct serializer<snapshot> {
-  template<typename Input>
+template <>
+struct serializer<snapshot> {
+  template <typename Input>
   static snapshot read(Input& i) {
     snapshot v;
     v.group_id = deserialize(i, type<group_id>());
@@ -246,7 +261,7 @@ template<> struct serializer<snapshot> {
     v.on_disk_index = deserialize(i, type<uint64_t>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const snapshot& v) {
     serialize(o, v.group_id);
     serialize(o, v.log_id);
@@ -260,7 +275,7 @@ template<> struct serializer<snapshot> {
     serialize(o, v.dummy);
     serialize(o, v.on_disk_index);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     skip(i, type<group_id>());
     skip(i, type<log_id>());
@@ -276,27 +291,29 @@ template<> struct serializer<snapshot> {
   }
 };
 
-template<> struct serializer<hint> {
-  template<typename Input>
+template <>
+struct serializer<hint> {
+  template <typename Input>
   static hint read(Input& i) {
     hint v;
     v.low = deserialize(i, type<uint64_t>());
     v.high = deserialize(i, type<uint64_t>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const hint& v) {
     serialize(o, v.low);
     serialize(o, v.high);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(16);
   }
 };
 
-template<> struct serializer<message> {
-  template<typename Input>
+template <>
+struct serializer<message> {
+  template <typename Input>
   static message read(Input& i) {
     message v;
     v.type = deserialize(i, type<message_type>());
@@ -313,7 +330,7 @@ template<> struct serializer<message> {
     v.snapshot = deserialize(i, type<snapshot_ptr>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const message& v) {
     serialize(o, v.type);
     serialize(o, v.cluster);
@@ -328,7 +345,7 @@ template<> struct serializer<message> {
     serialize(o, v.entries);
     serialize(o, v.snapshot);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(i, type<message_type>());
     i.skip(i, type<uint64_t>());
@@ -345,8 +362,9 @@ template<> struct serializer<message> {
   }
 };
 
-template<> struct serializer<config_change> {
-  template<typename Input>
+template <>
+struct serializer<config_change> {
+  template <typename Input>
   static config_change read(Input& i) {
     config_change v;
     v.config_change_id = deserialize(i, type<uint64_t>());
@@ -356,7 +374,7 @@ template<> struct serializer<config_change> {
     v.initialize = deserialize(i, type<bool>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const config_change& v) {
     serialize(o, v.config_change_id);
     serialize(o, v.type);
@@ -364,7 +382,7 @@ template<> struct serializer<config_change> {
     serialize(o, v.address);
     serialize(o, v.initialize);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(i, type<uint64_t>());
     i.skip(i, type<config_change_type>());
@@ -374,8 +392,9 @@ template<> struct serializer<config_change> {
   }
 };
 
-template<> struct serializer<update> {
-  template<typename Input>
+template <>
+struct serializer<update> {
+  template <typename Input>
   static update read(Input& i) {
     update v;
     v.gid = deserialize(i, type<group_id>());
@@ -387,7 +406,7 @@ template<> struct serializer<update> {
     v.snapshot = deserialize(i, type<snapshot_ptr>());
     return v;
   }
-  template<typename Output>
+  template <typename Output>
   static void write(Output& o, const update& v) {
     serialize(o, v.gid);
     serialize(o, v.state);
@@ -397,7 +416,7 @@ template<> struct serializer<update> {
     serialize(o, v.entries_to_save);
     serialize(o, v.snapshot);
   }
-  template<typename Input>
+  template <typename Input>
   static void skip(Input& i) {
     i.skip(i, type<group_id>());
     i.skip(i, type<hard_state>());
@@ -409,7 +428,7 @@ template<> struct serializer<update> {
   }
 };
 
-}
+}  // namespace rafter::util
 
 namespace rafter::protocol {
 
@@ -422,17 +441,17 @@ namespace rafter::protocol {
 
 struct serializer {};
 
-template<typename T, typename Output>
+template <typename T, typename Output>
 void write(serializer, Output& o, const T& v) {
   util::serialize(o, v);
 }
 
-template<typename T, typename Input>
+template <typename T, typename Input>
 T read(serializer, Input& i, util::type<T>) {
   return util::deserialize(i, util::type<T>());
 }
 
-template<typename T>
+template <typename T>
 size_t sizer(const T& obj) {
   seastar::measuring_output_stream mo;
   write(serializer{}, mo, obj);

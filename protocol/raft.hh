@@ -6,11 +6,10 @@
 
 #include <stdint.h>
 
+#include <seastar/core/shared_ptr.hh>
 #include <span>
 #include <string>
 #include <vector>
-
-#include <seastar/core/shared_ptr.hh>
 
 namespace rafter::protocol {
 
@@ -29,30 +28,31 @@ const char *name(enum raft_role role);
 struct group_id {
   inline static constexpr uint64_t invalid_cluster = 0;
   inline static constexpr uint64_t invalid_node = 0;
+
   uint64_t cluster = invalid_cluster;
   uint64_t node = invalid_node;
-  bool valid() const noexcept {
-    return cluster != invalid_cluster && node != invalid_node;
-  }
+
+  bool valid() const noexcept;
   std::string to_string() const;
-  uint64_t bytes() const noexcept {
-    return 16;
-  }
+  constexpr uint64_t bytes() const noexcept { return 16; }
+
   std::strong_ordering operator<=>(const group_id &) const = default;
 };
 
 struct log_id {
   inline static constexpr uint64_t invalid_term = 0;
   inline static constexpr uint64_t invalid_index = 0;
+
   uint64_t term = invalid_term;
   uint64_t index = invalid_index;
+
   std::string to_string() const;
-  uint64_t bytes() const noexcept {
-    return 16;
-  }
+  constexpr uint64_t bytes() const noexcept { return 16; }
+
   std::strong_ordering operator<=>(const log_id &) const = default;
 };
 
+// TODO: use different message class instead of one message with different types
 enum class message_type : uint8_t {
   noop,
   local_tick,
@@ -132,6 +132,7 @@ struct bootstrap {
   std::unordered_map<uint64_t, std::string> addresses;
   bool join = false;
   state_machine_type smtype = state_machine_type::regular;
+
   uint64_t bytes() const noexcept;
 };
 
@@ -143,17 +144,11 @@ struct membership {
   std::unordered_map<uint64_t, std::string> observers;
   std::unordered_map<uint64_t, std::string> witnesses;
   std::unordered_map<uint64_t, bool> removed;
+
   uint64_t bytes() const noexcept;
-  bool operator==(const membership& rhs) const noexcept {
-    return config_change_id == rhs.config_change_id &&
-           addresses == rhs.addresses &&
-           observers == rhs.observers &&
-           witnesses == rhs.witnesses &&
-           removed == rhs.removed;
-  }
-  bool operator!=(const membership& rhs) const noexcept {
-    return !(*this == rhs);
-  }
+
+  bool operator==(const membership &rhs) const noexcept;
+  bool operator!=(const membership &rhs) const noexcept;
 };
 
 using membership_ptr = seastar::lw_shared_ptr<membership>;
@@ -189,16 +184,10 @@ struct hard_state {
   uint64_t vote = group_id::invalid_node;
   uint64_t commit = log_id::invalid_index;
 
-  std::strong_ordering operator<=>(const hard_state &) const = default;
+  constexpr uint64_t bytes() const noexcept { return 24; }
+  bool empty() const noexcept;
 
-  uint64_t bytes() const noexcept {
-    return 24;
-  }
-  bool empty() const noexcept {
-    return term == log_id::invalid_term &&
-           vote == group_id::invalid_node &&
-           commit == log_id::invalid_index;
-  }
+  std::strong_ordering operator<=>(const hard_state &) const = default;
 };
 
 struct snapshot_file {
@@ -207,9 +196,9 @@ struct snapshot_file {
   std::string file_path;
   std::string metadata;
 
-  std::strong_ordering operator<=>(const snapshot_file &) const = default;
-
   uint64_t bytes() const noexcept;
+
+  std::strong_ordering operator<=>(const snapshot_file &) const = default;
 };
 
 using snapshot_file_ptr = seastar::lw_shared_ptr<snapshot_file>;
@@ -236,9 +225,9 @@ struct hint {
   uint64_t low = 0;
   uint64_t high = 0;
 
-  uint64_t bytes() const noexcept {
-    return 16;
-  }
+  constexpr uint64_t bytes() const noexcept { return 16; }
+
+  std::strong_ordering operator<=>(const hint &) const = default;
 };
 
 using hint_vector = std::vector<hint>;
@@ -249,8 +238,7 @@ struct message {
   uint64_t from = group_id::invalid_node;
   uint64_t to = group_id::invalid_node;
   uint64_t term = log_id::invalid_term;
-  uint64_t log_term = log_id::invalid_term;
-  uint64_t log_index = log_id::invalid_index;
+  struct log_id lid;
   uint64_t commit = log_id::invalid_index;
   // replicate messages sent to witness will only include the Entry.Index and
   // the Entry.Term with Entry.Type=Metadata, other fields will be ignored
@@ -295,7 +283,7 @@ struct snapshot_header {
   enum checksum_type checksum_type = checksum_type::crc32;
   enum compression_type compression_type = compression_type::no_compression;
 
-  uint64_t bytes() const noexcept;
+  constexpr uint64_t bytes() const noexcept { return 26; }
 };
 
 struct snapshot_chunk {
@@ -314,7 +302,7 @@ struct snapshot_chunk {
   uint64_t file_chunk_count = 0;
   snapshot_file_ptr file_info;
   uint64_t on_disk_index = log_id::invalid_index;
-  bool witness= false;
+  bool witness = false;
 
   uint64_t bytes() const noexcept;
 };
@@ -322,6 +310,8 @@ struct snapshot_chunk {
 struct ready_to_read {
   uint64_t index = log_id::invalid_index;
   struct hint context;
+
+  constexpr uint64_t bytes() const noexcept { return 24; }
 };
 
 using ready_to_read_vector = std::vector<ready_to_read>;
@@ -386,13 +376,15 @@ struct update {
   void fill_meta() noexcept;
   uint64_t compacted_to() const noexcept;
   uint64_t bytes() const noexcept;
-  uint64_t meta_bytes() const noexcept;
   bool has_update() const noexcept;
   void validate() const;
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
 
   std::string debug_string(bool detail) const;
+
+  // total size + gid + state + fi + li + snapshot index
+  static constexpr uint64_t meta_bytes() noexcept { return 72; }
 };
 
 using update_ptr = seastar::lw_shared_ptr<update>;

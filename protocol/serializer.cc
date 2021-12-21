@@ -35,7 +35,7 @@ class serializer_adapter {
 
   void write(const char* data, size_t size) {
     if (_end - _cur < size) [[unlikely]] {
-      throw util::io_error(util::code::short_write);
+      throw util::short_write_error();
     }
     std::copy_n(data, size, _cur);
     _cur += size;
@@ -44,7 +44,7 @@ class serializer_adapter {
   template<util::endian::detail::numerical T>
   T read() {
     if (_end - _cur < sizeof(T)) [[unlikely]] {
-      throw util::io_error(util::code::short_read);
+      throw util::short_read_error();
     }
     T obj;
     std::copy_n(_cur, sizeof(T), reinterpret_cast<char*>(&obj));
@@ -64,7 +64,7 @@ class serializer_adapter {
 
   std::string read_string(size_t n) {
     if (_end - _cur < n) [[unlikely]] {
-      throw util::io_error(util::code::short_read);
+      throw util::short_read_error();
     }
     std::string obj{_cur, n};
     _cur += n;

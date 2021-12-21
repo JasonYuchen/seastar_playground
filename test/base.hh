@@ -4,32 +4,33 @@
 
 #pragma once
 
-#include <thread>
-#include <future>
-
 #include <gtest/gtest.h>
+
+#include <future>
 #include <seastar/core/alien.hh>
 #include <seastar/core/app-template.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/reactor.hh>
+#include <thread>
 
 // TODO(jason): support parallel
 
 #define RAFTER_TEST_(test_suite_name, test_name, parent_class, parent_id)      \
-  static_assert(sizeof(GTEST_STRINGIFY_(test_suite_name)) > 1,                 \
-                "test_suite_name must not be empty");                          \
-  static_assert(sizeof(GTEST_STRINGIFY_(test_name)) > 1,                       \
-                "test_name must not be empty");                                \
+  static_assert(                                                               \
+      sizeof(GTEST_STRINGIFY_(test_suite_name)) > 1,                           \
+      "test_suite_name must not be empty");                                    \
+  static_assert(                                                               \
+      sizeof(GTEST_STRINGIFY_(test_name)) > 1, "test_name must not be empty"); \
   class GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)                     \
-      : public parent_class {                                                  \
+    : public parent_class {                                                    \
    public:                                                                     \
     GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)() = default;            \
     ~GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)() override = default;  \
-    GTEST_DISALLOW_COPY_AND_ASSIGN_(GTEST_TEST_CLASS_NAME_(test_suite_name,    \
-                                                           test_name));        \
-    GTEST_DISALLOW_MOVE_AND_ASSIGN_(GTEST_TEST_CLASS_NAME_(test_suite_name,    \
-                                                           test_name));        \
+    GTEST_DISALLOW_COPY_AND_ASSIGN_(                                           \
+        GTEST_TEST_CLASS_NAME_(test_suite_name, test_name));                   \
+    GTEST_DISALLOW_MOVE_AND_ASSIGN_(                                           \
+        GTEST_TEST_CLASS_NAME_(test_suite_name, test_name));                   \
                                                                                \
    private:                                                                    \
     void TestBody() override;                                                  \
@@ -37,11 +38,15 @@
     static ::testing::TestInfo* const test_info_ GTEST_ATTRIBUTE_UNUSED_;      \
   };                                                                           \
                                                                                \
-  ::testing::TestInfo* const GTEST_TEST_CLASS_NAME_(test_suite_name,           \
-                                                    test_name)::test_info_ =   \
+  ::testing::TestInfo* const GTEST_TEST_CLASS_NAME_(                           \
+      test_suite_name, test_name)::test_info_ =                                \
       ::testing::internal::MakeAndRegisterTestInfo(                            \
-          #test_suite_name, #test_name, nullptr, nullptr,                      \
-          ::testing::internal::CodeLocation(__FILE__, __LINE__), (parent_id),  \
+          #test_suite_name,                                                    \
+          #test_name,                                                          \
+          nullptr,                                                             \
+          nullptr,                                                             \
+          ::testing::internal::CodeLocation(__FILE__, __LINE__),               \
+          (parent_id),                                                         \
           ::testing::internal::SuiteApiResolver<                               \
               parent_class>::GetSetUpCaseOrSuite(__FILE__, __LINE__),          \
           ::testing::internal::SuiteApiResolver<                               \
@@ -50,25 +55,31 @@
               test_suite_name, test_name)>);                                   \
   void GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::TestBody() {        \
     auto fut = seastar::alien::submit_to(                                      \
-        *seastar::alien::internal::default_instance,                           \
-        0,                                                                     \
-        [this] { return this->SeastarBody(); });                               \
+        *seastar::alien::internal::default_instance, 0, [this] {               \
+          return this->SeastarBody();                                          \
+        });                                                                    \
     fut.get();                                                                 \
   }                                                                            \
-  seastar::future<>                                                            \
-  GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::SeastarBody()
+  seastar::future<> GTEST_TEST_CLASS_NAME_(                                    \
+      test_suite_name, test_name)::SeastarBody()
 
 #define RAFTER_TEST(test_suite_name, test_name)                                \
-  RAFTER_TEST_(test_suite_name, test_name, ::testing::Test,                    \
-               ::testing::internal::GetTestTypeId())
+  RAFTER_TEST_(                                                                \
+      test_suite_name,                                                         \
+      test_name,                                                               \
+      ::testing::Test,                                                         \
+      ::testing::internal::GetTestTypeId())
 
 #define RAFTER_TEST_F(test_fixture, test_name)                                 \
-  RAFTER_TEST_(test_fixture, test_name, test_fixture,                          \
-               ::testing::internal::GetTypeId<test_fixture>())
+  RAFTER_TEST_(                                                                \
+      test_fixture,                                                            \
+      test_name,                                                               \
+      test_fixture,                                                            \
+      ::testing::internal::GetTypeId<test_fixture>())
 
-#define RAFTER_TEST_P(test_suite_name, test_name) \
+#define RAFTER_TEST_P(test_suite_name, test_name)                              \
   class GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)                     \
-      : public test_suite_name {                                               \
+    : public test_suite_name {                                                 \
    public:                                                                     \
     GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)() {}                    \
     void TestBody() override;                                                  \
@@ -82,28 +93,29 @@
               GTEST_STRINGIFY_(test_suite_name),                               \
               ::testing::internal::CodeLocation(__FILE__, __LINE__))           \
           ->AddTestPattern(                                                    \
-              GTEST_STRINGIFY_(test_suite_name), GTEST_STRINGIFY_(test_name),  \
+              GTEST_STRINGIFY_(test_suite_name),                               \
+              GTEST_STRINGIFY_(test_name),                                     \
               new ::testing::internal::TestMetaFactory<GTEST_TEST_CLASS_NAME_( \
                   test_suite_name, test_name)>(),                              \
               ::testing::internal::CodeLocation(__FILE__, __LINE__));          \
       return 0;                                                                \
     }                                                                          \
     static int gtest_registering_dummy_ GTEST_ATTRIBUTE_UNUSED_;               \
-    GTEST_DISALLOW_COPY_AND_ASSIGN_(GTEST_TEST_CLASS_NAME_(test_suite_name,    \
-                                                           test_name));        \
+    GTEST_DISALLOW_COPY_AND_ASSIGN_(                                           \
+        GTEST_TEST_CLASS_NAME_(test_suite_name, test_name));                   \
   };                                                                           \
-  int GTEST_TEST_CLASS_NAME_(test_suite_name,                                  \
-                             test_name)::gtest_registering_dummy_ =            \
+  int GTEST_TEST_CLASS_NAME_(                                                  \
+      test_suite_name, test_name)::gtest_registering_dummy_ =                  \
       GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::AddToRegistry();     \
   void GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::TestBody() {        \
     auto fut = seastar::alien::submit_to(                                      \
-        *seastar::alien::internal::default_instance,                           \
-        0,                                                                     \
-        [this] { return this->SeastarBody(); });                               \
+        *seastar::alien::internal::default_instance, 0, [this] {               \
+          return this->SeastarBody();                                          \
+        });                                                                    \
     fut.get();                                                                 \
   }                                                                            \
-  seastar::future<>                                                            \
-  GTEST_TEST_CLASS_NAME_(test_suite_name, test_name)::SeastarBody()
+  seastar::future<> GTEST_TEST_CLASS_NAME_(                                    \
+      test_suite_name, test_name)::SeastarBody()
 
 namespace rafter::test {
 

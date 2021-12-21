@@ -21,7 +21,8 @@ void base::SetUp() {
   auto fut = pr.get_future();
   _engine_thread = std::thread([this, pr = std::move(pr)]() mutable {
     return _app->run(
-        _argc, _argv,
+        _argc,
+        _argv,
         // We cannot use `pr = std::move(pr)` here as it will forbid compilation
         // see https://taylorconor.com/blog/noncopyable-lambdas/
         [&pr]() mutable -> seastar::future<> {
@@ -29,8 +30,10 @@ void base::SetUp() {
           rafter::util::stop_signal stop_signal;
           pr.set_value();
           auto signum = co_await stop_signal.wait();
-          l.info("reactor engine exiting..., caught signal {}:{}",
-                 signum, ::strsignal(signum));
+          l.info(
+              "reactor engine exiting..., caught signal {}:{}",
+              signum,
+              ::strsignal(signum));
           co_return;
         });
   });
@@ -41,10 +44,9 @@ void base::TearDown() {
   vector<std::future<void>> futs;
   for (auto shard = 0; shard < smp::count; ++shard) {
     futs.emplace_back(
-        alien::submit_to(
-            *alien::internal::default_instance,
-            shard,
-            [] { return make_ready_future<>(); }));
+        alien::submit_to(*alien::internal::default_instance, shard, [] {
+          return make_ready_future<>();
+        }));
   }
   for (auto&& fut : futs) {
     fut.get();
@@ -59,14 +61,15 @@ void base::TearDown() {
 
 void base::submit(std::function<seastar::future<>()> func) {
   seastar::alien::submit_to(
-      *seastar::alien::internal::default_instance, 0, std::move(func)).get();
+      *seastar::alien::internal::default_instance, 0, std::move(func))
+      .get();
 }
 
 seastar::logger l{"rafter_test"};
 
 }  // namespace rafter::test
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   ::testing::AddGlobalTestEnvironment(new rafter::test::base(argc, argv));
   return RUN_ALL_TESTS();
