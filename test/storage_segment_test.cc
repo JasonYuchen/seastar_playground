@@ -139,6 +139,40 @@ RAFTER_TEST_F(segment_test, open_and_list) {
   co_return;
 }
 
+RAFTER_TEST_F(segment_test, partial_written) {
+  auto path =  segment::form_path(_config.data_dir, _segment_filename);
+  auto file = co_await open_file_dma(path, open_flags::wo);
+  // truncate the update but leave a complete meta
+  co_await file.truncate(_index.back().offset + _index.back().length - 1);
+  co_await file.flush();
+  std::vector<index::entry> ie;
+  auto appender = [&ie](const update& up, index::entry e) -> future<> {
+    ie.emplace_back(e);
+    co_return;
+  };
+  co_await _segment->list_update(appender);
+  EXPECT_EQ(ie.size() + 1, _index.size());
+  ie.emplace_back(_index.back());
+  if (ie != _index) {
+    l.error("failed to list_update in an truncated segment");
+    EXPECT_TRUE(false) << "Write:\n" << rafter::util::print(_index)
+                       << "Read:\n" << rafter::util::print(ie);
+  }
+  // truncate the update but leave a complete meta
+  co_await file.truncate(_index.back().offset + 1);
+  co_await file.flush();
+  ie.clear();
+  co_await _segment->list_update(appender);
+  EXPECT_EQ(ie.size() + 1, _index.size());
+  ie.emplace_back(_index.back());
+  if (ie != _index) {
+    l.error("failed to list_update in an truncated segment");
+    EXPECT_TRUE(false) << "Write:\n" << rafter::util::print(_index)
+                       << "Read:\n" << rafter::util::print(ie);
+  }
+  co_return;
+}
+
 RAFTER_TEST_F(segment_test, append_large_entry) {
   update up;
   up.first_index = 100;
@@ -214,18 +248,24 @@ RAFTER_TEST_F(segment_test, batch_query) {
   co_return;
 }
 
-RAFTER_TEST(static_segment_test, form_name) {
-  // TODO
-  co_return;
-}
-
-RAFTER_TEST(static_segment_test, form_path) {
-  // TODO
-  co_return;
-}
-
 RAFTER_TEST(static_segment_test, parse_name) {
-  // TODO
+  struct {
+    std::string_view entry;
+    std::pair<unsigned, uint64_t> expected;
+  } tests[] = {
+      {".", {0, segment::INVALID_FILENAME}},
+      {"..", {0, segment::INVALID_FILENAME}},
+      {"some_dir/", {0, segment::INVALID_FILENAME}},
+      {"123_567.log", {0, segment::INVALID_FILENAME}},
+      {"00123_01234567890123456789.logex", {0, segment::INVALID_FILENAME}},
+      {"00123_99999999999999999999.log", {0, segment::INVALID_FILENAME}},
+      {"0012X_01234567890123456789.log", {0, segment::INVALID_FILENAME}},
+      {"00123_0123456789012345678X.log", {0, segment::INVALID_FILENAME}},
+      {"00123_01234567890123456789.log", {123, 1234567890123456789ULL}},
+  };
+  for (const auto& [entry, expected] : tests) {
+    EXPECT_EQ(segment::parse_name(entry), expected) << "parsing " << entry;
+  }
   co_return;
 }
 
