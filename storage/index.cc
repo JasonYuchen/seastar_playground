@@ -49,7 +49,7 @@ bool index::entry::try_merge(index::entry& e) noexcept {
 
 std::string index::entry::debug_string() const {
   return fmt::format("entry[fi:{}, li:{}, fn:{}, off:{}, len:{}, type:{}]",
-      first_index, last_index, filename, offset, length, type);
+      first_index, last_index, filename, offset, length, uint8_t{type});
 }
 
 index& index::set_compacted_to(uint64_t compacted_to) noexcept {
@@ -81,14 +81,12 @@ index& index::update(index::entry e) {
   auto [idx, found] = binary_search(
       0, _entries.size() - 1, e.first_index);
   if (!found) [[unlikely]] {
-    throw util::logic_error(
-        l,
-        util::code::out_of_range,
-        "{} index::update: first index {} out of range [{}, {}]",
-        _gid.to_string(),
-        e.first_index,
-        _entries.front().first_index,
-        _entries.back().last_index);
+    l.error("{} index::update: first index {} out of range [{}, {}]",
+            _gid.to_string(),
+            e.first_index,
+            _entries.front().first_index,
+            _entries.back().last_index);
+    throw util::out_of_range_error();
   }
   auto st = _entries.begin();
   std::advance(st, idx + 1);
@@ -165,10 +163,7 @@ uint64_t index::compaction() {
     const auto& e = _entries[i];
     const auto& prev_e = _entries[i-1];
     if (!e.is_normal()) [[unlikely]] {
-      throw util::logic_error(
-          l,
-          util::code::out_of_range,
-          "index::compaction: invalid type in {}", e.debug_string());
+      throw util::failed_precondition_error("invalid index type");
     }
     if (e.filename != prev_filename) {
       if (prev_e.last_index <= _compacted_to) {
@@ -318,12 +313,7 @@ lw_shared_ptr<node_index> index_group::get_node_index(group_id id) {
 span<const index::entry> index_group::query(group_id id, protocol::hint range) {
   assert(id.valid());
   if (range.low > range.high) [[unlikely]] {
-    throw util::logic_error(
-        l,
-        util::code::out_of_range,
-        "index_group::query: invalid range [{}, {}]",
-        range.low,
-        range.high);
+    throw util::failed_precondition_error("invalid query range");
   }
   return get_node_index(id)->query(range);
 }

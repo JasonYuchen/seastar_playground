@@ -25,7 +25,10 @@ class index {
   class entry {
    public:
     enum type : uint8_t {
-      normal, state, snapshot, compaction,
+      normal,
+      state,
+      snapshot,
+      compaction,
     };
     // the first included raft log entry index
     uint64_t first_index = protocol::log_id::invalid_index;
@@ -40,7 +43,7 @@ class index {
     // the type of the raw data
     enum type type = type::normal;
 
-    std::strong_ordering operator<=>(const entry &) const = default;
+    std::strong_ordering operator<=>(const entry&) const = default;
     bool empty() const noexcept;
     bool is_normal() const noexcept;
     bool is_state() const noexcept;
@@ -65,9 +68,7 @@ class index {
 
   // make it private
   std::pair<uint64_t, bool> binary_search(
-      uint64_t start,
-      uint64_t end,
-      uint64_t raft_index) const noexcept;
+      uint64_t start, uint64_t end, uint64_t raft_index) const noexcept;
 
   std::span<const entry> query(protocol::hint range) const noexcept;
 
@@ -90,7 +91,6 @@ class index {
   uint64_t _compacted_to = protocol::log_id::invalid_index;
   std::vector<entry> _entries;
 };
-
 
 class node_index {
  public:
@@ -156,9 +156,11 @@ class index_group {
 
  private:
   std::unordered_map<
-      group_id, seastar::lw_shared_ptr<node_index>, util::pair_hasher> _indexes;
-  std::unordered_map<
-      group_id, protocol::hard_state, util::pair_hasher> _states;
+      group_id,
+      seastar::lw_shared_ptr<node_index>,
+      util::pair_hasher>
+      _indexes;
+  std::unordered_map<group_id, protocol::hard_state, util::pair_hasher> _states;
 };
 
 }  // namespace rafter::storage

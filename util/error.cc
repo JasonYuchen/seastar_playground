@@ -9,6 +9,8 @@ namespace rafter::util {
 const char* status_string(enum code e) {
   static const char* s[] = {
       "ok",
+      "configuration",
+      "serialization",
       "short_read",
       "short_write",
       "compacted",
@@ -19,11 +21,12 @@ const char* status_string(enum code e) {
       "cancelled",
       "corruption",
       "failed_precondition",
+      "failed_postcondition",
       "invalid",
       "no_data",
-      "unknown"
-  };
-  static_assert(sizeof(s)/sizeof(s[0]) == static_cast<int>(code::num_of_codes));
+      "unknown"};
+  static_assert(
+      sizeof(s) / sizeof(s[0]) == static_cast<int>(code::num_of_codes));
   return s[static_cast<uint8_t>(e)];
 }
 

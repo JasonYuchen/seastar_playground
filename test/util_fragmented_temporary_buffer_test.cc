@@ -41,13 +41,13 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, zero_can_be_expanded) {
 
 RAFTER_TEST_F(fragmented_temporary_buffer_basic, throw_if_out_of_range) {
   auto is = _buffer->as_istream();
-  EXPECT_THROW(is.read(1), rafter::util::io_error);
+  EXPECT_THROW(is.read(1), rafter::util::out_of_range_error);
   auto os = _buffer->as_ostream();
   os.write(1ULL);
   _buffer->remove_suffix(_buffer->bytes() - 8);
   is = _buffer->as_istream();
   is.read<uint64_t>();
-  EXPECT_THROW(is.read(1), rafter::util::io_error);
+  EXPECT_THROW(is.read(1), rafter::util::out_of_range_error);
   co_return;
 }
 

@@ -5,7 +5,6 @@
 #pragma once
 
 #include <list>
-
 #include <seastar/core/iostream.hh>
 #include <seastar/core/temporary_buffer.hh>
 
@@ -93,19 +92,19 @@ class fragmented_temporary_buffer::iterator {
   iterator() = default;
   iterator(fragment_list::const_iterator it, size_t left);
 
-  const std::string_view &operator*() const noexcept { return _current; }
+  const std::string_view& operator*() const noexcept { return _current; }
 
-  const std::string_view *operator->() const noexcept { return &_current; }
+  const std::string_view* operator->() const noexcept { return &_current; }
 
-  iterator &operator++() noexcept;
+  iterator& operator++() noexcept;
 
   iterator operator++(int) noexcept;
 
-  bool operator==(const iterator &other) const noexcept {
+  bool operator==(const iterator& other) const noexcept {
     return _left == other._left;
   }
 
-  bool operator!=(const iterator &other) const noexcept {
+  bool operator!=(const iterator& other) const noexcept {
     return !(*this == other);
   }
 
@@ -123,7 +122,7 @@ class fragmented_temporary_buffer::istream {
 
   void skip(size_t n) noexcept;
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   T read() {
     if (_curr_end - _curr_pos < sizeof(T)) [[unlikely]] {
       check_range(sizeof(T));
@@ -148,12 +147,12 @@ class fragmented_temporary_buffer::istream {
     return obj;
   }
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   T read_le() {
     return letoh(read<T>());
   }
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   T read_be() {
     return betoh(read<T>());
   }
@@ -181,24 +180,22 @@ class fragmented_temporary_buffer::ostream {
       fragment_list::iterator it,
       size_t size) noexcept;
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   void write(T data) {
     write(reinterpret_cast<const char*>(&data), sizeof(T));
   }
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   void write_le(T data) {
     write(htole(data));
   }
 
-  template<endian::detail::numerical T>
+  template <endian::detail::numerical T>
   void write_be(T data) {
     write(htobe(data));
   }
 
-  void write(std::string_view data) {
-    write(data.data(), data.size());
-  }
+  void write(std::string_view data) { write(data.data(), data.size()); }
 
   void write(const char* data, size_t size);
 

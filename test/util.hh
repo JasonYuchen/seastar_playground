@@ -5,7 +5,6 @@
 #pragma once
 
 #include <memory>
-
 #include <seastar/core/shared_ptr.hh>
 
 #include "storage/segment.hh"

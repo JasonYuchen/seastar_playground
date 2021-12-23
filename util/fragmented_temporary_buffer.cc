@@ -88,8 +88,8 @@ void fragmented_temporary_buffer::remove_suffix(size_t n) noexcept {
   _fragments.erase(it.base(), _fragments.end());
 }
 
-fragmented_temporary_buffer::istream
-fragmented_temporary_buffer::as_istream() const noexcept {
+fragmented_temporary_buffer::istream fragmented_temporary_buffer::as_istream()
+    const noexcept {
   return istream{_fragments.begin(), _bytes};
 }
 
@@ -102,13 +102,13 @@ fragmented_temporary_buffer::as_ostream() noexcept {
   return ostream{*this, _fragments.begin(), _bytes};
 }
 
-fragmented_temporary_buffer::iterator
-fragmented_temporary_buffer::begin() const noexcept {
+fragmented_temporary_buffer::iterator fragmented_temporary_buffer::begin()
+    const noexcept {
   return _bytes ? iterator{_fragments.begin(), _bytes} : iterator{};
 }
 
-fragmented_temporary_buffer::iterator
-fragmented_temporary_buffer::end() const noexcept {
+fragmented_temporary_buffer::iterator fragmented_temporary_buffer::end()
+    const noexcept {
   return {};
 }
 
@@ -187,8 +187,8 @@ void fragmented_temporary_buffer::istream::read(char* data, size_t n) {
   }
 }
 
-fragmented_temporary_buffer::view
-fragmented_temporary_buffer::istream::read(size_t n) {
+fragmented_temporary_buffer::view fragmented_temporary_buffer::istream::read(
+    size_t n) {
   if (_curr_end - _curr_pos >= n) [[likely]] {
     auto v = view(_current, _curr_pos - _current->get(), n);
     _curr_pos += n;
@@ -242,10 +242,10 @@ void fragmented_temporary_buffer::istream::next_fragment() {
 
 void fragmented_temporary_buffer::istream::check_range(size_t size) {
   if (bytes_left() < size) [[unlikely]] {
-    throw util::io_error(
-        util::code::short_read,
+    throw util::out_of_range_error(fmt::format(
         "fragmented_temporary_buffer::istream read error, want={}, left={}",
-        size, bytes_left());
+        size,
+        bytes_left()));
   }
 }
 
@@ -324,14 +324,10 @@ fragmented_temporary_buffer::view::view(
   , _total_size(size) {}
 
 fragmented_temporary_buffer::view::view(std::string_view s) noexcept
-  : _curr_pos(s.data())
-  , _curr_size(s.size())
-  , _total_size(s.size()) {}
+  : _curr_pos(s.data()), _curr_size(s.size()), _total_size(s.size()) {}
 
 fragmented_temporary_buffer::view::view(const std::string& s) noexcept
-  : _curr_pos(s.data())
-  , _curr_size(s.size())
-  , _total_size(s.size()) {}
+  : _curr_pos(s.data()), _curr_size(s.size()), _total_size(s.size()) {}
 
 bool fragmented_temporary_buffer::view::operator==(
     const view& rhs) const noexcept {
@@ -391,12 +387,8 @@ fragmented_temporary_buffer::view::iterator::operator++(int) noexcept {
 }
 
 fragmented_temporary_buffer::view::iterator::iterator(
-    fragment_list::const_iterator it,
-    string_view current,
-    size_t left) noexcept
-  : _it(it)
-  , _left(left)
-  , _current(current) {}
+    fragment_list::const_iterator it, string_view current, size_t left) noexcept
+  : _it(it), _left(left), _current(current) {}
 
 fragmented_temporary_buffer::view::iterator
 fragmented_temporary_buffer::view::begin() const noexcept {
