@@ -11,7 +11,7 @@ namespace rafter {
 
 void config::validate() const {
   if (data_dir.empty()) {
-    throw util::runtime_error(l, util::code::invalid, "empty data_dir");
+    throw util::configuration_error("data_dir", "empty");
   }
 }
 
