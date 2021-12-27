@@ -127,7 +127,8 @@ class base : public ::testing::Environment {
 
   void TearDown() override;
 
-  static void submit(std::function<seastar::future<>()> func);
+  static void submit(
+      std::function<seastar::future<>()> func, unsigned shard_id = 0);
 
  protected:
   int _argc;

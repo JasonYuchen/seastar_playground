@@ -37,6 +37,8 @@ struct group_id {
   constexpr uint64_t bytes() const noexcept { return 16; }
 
   std::strong_ordering operator<=>(const group_id &) const = default;
+
+  friend std::ostream& operator<<(std::ostream& os, const group_id& id);
 };
 
 struct log_id {
@@ -50,6 +52,8 @@ struct log_id {
   constexpr uint64_t bytes() const noexcept { return 16; }
 
   std::strong_ordering operator<=>(const log_id &) const = default;
+
+  friend std::ostream& operator<<(std::ostream& os, const log_id& id);
 };
 
 // TODO: use different message class instead of one message with different types

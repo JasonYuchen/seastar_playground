@@ -76,7 +76,7 @@ future<uint64_t> segment::append(const update& up) {
     auto bytes = co_await _file.dma_write(_aligned_pos, it.data(), it.size());
     if (bytes < it.size()) {
       l.error("{} segment::append: short write, expect:{}, actual:{}",
-              up.gid.to_string(), it.size(), bytes);
+              up.gid, it.size(), bytes);
       co_return coroutine::make_exception(util::short_write_error());
     }
     if (written_bytes < it.size()) {
@@ -176,7 +176,7 @@ future<size_t> segment::query(
       }
       if (ent->lid.index != expected_index) [[unlikely]] {
         l.error("{} segment::query: log hole found in segment:{}, missing:{}",
-                up.gid.to_string(), _filename, expected_index);
+                up.gid, _filename, expected_index);
         co_return coroutine::make_exception(util::corruption_error());
       }
       if (left_bytes < ent->bytes()) {

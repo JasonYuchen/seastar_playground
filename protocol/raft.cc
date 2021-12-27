@@ -5,8 +5,7 @@
 #include "raft.hh"
 
 #include <fmt/format.h>
-
-#include <seastar/core/simple-stream.hh>
+#include <fmt/ostream.h>
 
 #include "protocol/serializer.hh"
 
@@ -130,8 +129,18 @@ string group_id::to_string() const {
   return fmt::format("gid[{:05d},{:05d}]", cluster, node);
 }
 
+std::ostream& operator<<(std::ostream& os, const group_id& id) {
+  return os << "gid[" << std::setfill('0') << std::setw(5) << id.cluster << ","
+            << std::setfill('0') << std::setw(5) << id.node << "]";
+}
+
 string log_id::to_string() const {
   return fmt::format("lid[{},{}]", term, index);
+}
+
+std::ostream& operator<<(std::ostream& os, const log_id& id) {
+  return os << "lid[" << std::setfill('0') << std::setw(5) << id.term << ","
+            << std::setfill('0') << std::setw(5) << id.index << "]";
 }
 
 uint64_t bootstrap::bytes() const noexcept { return sizer(*this); }

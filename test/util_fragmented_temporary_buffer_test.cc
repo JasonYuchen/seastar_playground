@@ -154,7 +154,7 @@ RAFTER_TEST_P(fragmented_temporary_buffer_segment, read_write_across_fragments) 
       case 3:
         EXPECT_EQ(fragment.size(), 4096); break;
       default:
-        EXPECT_TRUE(false);
+        ADD_FAILURE();
     }
     reassemble.append(fragment);
   }

@@ -59,9 +59,13 @@ void base::TearDown() {
   _engine_thread.join();
 }
 
-void base::submit(std::function<seastar::future<>()> func) {
+void base::submit(std::function<seastar::future<>()> func, unsigned shard_id) {
+  if (shard_id >= seastar::smp::count) {
+    l.error("invalid shard:{}, maximal:{}", shard_id, seastar::smp::count);
+    std::abort();
+  }
   seastar::alien::submit_to(
-      *seastar::alien::internal::default_instance, 0, std::move(func))
+      *seastar::alien::internal::default_instance, shard_id, std::move(func))
       .get();
 }
 
