@@ -44,7 +44,7 @@ We design and implement a naive storage layer for Rafter using write ahead log, 
 ### Basic Design
 
 All entries and hard states coming from the Raft module are serialized and appended to a segment file (WAL) with a
-corresponding in-memory index tracking each entry by its location tuple `(filename, offset)`.
+corresponding in-memory `index::entry` tracking each entry by its location tuple `(filename, offset)`.
 
 The WAL files are rolling with a threshold size, only the segment with the largest filename is the active segment, all
 other WAL files are archived and immutable. The name of a segment has two parts, its prefix is the shard id and its
@@ -78,17 +78,17 @@ disk(s)           |                        |                        |
              +-----------+            +-----------+            +-----------+
 
 rafter @ disk0
-  |--<cluster_id:020d_node_id:020d>
+  |--{cluster_id:020d}_{node_id:020d}
   |    |--config
-  |    |--<shard:05d seq:020d>.log
-  |    |--<shard:05d seq:020d>.log
-  |    |--<shard:05d seq:020d>.log
+  |    |--{shard:05d}_{seq:020d}.log
+  |    |--{shard:05d}_{seq:020d}.log
+  |    |--{shard:05d}_{seq:020d}.log
   |    |--...
-  |--<cluster_id:020d_node_id:020d>
+  |--{cluster_id:020d}_{node_id:020d}
   |--...
 
 rafter @ disk1
-  |--<cluster_id:020d_node_id:020d>
+  |--{cluster_id:020d}_{node_id:020d}
   |--...
 ```
 
@@ -165,9 +165,8 @@ WAL file are shared among all Raft nodes in this shard (need synchronization if 
 
 1. block all requests as the storage layer is being recovered
 2. parse all segments to rebuild logs and indexes
-3. truncate segments if any error occurs during recovery
-4. compact obsolete segments
-5. ready for service
+3. compact obsolete segments (Not implemented yet)
+4. ready for service
 
 ```text
              segment
