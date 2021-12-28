@@ -46,6 +46,7 @@ class segment_manager {
  private:
   void must_open() const;
   seastar::future<> parse_existing_segments(seastar::directory_entry s);
+  seastar::future<> recovery_compaction();
   seastar::future<> update_index(const protocol::update& up, index::entry e);
   seastar::future<> rolling();
   seastar::future<> gc_service();
@@ -69,10 +70,6 @@ class segment_manager {
   // segment ids ready for GC
   std::unique_ptr<seastar::queue<uint64_t>> _obsolete_queue;
   std::optional<seastar::future<>> _gc_service;
-
-  // guard the append operation which maybe invoked by multiple coroutines
-  seastar::shared_mutex _mutex;
-  bool _need_sync = false;
 
   struct stats _stats;
 };

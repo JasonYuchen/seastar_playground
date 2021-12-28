@@ -35,6 +35,7 @@ future<> segment_manager::start() {
   _next_filename = _segments.empty() ? 1 : _segments.rbegin()->first + 1;
   co_await rolling();
   co_await dir.close();
+  co_await recovery_compaction();
   _open = true;
   _gc_service = gc_service();
 }
@@ -62,24 +63,20 @@ future<bool> segment_manager::append(const update& up) {
   bool need_sync = up.snapshot || !up.entries_to_save.empty() ||
                    prev_state.term != up.state.term ||
                    prev_state.vote != up.state.vote;
-  auto e = co_await with_lock(_mutex, [&, this]() -> future<index::entry> {
-    auto it = _segments.rbegin();
-    auto filename = it->first;
-    auto segment = it->second.get();
-    auto offset = segment->bytes();
-    auto new_offset = co_await segment->append(up);
-    index::entry e{
-        .filename = filename,
-        .offset = offset,
-        .length = new_offset - offset,
-    };
-    if (new_offset >= _config.wal_rolling_size) {
-      co_await rolling();
-      _need_sync = need_sync = false;
-    }
-    _need_sync = _need_sync || need_sync;
-    co_return e;
-  });
+  auto it = _segments.rbegin();
+  auto filename = it->first;
+  auto segment = it->second.get();
+  auto offset = segment->bytes();
+  auto new_offset = co_await segment->append(up);
+  index::entry e{
+      .filename = filename,
+      .offset = offset,
+      .length = new_offset - offset,
+  };
+  if (new_offset >= _config.wal_rolling_size) {
+    co_await rolling();
+    need_sync = false;
+  }
   co_await update_index(up, e);
   co_return need_sync;
 }
@@ -108,14 +105,14 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
   if (it == _segments.end()) {
     l.error(
         "{} segment_manager::query_snapshot: segment:{} not found",
-        id.to_string(),
+        id,
         i.filename);
     co_return coroutine::make_exception(util::corruption_error());
   }
   auto segment = it->second.get();
   auto up = co_await segment->query(i);
   if (up.snapshot->log_id.index == log_id::invalid_index) {
-    l.error("{} segment_manager::query_snapshot: empty", id.to_string());
+    l.error("{} segment_manager::query_snapshot: empty", id);
     co_return coroutine::make_exception(util::corruption_error());
   }
   co_return std::move(up.snapshot);
@@ -128,7 +125,7 @@ future<raft_state> segment_manager::query_raft_state(
   // TODO: read from segment or read from _index_group?
   auto st = _index_group.get_hard_state(id);
   if (st.empty()) {
-    l.error("{} segment_manager::query_raft_state: no data", id.to_string());
+    l.error("{} segment_manager::query_raft_state: no data", id);
     co_return coroutine::make_exception(util::failed_precondition_error());
   }
   raft_state r;
@@ -140,7 +137,7 @@ future<raft_state> segment_manager::query_raft_state(
       if (prev_idx + 1 != e.first_index) {
         l.error(
             "{} segment_manager::query_raft_state: missing index:{}",
-            id.to_string(),
+            id,
             prev_idx + 1);
         co_return coroutine::make_exception(util::corruption_error());
       }
@@ -195,17 +192,11 @@ future<log_entry_vector> segment_manager::query_entries(
 }
 
 future<> segment_manager::sync() {
-  co_await with_lock(_mutex, [this]() -> future<> {
-    // sometimes when a worker try to sync a segment, it maybe already synced by
-    // another worker due to coroutine scheduling, and this worker's update is
-    // included in that sync, skip
-    if (_need_sync && !_segments.empty()) {
-      _stats._sync++;
-      co_await _segments.rbegin()->second->sync();
-    }
-    _need_sync = false;
-    co_return;
-  });
+  if (!_segments.empty()) {
+    _stats._sync++;
+    co_await _segments.rbegin()->second->sync();
+  }
+  co_return;
 }
 
 string segment_manager::debug_string() const noexcept {
@@ -246,6 +237,16 @@ future<> segment_manager::parse_existing_segments(directory_entry s) {
   co_await seg->list_update(
       [this](const auto& up, auto e) { return update_index(up, e); });
   _segments.emplace(filename, std::move(seg));
+}
+
+seastar::future<> segment_manager::recovery_compaction() {
+  // TODO: use callback and avoid this allocation
+  auto groups = _index_group.managed_groups();
+  for (auto gid : groups) {
+    co_await compaction(gid);
+  }
+  l.info("segment_manager::recovery_compaction: done");
+  co_return;
 }
 
 future<> segment_manager::update_index(const update& up, index::entry e) {
