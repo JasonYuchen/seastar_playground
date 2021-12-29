@@ -38,9 +38,9 @@ RAFTER_TEST_F(worker_test, normal) {
   auto fut = pr.get_future();
   std::vector<int> result;
   std::vector<int> expect;
-  _worker->start([pr = std::move(pr), &result](int a) mutable -> future<> {
-    result.push_back(a);
-    if (a == 9) {
+  _worker->start([pr = std::move(pr), &result](auto& a) mutable -> future<> {
+    result.insert(result.end(), a.begin(), a.end());
+    if (result.size() == 10) {
       pr.set_value();
     }
     co_return;
@@ -70,12 +70,15 @@ RAFTER_TEST_F(worker_test, multiple_producer) {
     }
   }
   EXPECT_EQ(_worker->waiters(), 5);
-  _worker->start([pr = std::move(pr), &result](int a) mutable -> future<> {
+  _worker->start([pr = std::move(pr), &result](auto& a) mutable -> future<> {
     if (!result.empty()) {
-      EXPECT_EQ(result.back() + 1, a) << "incorrect order";
+      EXPECT_EQ(result.back() + 1, a.front()) << "incorrect order";
+    } else {
+      // the first full batch
+      EXPECT_EQ(a.size(), 10);
     }
-    result.push_back(a);
-    if (a == 14) {
+    result.insert(result.end(), a.begin(), a.end());
+    if (result.size() == 15) {
       pr.set_value();
     }
     co_return;
@@ -85,6 +88,25 @@ RAFTER_TEST_F(worker_test, multiple_producer) {
     EXPECT_TRUE(f.available());
   }
   EXPECT_EQ(result, expect);
+  EXPECT_EQ(_worker->waiters(), 0);
+  co_return;
+}
+
+RAFTER_TEST_F(worker_test, close_will_notify_waiter) {
+  std::vector<future<>> turn;
+  for (int i = 0; i < 15; ++i) {
+    turn.emplace_back(_worker->push_eventually(int{i}));
+    if (i < 10) {
+      EXPECT_TRUE(turn.back().available());
+    } else {
+      EXPECT_FALSE(turn.back().available());
+    }
+  }
+  EXPECT_EQ(_worker->waiters(), 5);
+  co_await _worker->close();
+  for (int i = 10; i < 15; ++i) {
+    EXPECT_THROW(turn[i].get(), rafter::util::closed_error);
+  }
   EXPECT_EQ(_worker->waiters(), 0);
   co_return;
 }

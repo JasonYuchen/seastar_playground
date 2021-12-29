@@ -15,13 +15,12 @@ using namespace protocol;
 using namespace seastar;
 using namespace std;
 
-segment_manager::segment_manager(const config& config) : _config(config) {}
+segment_manager::segment_manager(const config& config)
+  : _config(config), _gc_worker("segment_gc", _config.wal_gc_queue_capacity) {}
 
 future<> segment_manager::start() {
   _log_dir = filesystem::path(_config.data_dir).append("wal");
   co_await recursive_touch_directory(_log_dir);
-  _obsolete_queue =
-      make_unique<seastar::queue<uint64_t>>(_config.wal_gc_queue_capacity);
   l.info(
       "segment_manager::start: dir:{}, rolling_size:{}, gc_queue_cap:{}",
       _log_dir,
@@ -37,13 +36,12 @@ future<> segment_manager::start() {
   co_await dir.close();
   co_await recovery_compaction();
   _open = true;
-  _gc_service = gc_service();
+  _gc_worker.start([this](auto& t) { return this->gc_service(t); });
 }
 
 future<> segment_manager::stop() {
   _open = false;
-  _obsolete_queue->abort(make_exception_ptr(util::closed_error()));
-  co_await _gc_service->discard_result();
+  co_await _gc_worker.close();
   l.info("segment_manager::stop: stopped");
 }
 
@@ -271,34 +269,21 @@ future<> segment_manager::rolling() {
   _next_filename++;
 }
 
-future<> segment_manager::gc_service() {
-  l.info("segment_manager::gc_service: online");
-  size_t failed_count = 0;
-  uint64_t filename = segment::INVALID_FILENAME;
-  while (_open) {
+future<> segment_manager::gc_service(std::vector<uint64_t>& segs) {
+  for (auto seg : segs) {
     try {
-      filename = co_await _obsolete_queue->pop_eventually();
+      auto s = std::move(_segments[seg]);
+      _segments.erase(seg);
+      co_await s->close();
+      co_await s->remove();
       _stats._del_segment++;
-      co_await _segments[filename]->close();
-      co_await _segments[filename]->remove();
-      _segments.erase(filename);
-      // TODO: sync_directory once for multiple segments
-      co_await sync_directory(_log_dir);
-    } catch (util::closed_error& e) {
-      break;
-    } catch (...) {
-      failed_count++;
-      l.warn(
-          "segment_manager::gc_service: removing {} but exception caught:{}",
-          filename,
-          current_exception());
-      if (failed_count > 5) {
-        l.error("segment_manager::gc_service: exiting");
-        break;
-      }
+    } catch (std::runtime_error& e) {
+      l.warn("segment_manager::gc_service: failed to remove segment:{}, {}",
+             segment::form_path(_log_dir, seg), e.what());
     }
   }
-  l.info("segment_manager::gc_service: offline");
+  co_await sync_directory(_log_dir);
+  segs.clear();
 }
 
 future<> segment_manager::compaction(group_id id) {
@@ -308,7 +293,7 @@ future<> segment_manager::compaction(group_id id) {
     assert(_segments_ref_count.contains(file));
     if (--_segments_ref_count[file] == 0) {
       _segments_ref_count.erase(file);
-      co_await _obsolete_queue->push_eventually(std::move(file));
+      co_await _gc_worker.push_eventually(std::move(file));
     }
   }
 }

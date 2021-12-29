@@ -132,6 +132,8 @@ class node_index {
 class index_group {
  public:
   index_group() = default;
+  std::vector<group_id> managed_groups() const;
+
   protocol::hard_state get_hard_state(group_id id);
 
   seastar::lw_shared_ptr<node_index> get_node_index(group_id id);

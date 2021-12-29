@@ -29,7 +29,7 @@ vector<update> util::make_updates(
   std::mt19937 g(rd());
   std::uniform_int_distribution<int> r(0, 100);
   std::vector<update> updates;
-  hard_state prev_state {.term = 1, .vote = 2, .commit = 0};
+  hard_state prev_state{.term = 1, .vote = 2, .commit = 0};
   uint64_t prev_index = r(g) + 1;
   for (size_t i = 1; i <= num; ++i) {
     update up{.gid = gid};
@@ -63,19 +63,17 @@ vector<update> util::make_updates(
   return updates;
 }
 
-size_t util::extract_entries(const update &up, log_entry_vector &entries) {
+size_t util::extract_entries(const update& up, log_entry_vector& entries) {
   size_t size = 0;
   std::for_each(
-      up.entries_to_save.begin(),
-      up.entries_to_save.end(),
-      [&](auto e) {
+      up.entries_to_save.begin(), up.entries_to_save.end(), [&](auto e) {
         entries.push_back(e);
         size += e->bytes();
       });
   return size;
 }
 
-bool util::compare(const update &lhs, const update &rhs) noexcept {
+bool util::compare(const update& lhs, const update& rhs) noexcept {
   if (lhs.gid != rhs.gid) {
     return false;
   }

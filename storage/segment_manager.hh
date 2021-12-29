@@ -11,6 +11,7 @@
 #include "storage/index.hh"
 #include "storage/segment.hh"
 #include "storage/stats.hh"
+#include "util/worker.hh"
 
 namespace rafter::storage {
 
@@ -49,7 +50,7 @@ class segment_manager {
   seastar::future<> recovery_compaction();
   seastar::future<> update_index(const protocol::update& up, index::entry e);
   seastar::future<> rolling();
-  seastar::future<> gc_service();
+  seastar::future<> gc_service(std::vector<uint64_t>& segs);
   seastar::future<> compaction(protocol::group_id id);
 
  private:
@@ -68,8 +69,7 @@ class segment_manager {
   std::map<uint64_t, uint64_t> _segments_ref_count;
   index_group _index_group;
   // segment ids ready for GC
-  std::unique_ptr<seastar::queue<uint64_t>> _obsolete_queue;
-  std::optional<seastar::future<>> _gc_service;
+  util::worker<uint64_t> _gc_worker;
 
   struct stats _stats;
 };

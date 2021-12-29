@@ -4,8 +4,9 @@ set(SOURCES
     base.cc
     base.hh
     storage_index_test.cc
-    storage_segment_test.cc
     storage_segment_manager_test.cc
+    storage_segment_test.cc
+    transport_exchanger_test.cc
     util.cc
     util.hh
     util_fragmented_temporary_buffer_test.cc

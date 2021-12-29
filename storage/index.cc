@@ -82,7 +82,7 @@ index& index::update(index::entry e) {
       0, _entries.size() - 1, e.first_index);
   if (!found) [[unlikely]] {
     l.error("{} index::update: first index {} out of range [{}, {}]",
-            _gid.to_string(),
+            _gid,
             e.first_index,
             _entries.front().first_index,
             _entries.back().last_index);
@@ -292,6 +292,15 @@ bool node_index::operator==(const node_index& rhs) const noexcept {
 
 bool node_index::operator!=(const node_index& rhs) const noexcept {
   return !(*this == rhs);
+}
+
+vector<group_id> index_group::managed_groups() const {
+  vector<group_id> groups;
+  groups.reserve(_indexes.size());
+  for (const auto& [gid, _] : _indexes) {
+    groups.emplace_back(gid);
+  }
+  return groups;
 }
 
 protocol::hard_state index_group::get_hard_state(group_id id) {

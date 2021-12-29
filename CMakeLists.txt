@@ -25,19 +25,29 @@ add_subdirectory(test)
 set(SOURCES
     core/logger.cc
     core/logger.hh
-    core/raft.cc
-    core/raft.hh
+#    core/peer.cc
+#    core/peer.hh
+#    core/raft.cc
+#    core/raft.hh
+#    core/raft_log.cc
+#    core/raft_log.hh
+#    core/read_index.cc
+#    core/read_index.hh
+    core/remote.cc
+    core/remote.hh
+#    protocol/client.hh
+    protocol/raft.cc
+    protocol/raft.hh
+    protocol/serializer.cc
+    protocol/serializer.hh
     rafter/config.cc
     rafter/config.hh
     rafter/logger.cc
     rafter/logger.hh
     rafter/nodehost.cc
     rafter/nodehost.hh
-#    protocol/client.hh
-    protocol/raft.cc
-    protocol/raft.hh
-    protocol/serializer.cc
-    protocol/serializer.hh
+#    rsm/logger.cc
+#    rsm/logger.hh
     storage/index.cc
     storage/index.hh
 #    storage/logdb.cc
@@ -52,8 +62,13 @@ set(SOURCES
 #    storage/snapshot.hh
     storage/stats.cc
     storage/stats.hh
+#    transport/exchanger.cc
+#    transport/exchanger.hh
     transport/logger.cc
     transport/logger.hh
+#    transport/registry.cc
+#    transport/registry.hh
+    util/backoff.hh
     util/endian.hh
     util/error.cc
     util/error.hh
@@ -63,7 +78,8 @@ set(SOURCES
     util/signal.cc
     util/signal.hh
     util/types.hh
-    util/util.hh)
+    util/util.hh
+    util/worker.hh)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 

@@ -4,10 +4,9 @@
 
 #include <string_view>
 
+#include "test/base.hh"
 #include "util/error.hh"
 #include "util/fragmented_temporary_buffer.hh"
-
-#include "test/base.hh"
 
 using namespace rafter::util;
 using namespace std::string_view_literals;
@@ -24,7 +23,6 @@ class fragmented_temporary_buffer_basic : public ::testing::Test {
 
   std::unique_ptr<fragmented_temporary_buffer> _buffer;
 };
-
 
 RAFTER_TEST_F(fragmented_temporary_buffer_basic, zero_can_be_expanded) {
   auto os = _buffer->as_ostream();
@@ -70,8 +68,8 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, fragment_size_is_honored) {
 }
 
 class fragmented_temporary_buffer_fit
-    : public ::testing::Test,
-      public ::testing::WithParamInterface<int> {
+  : public ::testing::Test
+  , public ::testing::WithParamInterface<int> {
  protected:
   void SetUp() override {
     _buffer = std::make_unique<fragmented_temporary_buffer>(64, 2, 16);
@@ -102,8 +100,8 @@ RAFTER_TEST_P(fragmented_temporary_buffer_fit, remove_to_fit) {
 }
 
 class fragmented_temporary_buffer_segment
-    : public ::testing::Test,
-      public ::testing::WithParamInterface<int> {
+  : public ::testing::Test
+  , public ::testing::WithParamInterface<int> {
  protected:
   void SetUp() override {
     // for case 1: 1 x 8192
@@ -126,7 +124,8 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(1, 2, 3),
     ::testing::PrintToStringParamName());
 
-RAFTER_TEST_P(fragmented_temporary_buffer_segment, read_write_across_fragments) {
+RAFTER_TEST_P(
+    fragmented_temporary_buffer_segment, read_write_across_fragments) {
   std::string all(4090, 0);
   auto os = _buffer->as_ostream();
   os.fill(0, 4090);
@@ -145,14 +144,17 @@ RAFTER_TEST_P(fragmented_temporary_buffer_segment, read_write_across_fragments) 
   EXPECT_EQ("number", is.read_string(6));
   EXPECT_EQ(std::string(3000, 'c'), is.read(3000));
   std::string reassemble;
-  for(auto&& fragment : *_buffer) {
+  for (auto&& fragment : *_buffer) {
     switch (GetParam()) {
       case 1:
-        EXPECT_EQ(fragment.size(), 8192); break;
+        EXPECT_EQ(fragment.size(), 8192);
+        break;
       case 2:
-        EXPECT_EQ(fragment.size(), 4096); break;
+        EXPECT_EQ(fragment.size(), 4096);
+        break;
       case 3:
-        EXPECT_EQ(fragment.size(), 4096); break;
+        EXPECT_EQ(fragment.size(), 4096);
+        break;
       default:
         ADD_FAILURE();
     }

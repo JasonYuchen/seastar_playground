@@ -12,13 +12,6 @@
 
 namespace rafter::test {
 
-struct segment_package {
-  std::vector<protocol::group_id> _gids;
-  seastar::lw_shared_ptr<storage::segment> _segment;
-  std::vector<protocol::update> _updates;
-  std::vector<storage::index::entry> _indexes;
-};
-
 class util {
  public:
   static config default_config();
