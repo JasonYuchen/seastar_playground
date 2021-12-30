@@ -22,10 +22,9 @@ class worker {
     _q[1].reserve(_capacity);
   }
 
-  // TODO: add concept, Func subject to `seastar::future<> (std::vector<T>&)`
   template <typename Func>
-  requires requires(Func f, std::vector<T>& a) {
-    { f(a) } -> std::same_as<seastar::future<>>;
+  requires requires(Func f, std::vector<T>& data, bool& open) {
+    { f(data, open) } -> std::same_as<seastar::future<>>;
   }
   void start(Func func) {
     if (!_open && !_service) {
@@ -36,15 +35,9 @@ class worker {
 
   seastar::future<> close() {
     _open = false;
-    if (_not_empty) {
-      _not_empty->set_value();
-      _not_empty = std::nullopt;
-    }
-    while (!_waiter.empty()) {
-      auto& e = _waiter.front();
-      e.pr.set_exception(std::make_exception_ptr(util::closed_error(_name)));
-      _waiter.pop_front();
-    }
+    _ex = std::make_exception_ptr(util::closed_error(_name));
+    notify_not_empty();
+    try_release_waiter();
     if (_service) {
       co_await _service->discard_result();
       _service.reset();
@@ -53,13 +46,10 @@ class worker {
   }
 
   seastar::future<> push_eventually(T&& task) {
-    while (!full() && !_waiter.empty()) {
-      auto& e = _waiter.front();
-      q().emplace_back(std::move(e.t));
-      e.pr.set_value();
-      _waiter.pop_front();
-      notify_not_empty();
+    if (_ex) {
+      std::rethrow_exception(_ex);
     }
+    try_release_waiter();
     if (!full()) {
       q().emplace_back(std::move(task));
       notify_not_empty();
@@ -106,27 +96,36 @@ class worker {
     }
   }
 
-  template <typename Func>
-  seastar::future<> run(Func func) {
-    while (_open) {
-      co_await not_empty();
-      if (q().empty()) {
-        // empty but waked up, closing the worker
-        break;
+  void try_release_waiter() {
+    if (_ex) {
+      while (!_waiter.empty()) {
+        _waiter.front().pr.set_exception(_ex);
+        _waiter.pop_front();
       }
-      _switch_cnt++;
-      _task_cnt += q().size();
-      // switch q()
-      _curr_idx++;
-      co_await func(_q[(_curr_idx - 1) % 2]);
-      _q[(_curr_idx - 1) % 2].clear();
-
+    } else {
       while (!full() && !_waiter.empty()) {
         auto& e = _waiter.front();
         q().emplace_back(std::move(e.t));
         e.pr.set_value();
         _waiter.pop_front();
+        notify_not_empty();
       }
+    }
+  }
+
+  template <typename Func>
+  seastar::future<> run(Func func) {
+    while (_open) {
+      co_await not_empty();
+      if (!q().empty()) {
+        _switch_cnt++;
+        _task_cnt += q().size();
+        // switch q()
+        _curr_idx++;
+        co_await func(_q[(_curr_idx - 1) % 2], _open);
+        _q[(_curr_idx - 1) % 2].clear();
+      }
+      try_release_waiter();
     }
   }
 
@@ -140,6 +139,7 @@ class worker {
   std::optional<seastar::promise<>> _not_empty;
   std::list<entry> _waiter;
   std::optional<seastar::future<>> _service;
+  std::exception_ptr _ex = nullptr;
 };
 
 }  // namespace rafter::util
