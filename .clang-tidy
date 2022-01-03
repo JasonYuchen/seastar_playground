@@ -2,6 +2,24 @@
 Checks:          '
                  clang-diagnostic-*,
                  clang-analyzer-*
+                 bugprone-*,
+                 google-*,
+                 misc-*,
+                 modernize-*,
+                 performance-*,
+                 readability-*,
+                 -google-readability-braces-around-statements,
+                 -google-runtime-references,
+                 -misc-non-private-member-variables-in-classes,
+                 -modernize-return-braced-init-list,
+                 -modernize-use-trailing-return-type,
+                 -modernize-avoid-c-arrays,
+                 -readability-braces-around-statements,
+                 -readability-magic-numbers,
+                 -readability-named-parameter,
+                 -readability-redundant-declaration,
+                 -readability-function-cognitive-complexity,
+                 -bugprone-narrowing-conversions
                  '
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'seastar_playground*.hh'
