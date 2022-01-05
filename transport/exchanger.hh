@@ -23,27 +23,29 @@ enum class messaging_verb : int32_t {
   num_of_verb
 };
 
-struct shard_address {
+struct peer_address {
   seastar::net::inet_address address;
+  uint16_t port;
   uint32_t cpu_id;
   friend bool operator==(
-      const shard_address& x, const shard_address& y) noexcept {
-    return x.address == y.address;
+      const peer_address& x, const peer_address& y) noexcept {
+    return x.address == y.address && x.port == y.port;
   }
-  friend bool operator<(
-      const shard_address& x, const shard_address& y) noexcept {
-    return to_string_view(x.address) < to_string_view(y.address);
+  friend bool operator<(const peer_address& x, const peer_address& y) noexcept {
+    return (to_string_view(x.address) < to_string_view(y.address)) ||
+           (to_string_view(x.address) == to_string_view(y.address) &&
+            x.port < y.port);
   }
-  friend std::ostream& operator<<(std::ostream& os, const shard_address& x) {
-    return os << x.address << ':' << x.cpu_id;
+  friend std::ostream& operator<<(std::ostream& os, const peer_address& x) {
+    return os << x.address << ':' << x.port << ':' << x.cpu_id;
   }
   struct hash {
-    size_t operator()(const shard_address& id) const noexcept {
+    size_t operator()(const peer_address& id) const noexcept {
       return std::hash<std::string_view>()(to_string_view(id.address));
     }
   };
-  shard_address(seastar::net::inet_address ip, uint32_t cpu) noexcept
-    : address(ip), cpu_id(cpu) {}
+  peer_address(seastar::net::inet_address ip, uint16_t port, uint32_t cpu)
+    : address(ip), port(port), cpu_id(cpu) {}
 
   static std::string_view to_string_view(
       const seastar::net::inet_address& address) {
@@ -51,9 +53,11 @@ struct shard_address {
   }
 };
 
-class exchanger {
+class exchanger
+  : public seastar::async_sharded_service<exchanger>
+  , public seastar::peering_sharded_service<exchanger> {
  public:
-  explicit exchanger(const config& config) : _config(config) {}
+  explicit exchanger(const config& config);
 
   using rpc_protocol =
       seastar::rpc::protocol<protocol::serializer, messaging_verb>;
@@ -62,8 +66,8 @@ class exchanger {
   using rpc_protocol_server =
       seastar::rpc::protocol<protocol::serializer, messaging_verb>::server;
 
-  struct shard_info {
-    shard_info(seastar::shared_ptr<rpc_protocol_client>&& client)
+  struct peer_info {
+    explicit peer_info(seastar::shared_ptr<rpc_protocol_client>&& client)
       : rpc_client(std::move(client)) {}
 
     seastar::shared_ptr<rpc_protocol_client> rpc_client;
@@ -71,7 +75,7 @@ class exchanger {
   };
   seastar::future<> start_listen();
   seastar::future<> shutdown();
-  seastar::future<> stop();
+  seastar::future<> stop() { return seastar::make_ready_future<>(); }
 
   void register_message(
       std::function<seastar::future<>(
@@ -86,23 +90,23 @@ class exchanger {
 
   // TODO: use raft group_id to get address from registry
   seastar::future<seastar::rpc::sink<protocol::message_ptr>>
-  make_sink_for_message(shard_address address) {
-    // if shutting down
-    return get_rpc_client(messaging_verb::message, address)
-        ->make_stream_sink<protocol::serializer, protocol::message_ptr>();
-  }
+  make_sink_for_message(peer_address address);
 
  private:
   seastar::future<> stop_server();
   seastar::future<> stop_client();
 
   seastar::shared_ptr<rpc_protocol_client> get_rpc_client(
-      messaging_verb verb, shard_address address);
+      messaging_verb verb, peer_address address);
+
+  bool remove_rpc_client(peer_address address);
 
   const config& _config;
+  bool _shutting_down = false;
   uint64_t _dropped_messages[static_cast<int32_t>(messaging_verb::num_of_verb)];
   std::unique_ptr<rpc_protocol> _rpc;
-  std::unordered_map<shard_address, shard_info, shard_address::hash> _clients;
+  std::unique_ptr<rpc_protocol_server> _server;
+  std::unordered_map<peer_address, peer_info, peer_address::hash> _clients;
 };
 
 }  // namespace rafter::transport

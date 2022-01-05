@@ -62,8 +62,8 @@ set(SOURCES
 #    storage/snapshot.hh
     storage/stats.cc
     storage/stats.hh
-#    transport/exchanger.cc
-#    transport/exchanger.hh
+    transport/exchanger.cc
+    transport/exchanger.hh
     transport/logger.cc
     transport/logger.hh
 #    transport/registry.cc
