@@ -80,19 +80,14 @@ struct string_serializer {
 
 template <typename T>
 struct lw_shared_ptr_serializer {
+  // lw_shared_ptr must be non-null
   template <typename Input>
   static seastar::lw_shared_ptr<T> read(Input& i) {
-    if (deserialize(i, type<bool>())) {
-      return seastar::make_lw_shared<T>(deserialize(i, type<T>()));
-    }
-    return {};
+    return seastar::make_lw_shared<T>(deserialize(i, type<T>()));
   }
   template <typename Output>
   static void write(Output& o, const seastar::lw_shared_ptr<T>& p) {
-    serialize(o, p.operator bool());
-    if (p) {
-      serialize(o, *p);
-    }
+    serialize(o, *p);
   }
   template <typename Input>
   static void skip(Input& i) {

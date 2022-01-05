@@ -163,37 +163,6 @@ struct serializer<log_entry> {
   }
 };
 
-// special handler as lw_shared_ptr in log_entry_vector cannot be null
-template <>
-struct serializer<log_entry_vector> {
-  template <typename Input>
-  static log_entry_vector read(Input& i) {
-    auto size = deserialize(i, type<uint64_t>());
-    log_entry_vector v;
-    v.reserve(size);
-    while (size--) {
-      v.emplace_back(seastar::make_lw_shared<log_entry>(
-          deserialize(i, type<log_entry>())));
-    }
-    return v;
-  }
-  template <typename Output>
-  static void write(Output& o, const log_entry_vector& v) {
-    serialize(o, v.size());
-    for (const auto& e : v) {
-      assert(e);
-      serialize(o, *e);
-    }
-  }
-  template <typename Input>
-  static void skip(Input& i) {
-    auto size = deserialize(i, type<uint64_t>());
-    while (size--) {
-      skip(i, type<log_entry>());
-    }
-  }
-};
-
 template <>
 struct serializer<hard_state> {
   template <typename Input>
@@ -252,7 +221,10 @@ struct serializer<snapshot> {
     v.log_id = deserialize(i, type<log_id>());
     v.file_path = deserialize(i, type<std::string>());
     v.file_size = deserialize(i, type<uint64_t>());
-    v.membership = deserialize(i, type<membership_ptr>());
+    bool has_membership = deserialize(i, type<bool>());
+    if (has_membership) {
+      v.membership = deserialize(i, type<membership_ptr>());
+    }
     v.files = deserialize(i, type<decltype(snapshot::files)>());
     v.smtype = deserialize(i, type<state_machine_type>());
     v.imported = deserialize(i, type<bool>());
@@ -267,7 +239,10 @@ struct serializer<snapshot> {
     serialize(o, v.log_id);
     serialize(o, v.file_path);
     serialize(o, v.file_size);
-    serialize(o, v.membership);
+    serialize(o, v.membership.operator bool());
+    if (v.membership) {
+      serialize(o, v.membership);
+    }
     serialize(o, v.files);
     serialize(o, v.smtype);
     serialize(o, v.imported);
@@ -281,7 +256,10 @@ struct serializer<snapshot> {
     skip(i, type<log_id>());
     skip(i, type<std::string>());
     skip(i, type<uint64_t>());
-    skip(i, type<membership_ptr>());
+    bool has_membership = deserialize(i, type<bool>());
+    if (has_membership) {
+      skip(i, type<membership_ptr>());
+    }
     skip(i, type<decltype(snapshot::files)>());
     skip(i, type<state_machine_type>());
     skip(i, type<bool>());
@@ -327,7 +305,10 @@ struct serializer<message> {
     v.reject = deserialize(i, type<bool>());
     v.hint = deserialize(i, type<hint>());
     v.entries = deserialize(i, type<log_entry_vector>());
-    v.snapshot = deserialize(i, type<snapshot_ptr>());
+    bool has_snapshot = deserialize(i, type<bool>());
+    if (has_snapshot) {
+      v.snapshot = deserialize(i, type<snapshot_ptr>());
+    }
     return v;
   }
   template <typename Output>
@@ -343,7 +324,10 @@ struct serializer<message> {
     serialize(o, v.reject);
     serialize(o, v.hint);
     serialize(o, v.entries);
-    serialize(o, v.snapshot);
+    serialize(o, v.snapshot.operator bool());
+    if (v.snapshot) {
+      serialize(o, v.snapshot);
+    }
   }
   template <typename Input>
   static void skip(Input& i) {
@@ -358,7 +342,10 @@ struct serializer<message> {
     i.skip(i, type<bool>());
     i.skip(i, type<hint>());
     i.skip(i, type<log_entry_vector>());
-    i.skip(i, type<snapshot_ptr>());
+    bool has_snapshot = deserialize(i, type<bool>());
+    if (has_snapshot) {
+      i.skip(i, type<snapshot_ptr>());
+    }
   }
 };
 
@@ -403,7 +390,10 @@ struct serializer<update> {
     v.last_index = deserialize(i, type<uint64_t>());
     v.snapshot_index = deserialize(i, type<uint64_t>());
     v.entries_to_save = deserialize(i, type<log_entry_vector>());
-    v.snapshot = deserialize(i, type<snapshot_ptr>());
+    bool has_snapshot = deserialize(i, type<bool>());
+    if (has_snapshot) {
+      v.snapshot = deserialize(i, type<snapshot_ptr>());
+    }
     return v;
   }
   template <typename Output>
@@ -414,7 +404,10 @@ struct serializer<update> {
     serialize(o, v.last_index);
     serialize(o, v.snapshot_index);
     serialize(o, v.entries_to_save);
-    serialize(o, v.snapshot);
+    serialize(o, v.snapshot.operator bool());
+    if (v.snapshot) {
+      serialize(o, v.snapshot);
+    }
   }
   template <typename Input>
   static void skip(Input& i) {
@@ -424,7 +417,10 @@ struct serializer<update> {
     i.skip(i, type<uint64_t>());
     i.skip(i, type<uint64_t>());
     i.skip(i, type<log_entry_vector>());
-    i.skip(i, type<snapshot_ptr>());
+    bool has_snapshot = deserialize(i, type<bool>());
+    if (has_snapshot) {
+      i.skip(i, type<snapshot_ptr>());
+    }
   }
 };
 

@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <boost/type.hpp>
+
 #define DISALLOW_COPY_AND_ASSIGN(TypeName)                                     \
   TypeName(const TypeName&) = delete;                                          \
   TypeName& operator=(const TypeName&) = delete
@@ -30,8 +32,6 @@
 
 namespace rafter::util {
 
-// boost/type.hpp
-template <typename T>
-struct type {};
+using boost::type;
 
 }  // namespace rafter::util
