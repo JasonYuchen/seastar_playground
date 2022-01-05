@@ -2,35 +2,49 @@
 
 ## overall
 
+rafter (*in progress*) is a pipelined asynchronous multi-raft group library with an in-memory key-value replicated state machine based on seastar.
+
+rafter is deeply inspired by
+
+- [dragonboat](https://github.com/lni/dragonboat)
+- [etcd](https://github.com/etcd-io/etcd)
+- [braft](https://github.com/baidu/braft)
+- [scylla](https://github.com/scylladb/scylla)
+- [seastar](https://github.com/scylladb/seastar), insights available [here](https://github.com/JasonYuchen/notes/tree/master/seastar)
+
 ![rafter](rafter.drawio.png)
 
 ## execution
 
-```text
-TODO LIST
-1. finalize design doc
-```
+1. ❌design doc
 
 ## storage
 
 [design](storage/README.md)
 
-```text
-TODO LIST
-1. index_group test
-2. segement_manager test
-3. index save & dump
-4. finalize design doc
-```
+1. ✔️design doc (lack in-memory log explanation)
+2. ✔️segment, a WAL unit
+3. ✔️segment test
+4. ✔️index, for indexing raft logs (lack dump&load)
+5. ⚠️index test (lack group index test)
+6. ✔️segment_manager, for managing raft persistent logs
+7. ⚠️segment_manager test
 
 ## transport
 
 [design](transport/README.md)
 
-```text
-TODO LIST
-1. finalize design doc
-2. learn seastar's rpc framework and setup a demo
-3. exchanger for message delivery
-4. registry for exchanger discovery
-```
+1. ⭕design doc
+2. ⚠️exchanger, for exchanging raft messages (lack snapshot support)
+3. ⚠️exchanger test
+4. ⭕registry, for group discovery and peer addresses management
+5. ⭕registry test
+6. ⭕express, for sending replicated state machine's snapshot
+7. ⭕express test
+
+## misc
+
+1. ✔️fragmented_temporary_buffer, for aligned (de)serialization
+2. ✔️serializer, for raft message's (de)serialization
+3. ✔️backoff, retry in coroutine style
+4. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in rafter
