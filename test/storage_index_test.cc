@@ -2,11 +2,11 @@
 // Created by jason on 2021/11/15.
 //
 
+#include <seastar/core/sleep.hh>
+
 #include "storage/index.hh"
 #include "test/base.hh"
 #include "util/error.hh"
-
-#include <seastar/core/sleep.hh>
 
 using namespace rafter;
 using namespace seastar;
@@ -121,10 +121,12 @@ RAFTER_TEST_F(index_test, binary_search) {
 }
 
 RAFTER_TEST_F(index_test, update_invalid) {
-  EXPECT_THROW(_idx.update({.first_index = 9, .last_index = 10}),
-               rafter::util::logic_error);
-  EXPECT_THROW(_idx.update({.first_index = 23, .last_index = 24}),
-               rafter::util::logic_error);
+  EXPECT_THROW(
+      _idx.update({.first_index = 9, .last_index = 10}),
+      rafter::util::logic_error);
+  EXPECT_THROW(
+      _idx.update({.first_index = 23, .last_index = 24}),
+      rafter::util::logic_error);
   co_return;
 }
 
@@ -191,20 +193,20 @@ RAFTER_TEST_F(index_test, query) {
     rafter::protocol::hint range;
     std::vector<storage::index::entry> expected_idx;
   } tests[] = {
-      {{9, 10},{},},
-      {{10, 10},{_init_idx[0]}},
-      {{10, 11},{_init_idx[0]}},
-      {{11, 13},{_init_idx[0], _init_idx[1]}},
-      {{12, 16},{_init_idx[0], _init_idx[1], _init_idx[2]}},
-      {{15, 21},{_init_idx[1], _init_idx[2], _init_idx[3]}},
-      {{21, 22},{_init_idx[3]}},
-      {{22, 23},{}},
+      {{9, 10}, {}},
+      {{10, 10}, {_init_idx[0]}},
+      {{10, 11}, {_init_idx[0]}},
+      {{11, 13}, {_init_idx[0], _init_idx[1]}},
+      {{12, 16}, {_init_idx[0], _init_idx[1], _init_idx[2]}},
+      {{15, 21}, {_init_idx[1], _init_idx[2], _init_idx[3]}},
+      {{21, 22}, {_init_idx[3]}},
+      {{22, 23}, {}},
   };
   for (auto&& [range, expect] : tests) {
     auto es = _idx.query(range);
     auto ves = std::vector<storage::index::entry>{es.begin(), es.end()};
-    EXPECT_EQ(ves, expect)
-        << fmt::format("query [{}, {}] failed", range.low, range.high);
+    EXPECT_EQ(ves, expect) << fmt::format(
+        "query [{}, {}] failed", range.low, range.high);
   }
   co_return;
 }
@@ -339,7 +341,7 @@ RAFTER_TEST_F(node_index_test, compaction) {
   _idx.set_compacted_to(20);
   obsoletes = _idx.compaction();
   EXPECT_EQ(obsoletes, std::vector<uint64_t>{102});
-  storage::index::entry e {
+  storage::index::entry e{
       .first_index = testing_state_index.first_index + 1,
       .filename = 105,
   };

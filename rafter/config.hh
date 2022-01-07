@@ -26,7 +26,7 @@ struct config {
   // the max capacity of the queue holding out-dated segment files
   uint64_t wal_gc_queue_capacity = 100;
   // the listening address for raft messages
-  std::string listen_address = "0.0.0.0";
+  std::string listen_address = "::";
   // the listening port for raft messages
   uint16_t listen_port = 10615;
 

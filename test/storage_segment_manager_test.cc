@@ -2,17 +2,21 @@
 // Creat
 // ed by jason on 2021/12/11.
 //
-#include "storage/segment_manager.hh"
-
+#include <chrono>
 #include <random>
+#include <seastar/core/sleep.hh>
 
 #include "rafter/config.hh"
+#include "storage/segment_manager.hh"
 #include "test/base.hh"
 #include "test/util.hh"
+#include "util/backoff.hh"
 
+using namespace rafter;
 using namespace rafter::protocol;
 using namespace rafter::storage;
 using namespace seastar;
+using namespace std::chrono_literals;
 
 using rafter::test::base;
 using rafter::test::l;
@@ -20,11 +24,11 @@ using rafter::test::l;
 namespace {
 
 class segment_manager_test
-    : public ::testing::Test,
-      public ::testing::WithParamInterface<bool> {
+  : public ::testing::Test
+  , public ::testing::WithParamInterface<bool> {
  protected:
   static void SetUpTestSuite() {
-    _config = rafter::test::util::default_config();
+    _config = test::util::default_config();
     base::submit([]() -> future<> {
       co_await recursive_touch_directory(_config.data_dir);
     });
@@ -40,7 +44,7 @@ class segment_manager_test
     base::submit([this]() -> future<> {
       co_await recursive_remove_directory(_config.data_dir);
       co_await recursive_touch_directory(_config.data_dir + "/wal");
-      _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+      _gids = {{1, 1}, {1, 2}, {2, 1}, {2, 2}, {3, 3}};
       if (GetParam()) {
         co_await prepare_segments();
       }
@@ -64,11 +68,9 @@ class segment_manager_test
   future<> prepare_segments() {
     std::random_device rd;
     std::mt19937 g(rd());
-    std::uniform_int_distribution<int> r(0, 100);
     std::vector<std::vector<update>> gid_updates;
     for (auto gid : _gids) {
-      gid_updates.emplace_back(
-          rafter::test::util::make_updates(gid, 10, 1, 3, 4));
+      gid_updates.emplace_back(test::util::make_updates(gid, 10, 1, 3, 4));
     }
     for (size_t i = 0; i < 10; ++i) {
       std::vector<update> shuffled;
@@ -116,69 +118,126 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::PrintToStringParamName());
 
 RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
-  if (GetParam()) {
-    EXPECT_EQ(_index.front().filename, 3);
-    EXPECT_EQ(_index.back().filename, 4);
-    const auto& up1 = _updates.front();
-    const auto& up2 = _updates.back();
-    EXPECT_EQ(_manager->stats()._new_segment, 3) << "failed to load 2 segments";
-    auto entries = co_await _manager->query_entries(
-        up1.gid, {.low = up1.first_index, .high = up1.last_index}, UINT64_MAX);
-    EXPECT_TRUE(rafter::test::util::compare(
-        update{.entries_to_save = entries},
-        update{.entries_to_save = up1.entries_to_save}))
-        << "failed to query existing segment 3";
-    entries = co_await _manager->query_entries(
-        up2.gid, {.low = up2.first_index, .high = up2.last_index}, UINT64_MAX);
-    EXPECT_TRUE(rafter::test::util::compare(
-        update{.entries_to_save = entries},
-        update{.entries_to_save = up2.entries_to_save}))
-        << "failed to query existing segment 4";
-    auto gid = up1.gid;
-    size_t size = 0;
-    log_entry_vector expected;
-    for (const auto& up : _updates) {
-      if (up.gid == gid) {
-        size += rafter::test::util::extract_entries(up, expected);
-      }
-    }
-    entries = co_await _manager->query_entries(
-        gid,
-        {.low = expected.front()->lid.index,
-         .high = expected.back()->lid.index},
-        size - 1);
-    expected.pop_back();
-    EXPECT_TRUE(rafter::test::util::compare(
-        update{.entries_to_save = entries},
-        update{.entries_to_save = expected}))
-        << "failed to query across existing segments";
+  if (!GetParam()) {
+    co_return;
   }
+  EXPECT_EQ(_index.front().filename, 3);
+  EXPECT_EQ(_index.back().filename, 4);
+  const auto& up1 = _updates.front();
+  const auto& up2 = _updates.back();
+  EXPECT_EQ(_manager->stats()._new_segment, 3) << "failed to load 2 segments";
+  auto entries = co_await _manager->query_entries(
+      up1.gid, {.low = up1.first_index, .high = up1.last_index}, UINT64_MAX);
+  EXPECT_TRUE(test::util::compare(
+      update{.entries_to_save = entries},
+      update{.entries_to_save = up1.entries_to_save}))
+      << "failed to query existing segment 3";
+  entries = co_await _manager->query_entries(
+      up2.gid, {.low = up2.first_index, .high = up2.last_index}, UINT64_MAX);
+  EXPECT_TRUE(test::util::compare(
+      update{.entries_to_save = entries},
+      update{.entries_to_save = up2.entries_to_save}))
+      << "failed to query existing segment 4";
+  auto gid = up1.gid;
+  size_t size = 0;
+  log_entry_vector expected;
+  for (const auto& up : _updates) {
+    if (up.gid == gid) {
+      size += test::util::extract_entries(up, expected);
+    }
+  }
+  entries = co_await _manager->query_entries(
+      gid,
+      {.low = expected.front()->lid.index, .high = expected.back()->lid.index},
+      size - 1);
+  expected.pop_back();
+  EXPECT_TRUE(test::util::compare(
+      update{.entries_to_save = entries}, update{.entries_to_save = expected}))
+      << "failed to query across existing segments";
   l.info("{}", _manager->debug_string());
   co_return;
 }
 
-RAFTER_TEST_P(segment_manager_test, append) {
+RAFTER_TEST_P(segment_manager_test, append_and_rolling) {
+  auto ups = test::util::make_updates({4, 4}, 100, 1, 0, 0);
+  update test_up = {.gid = {4, 4}, .state = {.commit = 1}};
+  EXPECT_FALSE(co_await _manager->append(test_up))
+      << "state.commit does not need fsync";
+  test_up = {.gid = {4, 4}, .state = {.term = 1, .commit = 1}};
+  EXPECT_TRUE(co_await _manager->append(test_up))
+      << "updated state.term need fsync";
+  test_up = {.gid = {4, 4}, .state = {.term = 1, .commit = 2}};
+  EXPECT_FALSE(co_await _manager->append(test_up))
+      << "updated state.commit does not need fsync";
+  test_up = {.gid = {4, 4}, .state = {.term = 1, .vote = 3, .commit = 2}};
+  EXPECT_TRUE(co_await _manager->append(test_up))
+      << "updated state.vote need fsync";
+  test_up = {.gid = {4, 4}, .snapshot_index = 1};
+  // use snapshot file path to occupy more space and prepare for rolling test
+  test_up.snapshot = make_lw_shared(
+      snapshot{.group_id = {4, 4}, .file_path = std::string(90 * KB, 'c')});
+  EXPECT_TRUE(co_await _manager->append(test_up)) << "snapshot need fsync";
+  EXPECT_EQ(_manager->stats()._new_segment, GetParam() * 2 + 1);
+  EXPECT_EQ(_manager->stats()._del_segment, 0);
+  uint64_t prev_segment_cnt = _manager->stats()._new_segment;
+  for (const auto& up : ups) {
+    bool synced = co_await _manager->append(up);
+    if (_manager->stats()._new_segment > prev_segment_cnt) {
+      EXPECT_EQ(synced, false) << "already fsync in rolling";
+      prev_segment_cnt = _manager->stats()._new_segment;
+    } else {
+      EXPECT_EQ(synced, true) << "entries need fsync";
+    }
+  }
+  EXPECT_GT(_manager->stats()._new_segment, 1);
+  EXPECT_EQ(_manager->stats()._del_segment, 0);
+  log_entry_vector expected;
+  for (const auto& up : ups) {
+    test::util::extract_entries(up, expected);
+  }
+  auto queried = co_await _manager->query_entries(
+      {4, 4},
+      {.low = expected.front()->lid.index, .high = expected.back()->lid.index},
+      UINT64_MAX);
+  EXPECT_TRUE(test::util::compare(
+      update{.entries_to_save = queried}, update{.entries_to_save = expected}))
+      << "failed to query across existing segments";
   co_return;
 }
 
-RAFTER_TEST_P(segment_manager_test, remove) {
+RAFTER_TEST_P(segment_manager_test, remove_simple) {
+  EXPECT_EQ(_manager->stats()._del_segment, 0);
+  if (GetParam()) {
+    std::map<group_id, uint64_t> compaction;
+    for (auto up : _updates) {
+      compaction[up.gid] = std::max(compaction[up.gid], up.last_index);
+    }
+    for (auto [gid, remove] : compaction) {
+      co_await _manager->remove(gid, remove);
+    }
+  }
+  auto ups = test::util::make_updates({4, 4}, 100, 1, 0, 0);
+  for (const auto& up : ups) {
+    co_await _manager->append(up);
+  }
+  co_await _manager->remove({4, 4}, ups.back().first_index);
+  auto backoff = rafter::util::backoff::linear(3, 500ms);
+  co_await backoff.attempt([this] {
+    return make_ready_future<bool>(_manager->stats()._del_segment > 1);
+  });
+  EXPECT_GT(_manager->stats()._del_segment, 1);
+  l.info("{}", _manager->debug_string());
   co_return;
 }
 
-RAFTER_TEST_P(segment_manager_test, query_snapshot) {
-  co_return;
-}
+RAFTER_TEST_P(segment_manager_test, recovery_compaction) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, query_raft_state) {
-  co_return;
-}
+RAFTER_TEST_P(segment_manager_test, query_snapshot) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, query_entries) {
-  co_return;
-}
+RAFTER_TEST_P(segment_manager_test, query_raft_state) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, integrated) {
-  co_return;
-}
+RAFTER_TEST_P(segment_manager_test, query_entries) { co_return; }
+
+RAFTER_TEST_P(segment_manager_test, integrated) { co_return; }
 
 }  // namespace

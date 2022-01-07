@@ -2,11 +2,10 @@
 // Created by jason on 2021/9/24.
 //
 
-#include "storage/segment.hh"
-
 #include <random>
 
 #include "protocol/serializer.hh"
+#include "storage/segment.hh"
 #include "test/base.hh"
 #include "test/util.hh"
 #include "util/error.hh"
@@ -42,7 +41,7 @@ class segment_test : public ::testing::Test {
           _segment_filename,
           segment::form_path(_config.data_dir, _segment_filename),
           false);
-      _gids = {{1,1}, {1,2}, {2,1}, {2,2}, {3,3}};
+      _gids = {{1, 1}, {1, 2}, {2, 1}, {2, 2}, {3, 3}};
       co_await fulfill_segment();
     });
   }
@@ -114,8 +113,9 @@ RAFTER_TEST_F(segment_test, open_and_list) {
       });
   if (ig != _index_group || ie != _index) {
     l.error("failed to list_update in an on-the-fly segment");
-    ADD_FAILURE() << "Write:\n" << rafter::util::print(_index)
-                  << "Read:\n" << rafter::util::print(ie);
+    ADD_FAILURE() << "Write:\n"
+                  << rafter::util::print(_index) << "Read:\n"
+                  << rafter::util::print(ie);
   }
 
   auto temp_segment = co_await segment::open(
@@ -133,14 +133,15 @@ RAFTER_TEST_F(segment_test, open_and_list) {
       });
   if (ig != _index_group || ie != _index) {
     l.error("failed to list_update in an archived segment");
-    ADD_FAILURE() << "Write:\n" << rafter::util::print(_index)
-                  << "Read:\n" << rafter::util::print(ie);
+    ADD_FAILURE() << "Write:\n"
+                  << rafter::util::print(_index) << "Read:\n"
+                  << rafter::util::print(ie);
   }
   co_return;
 }
 
 RAFTER_TEST_F(segment_test, partial_written) {
-  auto path =  segment::form_path(_config.data_dir, _segment_filename);
+  auto path = segment::form_path(_config.data_dir, _segment_filename);
   auto file = co_await open_file_dma(path, open_flags::wo);
   // truncate the update but leave a complete meta
   co_await file.truncate(_index.back().offset + _index.back().length - 1);
@@ -155,8 +156,9 @@ RAFTER_TEST_F(segment_test, partial_written) {
   ie.emplace_back(_index.back());
   if (ie != _index) {
     l.error("failed to list_update in an truncated segment");
-    ADD_FAILURE() << "Write:\n" << rafter::util::print(_index)
-                  << "Read:\n" << rafter::util::print(ie);
+    ADD_FAILURE() << "Write:\n"
+                  << rafter::util::print(_index) << "Read:\n"
+                  << rafter::util::print(ie);
   }
   // truncate the update but leave a complete meta
   co_await file.truncate(_index.back().offset + 1);
@@ -167,8 +169,9 @@ RAFTER_TEST_F(segment_test, partial_written) {
   ie.emplace_back(_index.back());
   if (ie != _index) {
     l.error("failed to list_update in an truncated segment");
-    ADD_FAILURE() << "Write:\n" << rafter::util::print(_index)
-                  << "Read:\n" << rafter::util::print(ie);
+    ADD_FAILURE() << "Write:\n"
+                  << rafter::util::print(_index) << "Read:\n"
+                  << rafter::util::print(ie);
   }
   co_return;
 }
@@ -226,8 +229,8 @@ RAFTER_TEST_F(segment_test, batch_query) {
   log_entry_vector fetched;
   auto left = co_await _segment->query(query, fetched, UINT64_MAX);
   EXPECT_EQ(left, UINT64_MAX - entry_size);
-  update u1 {.entries_to_save = fetched};
-  update u2 {.entries_to_save = expected};
+  update u1{.entries_to_save = fetched};
+  update u2{.entries_to_save = expected};
   if (!rafter::test::util::compare(u1, u2)) {
     ADD_FAILURE() << fmt::format("batch query failed");
   }
@@ -241,8 +244,8 @@ RAFTER_TEST_F(segment_test, batch_query) {
   u2.entries_to_save = expected;
   u2.entries_to_save.pop_back();
   if (!rafter::test::util::compare(u1, u2)) {
-    ADD_FAILURE() << fmt::format("batch query failed with size limitation {}",
-                                 entry_size - cutoff);
+    ADD_FAILURE() << fmt::format(
+        "batch query failed with size limitation {}", entry_size - cutoff);
   }
   co_return;
 }

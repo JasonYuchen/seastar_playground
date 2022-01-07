@@ -45,17 +45,15 @@ class segment_manager {
   std::string debug_string() const noexcept;
 
  private:
-  void must_open() const;
   seastar::future<> parse_existing_segments(seastar::directory_entry s);
   seastar::future<> recovery_compaction();
   seastar::future<> update_index(const protocol::update& up, index::entry e);
   seastar::future<> rolling();
-  seastar::future<> gc_service(std::vector<uint64_t>& segs);
+  seastar::future<> gc_service(std::vector<uint64_t>& segs, bool& open);
   seastar::future<> compaction(protocol::group_id id);
 
  private:
   const config& _config;
-  bool _open = false;
   // segments dir, e.g. <data_dir>
   std::string _log_dir;
   // TODO: more options

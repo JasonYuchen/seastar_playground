@@ -35,12 +35,14 @@ future<> segment_manager::start() {
   co_await rolling();
   co_await dir.close();
   co_await recovery_compaction();
-  _open = true;
-  _gc_worker.start([this](auto& t) { return this->gc_service(t); });
+  // TODO: run obsolete segments deleter on shard 0 only, shard X passes the
+  //  path to shard 0's deleter
+  _gc_worker.start([this](auto& t, bool& open) {
+    return this->gc_service(t, open);
+  });
 }
 
 future<> segment_manager::stop() {
-  _open = false;
   co_await _gc_worker.close();
   l.info("segment_manager::stop: stopped");
 }
@@ -48,7 +50,6 @@ future<> segment_manager::stop() {
 stats segment_manager::stats() const noexcept { return _stats; }
 
 future<bool> segment_manager::append(const update& up) {
-  must_open();
   if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
     co_return false;
   }
@@ -214,12 +215,6 @@ string segment_manager::debug_string() const noexcept {
       ss.str());
 }
 
-void segment_manager::must_open() const {
-  if (!_open) [[unlikely]] {
-    throw util::closed_error("segment_manager");
-  }
-}
-
 future<> segment_manager::parse_existing_segments(directory_entry s) {
   auto [shard_id, filename] = segment::parse_name(s.name);
   if (filename == segment::INVALID_FILENAME) {
@@ -269,8 +264,12 @@ future<> segment_manager::rolling() {
   _next_filename++;
 }
 
-future<> segment_manager::gc_service(std::vector<uint64_t>& segs) {
+future<> segment_manager::gc_service(std::vector<uint64_t>& segs, bool& open) {
   for (auto seg : segs) {
+    if (!open) {
+      // exit ASAP when marked not open
+      break;
+    }
     try {
       auto s = std::move(_segments[seg]);
       _segments.erase(seg);
