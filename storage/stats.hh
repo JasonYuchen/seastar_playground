@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <string>
+
 namespace rafter::storage {
 
 struct stats {
@@ -33,6 +35,7 @@ struct stats {
   uint64_t _del_segment = 0;
 
   void operator+=(const stats& rhs);
+  std::string print() const;
 };
 
 }  // namespace rafter::storage
