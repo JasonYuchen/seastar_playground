@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 find_package(Seastar REQUIRED)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts -Wall -Werror")
-
-# set(CMAKE_CXX_CLANG_TIDY "clang-tidy")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -58,16 +57,16 @@ set(SOURCES
     storage/segment.hh
     storage/segment_manager.cc
     storage/segment_manager.hh
-#    storage/snapshot.cc
-#    storage/snapshot.hh
+    #    storage/snapshot.cc
+    #    storage/snapshot.hh
     storage/stats.cc
     storage/stats.hh
     transport/exchanger.cc
     transport/exchanger.hh
     transport/logger.cc
     transport/logger.hh
-#    transport/registry.cc
-#    transport/registry.hh
+    transport/registry.cc
+    transport/registry.hh
     util/backoff.hh
     util/endian.hh
     util/error.cc
