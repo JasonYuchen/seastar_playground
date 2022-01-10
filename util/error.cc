@@ -13,6 +13,7 @@ const char* status_string(enum code e) {
       "serialization",
       "short_read",
       "short_write",
+      "peer_not_found",
       "compacted",
       "unavailable",
       "out_of_range",

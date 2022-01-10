@@ -5,9 +5,12 @@
 #pragma once
 
 #include <fmt/format.h>
+#include <fmt/ostream.h>
 
 #include <exception>
 #include <string_view>
+
+#include "protocol/raft.hh"
 
 namespace rafter::util {
 
@@ -17,6 +20,7 @@ enum class code : uint8_t {
   serialization,
   short_read,
   short_write,
+  peer_not_found,
   compacted,
   unavailable,
   out_of_range,
@@ -86,6 +90,14 @@ class short_write_error : public io_error {
   short_write_error() : io_error(code::short_write) {}
   short_write_error(std::string_view msg)
     : io_error("{}: {}", code::short_write, msg) {}
+};
+
+class peer_not_found_error : public io_error {
+ public:
+  using io_error::io_error;
+  peer_not_found_error() : io_error(code::peer_not_found) {}
+  peer_not_found_error(protocol::group_id gid)
+    : io_error("{}: cannot resolve {}", code::peer_not_found, gid) {}
 };
 
 class corruption_error : public io_error {
