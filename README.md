@@ -15,19 +15,33 @@ rafter is deeply inspired by
 
 ![rafter](rafter.drawio.png)
 
-## Execution
+## Build & Setup
+
+- prerequisite
+    - Compiler with C++20 support, tested with clang-12
+    - Seastar, *the installation of Seastar is not trivial, please refer to
+      this [post](https://github.com/JasonYuchen/notes/blob/master/seastar/Setup.md)*
+    - GoogleTest, taken care of by rafter's cmake configuration
+
+```shell
+TBD
+```
+
+## Module
+
+### Execution
 
 The execution module manages and schedules all raft groups, storage, transport and replicated state machines.
 
 TBD
 
-## Raft Core State Machine
+### Raft Core State Machine
 
 The raft core state machine implements the raft algorithm based on the etcd's design.
 
 TBD
 
-## Storage
+### Storage
 
 The [storage](storage/README.md) module works as the WAL of the raft groups, managing the persistent log entries as well
 as the snapshots and the configurations of the clusters.
@@ -40,12 +54,12 @@ as the snapshots and the configurations of the clusters.
 6. ✔️segment_manager, for managing raft persistent logs
 7. ⚠️segment_manager test
 
-## Transport
+### Transport
 
 The [transport](transport/README.md) module based on the seastar's rpc framework works as a messaging service for
 clusters.
 
-1. ⭕design doc
+1. ⚠️design doc
 2. ⚠️exchanger, for exchanging raft messages (lack snapshot support)
 3. ⚠️exchanger test
 4. ⚠️registry, for group discovery and peer addresses management
@@ -53,22 +67,37 @@ clusters.
 6. ⭕express, for sending replicated state machine's snapshot
 7. ⭕express test
 
-## Replicated State Machine
+### Replicated State Machine
 
 The replicated state machine is a naive in-memory key-value storage to demonstrate the interactions between a user
 defined replicated state machine and the underlying framework.
 
 TBD
 
-## Misc
+### Misc
 
 Various utilities to support different modules of the rafter.
 
-1. ✔️fragmented_temporary_buffer, for aligned (de)serialization
-2. ✔️serializer, for raft message's (de)serialization
-3. ✔️backoff, retry in coroutine style
-4. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
+1. ✔️backoff, retry in coroutine style
+2. ⚠️circuit_breaker
+3. ✔️fragmented_temporary_buffer, for aligned (de)serialization
+4. ✔️serializer, for raft message's (de)serialization
+5. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
    rafter
+
+### Test
+
+The [test](test/README.md) module hacks the interface of the [GoogleTest](https://github.com/google/googletest) to
+support testing an asynchronous application with GoogleTest's style.
+
+1. ✔️base, for integrating the coroutine and the gtest macros, and the Seastar's reactor engine management
+2. ⚠️unit tests
+3. ⭕integration tests
+4. ⭕benchmark
+
+## Doc
+
+in progress
 
 ## License
 
