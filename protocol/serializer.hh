@@ -221,8 +221,7 @@ struct serializer<snapshot> {
     v.log_id = deserialize(i, type<log_id>());
     v.file_path = deserialize(i, type<std::string>());
     v.file_size = deserialize(i, type<uint64_t>());
-    bool has_membership = deserialize(i, type<bool>());
-    if (has_membership) {
+    if (deserialize(i, type<bool>())) {
       v.membership = deserialize(i, type<membership_ptr>());
     }
     v.files = deserialize(i, type<decltype(snapshot::files)>());
@@ -256,8 +255,7 @@ struct serializer<snapshot> {
     skip(i, type<log_id>());
     skip(i, type<std::string>());
     skip(i, type<uint64_t>());
-    bool has_membership = deserialize(i, type<bool>());
-    if (has_membership) {
+    if (deserialize(i, type<bool>())) {
       skip(i, type<membership_ptr>());
     }
     skip(i, type<decltype(snapshot::files)>());
@@ -305,8 +303,7 @@ struct serializer<message> {
     v.reject = deserialize(i, type<bool>());
     v.hint = deserialize(i, type<hint>());
     v.entries = deserialize(i, type<log_entry_vector>());
-    bool has_snapshot = deserialize(i, type<bool>());
-    if (has_snapshot) {
+    if (deserialize(i, type<bool>())) {
       v.snapshot = deserialize(i, type<snapshot_ptr>());
     }
     return v;
@@ -331,20 +328,19 @@ struct serializer<message> {
   }
   template <typename Input>
   static void skip(Input& i) {
-    i.skip(i, type<message_type>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<log_id>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<bool>());
-    i.skip(i, type<bool>());
-    i.skip(i, type<hint>());
-    i.skip(i, type<log_entry_vector>());
-    bool has_snapshot = deserialize(i, type<bool>());
-    if (has_snapshot) {
-      i.skip(i, type<snapshot_ptr>());
+    skip(i, type<message_type>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<log_id>());
+    skip(i, type<uint64_t>());
+    skip(i, type<bool>());
+    skip(i, type<bool>());
+    skip(i, type<hint>());
+    skip(i, type<log_entry_vector>());
+    if (deserialize(i, type<bool>())) {
+      skip(i, type<snapshot_ptr>());
     }
   }
 };
@@ -371,11 +367,88 @@ struct serializer<config_change> {
   }
   template <typename Input>
   static void skip(Input& i) {
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<config_change_type>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<std::string>());
-    i.skip(i, type<bool>());
+    skip(i, type<uint64_t>());
+    skip(i, type<config_change_type>());
+    skip(i, type<uint64_t>());
+    skip(i, type<std::string>());
+    skip(i, type<bool>());
+  }
+};
+
+template <>
+struct serializer<snapshot_chunk> {
+  template <typename Input>
+  static snapshot_chunk read(Input& i) {
+    snapshot_chunk v;
+    v.deployment_id = deserialize(i, type<uint64_t>());
+    v.group_id = deserialize(i, type<group_id>());
+    v.log_id = deserialize(i, type<log_id>());
+    v.from = deserialize(i, type<uint64_t>());
+    v.id = deserialize(i, type<uint64_t>());
+    v.size = deserialize(i, type<uint64_t>());
+    v.count = deserialize(i, type<uint64_t>());
+    v.data = deserialize(i, type<std::string>());
+    if (deserialize(i, type<bool>())) {
+      v.membership = deserialize(i, type<membership_ptr>());
+    }
+    v.file_path = deserialize(i, type<std::string>());
+    v.file_size = deserialize(i, type<uint64_t>());
+    v.file_chunk_id = deserialize(i, type<uint64_t>());
+    v.file_chunk_count = deserialize(i, type<uint64_t>());
+    if (deserialize(i, type<bool>())) {
+      v.file_info = deserialize(i, type<snapshot_file_ptr>());
+    }
+    v.on_disk_index = deserialize(i, type<uint64_t>());
+    v.witness = deserialize(i, type<bool>());
+    return v;
+  }
+  template <typename Output>
+  static void write(Output& o, const snapshot_chunk& v) {
+    serialize(o, v.deployment_id);
+    serialize(o, v.group_id);
+    serialize(o, v.log_id);
+    serialize(o, v.from);
+    serialize(o, v.id);
+    serialize(o, v.size);
+    serialize(o, v.count);
+    serialize(o, v.data);
+    serialize(o, v.membership.operator bool());
+    if (v.membership) {
+      serialize(o, v.membership);
+    }
+    serialize(o, v.file_path);
+    serialize(o, v.file_size);
+    serialize(o, v.file_chunk_id);
+    serialize(o, v.file_chunk_count);
+    serialize(o, v.file_info.operator bool());
+    if (v.file_info) {
+      serialize(o, v.file_info);
+    }
+    serialize(o, v.on_disk_index);
+    serialize(o, v.witness);
+  }
+  template <typename Input>
+  static void skip(Input& i) {
+    skip(i, type<uint64_t>());
+    skip(i, type<group_id>());
+    skip(i, type<log_id>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<std::string>());
+    if (deserialize(i, type<bool>())) {
+      skip(i, type<membership_ptr>());
+    }
+    skip(i, type<std::string>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    if (deserialize(i, type<bool>())) {
+      skip(i, type<snapshot_file_ptr>());
+    }
+    skip(i, type<uint64_t>());
+    skip(i, type<bool>());
   }
 };
 
@@ -411,15 +484,14 @@ struct serializer<update> {
   }
   template <typename Input>
   static void skip(Input& i) {
-    i.skip(i, type<group_id>());
-    i.skip(i, type<hard_state>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<uint64_t>());
-    i.skip(i, type<log_entry_vector>());
-    bool has_snapshot = deserialize(i, type<bool>());
-    if (has_snapshot) {
-      i.skip(i, type<snapshot_ptr>());
+    skip(i, type<group_id>());
+    skip(i, type<hard_state>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<uint64_t>());
+    skip(i, type<log_entry_vector>());
+    if (deserialize(i, type<bool>())) {
+      skip(i, type<snapshot_ptr>());
     }
   }
 };
@@ -428,9 +500,9 @@ struct serializer<update> {
 
 namespace rafter::protocol {
 
-// TODO: design pipeline-style writer for checksum, compression, and so on
+// TODO(jyc): design pipeline-style writer for checksum, compression, and so on
 
-// TODO: double check pointer<T> serialization
+// TODO(jyc): double check pointer<T> serialization
 //  by default, a bool will be appended to indicate the pointer's existence,
 //  but when faced with pointers in a container, the pointers cannot be null,
 //  avoid this redundant bool by template specialization
