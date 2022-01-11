@@ -56,9 +56,7 @@ void remote::replicate_to_retry() noexcept {
   }
 }
 
-void remote::clear_pending_snapshot() noexcept {
-  snapshot_index = 0;
-}
+void remote::clear_pending_snapshot() noexcept { snapshot_index = 0; }
 
 bool remote::try_update(uint64_t index) noexcept {
   if (next < index + 1) {
@@ -119,7 +117,11 @@ void remote::responded_to() noexcept {
 std::string remote::debug_string() const {
   return fmt::format(
       "remote[match:{}, next:{}, state:{}, snapshot_index:{}, active:{}]",
-      match, next, uint8_t{state}, snapshot_index, active);
+      match,
+      next,
+      uint8_t{state},
+      snapshot_index,
+      active);
 }
 
 }  // namespace rafter::core

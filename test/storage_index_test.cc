@@ -57,7 +57,7 @@ protocol::hard_state testing_state = {
 
 storage::index::entry testing_state_index = {
     .first_index = testing_state.commit,
-    .last_index = protocol::log_id::invalid_index,
+    .last_index = protocol::log_id::INVALID_INDEX,
     .filename = 103,
     .offset = 110,
     .length = 20,
@@ -71,7 +71,7 @@ protocol::snapshot testing_snapshot = {
 
 storage::index::entry testing_snapshot_index = {
     .first_index = testing_snapshot.log_id.index,
-    .last_index = protocol::log_id::invalid_index,
+    .last_index = protocol::log_id::INVALID_INDEX,
     .filename = 104,
     .offset = 100,
     .length = 10,
@@ -212,7 +212,7 @@ RAFTER_TEST_F(index_test, query) {
 }
 
 RAFTER_TEST_F(index_test, compaction) {
-  EXPECT_EQ(_idx.compacted_to(), protocol::log_id::invalid_index);
+  EXPECT_EQ(_idx.compacted_to(), protocol::log_id::INVALID_INDEX);
   EXPECT_EQ(_idx.compaction(), 100);
   struct {
     uint64_t compacted_to;
@@ -363,22 +363,22 @@ class index_group_test : public ::testing::Test {
   }
 };
 
-RAFTER_TEST_F(index_group_test, update_compaction) {
+RAFTER_TEST_F(index_group_test, DISABLED_update_compaction) {
   // TODO
   co_return;
 }
 
-RAFTER_TEST_F(index_group_test, update_entry) {
+RAFTER_TEST_F(index_group_test, DISABLED_update_entry) {
   // TODO
   co_return;
 }
 
-RAFTER_TEST_F(index_group_test, update_state) {
+RAFTER_TEST_F(index_group_test, DISABLED_update_state) {
   // TODO
   co_return;
 }
 
-RAFTER_TEST_F(index_group_test, update_snapshot) {
+RAFTER_TEST_F(index_group_test, DISABLED_update_snapshot) {
   // TODO
   co_return;
 }

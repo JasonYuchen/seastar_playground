@@ -40,13 +40,9 @@ void registry::update(protocol::group_id gid, peer_address address) {
 void registry::remove(protocol::group_id gid) { _peer.erase(gid); }
 
 void registry::remove_cluster(uint64_t cluster_id) {
-  for (auto it = _peer.begin(); it != _peer.end();) {
-    if (it->first.cluster == cluster_id) {
-      it = _peer.erase(it);
-    } else {
-      ++it;
-    }
-  }
+  std::erase_if(_peer, [cluster_id](const auto& p) {
+    return p.first.cluster == cluster_id;
+  });
 }
 
 }  // namespace rafter::transport

@@ -31,9 +31,9 @@ class index {
       compaction,
     };
     // the first included raft log entry index
-    uint64_t first_index = protocol::log_id::invalid_index;
+    uint64_t first_index = protocol::log_id::INVALID_INDEX;
     // the last included raft log entry index
-    uint64_t last_index = protocol::log_id::invalid_index;
+    uint64_t last_index = protocol::log_id::INVALID_INDEX;
     // the filename of the segment file
     uint64_t filename = 0;
     // the offset of the raw data in the segment file
@@ -88,7 +88,7 @@ class index {
  private:
   group_id _gid;
   // entries within (0, _compacted_to) can be compacted
-  uint64_t _compacted_to = protocol::log_id::invalid_index;
+  uint64_t _compacted_to = protocol::log_id::INVALID_INDEX;
   std::vector<entry> _entries;
 };
 

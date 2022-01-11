@@ -12,9 +12,9 @@
 
 namespace rafter {
 
+using seastar::GB;
 using seastar::KB;
 using seastar::MB;
-using seastar::GB;
 
 // config file is shared among all shards
 struct config {

@@ -12,11 +12,11 @@ namespace rafter::protocol {
 
 class session {
  public:
-  inline static constexpr uint64_t not_managed_id = 0;
-  inline static constexpr uint64_t noop_series_id = 0;
-  inline static constexpr uint64_t initial_series_id = 1;
-  inline static constexpr uint64_t registration_series_id = UINT64_MAX - 1;
-  inline static constexpr uint64_t unregistration_series_id = UINT64_MAX;
+  inline static constexpr uint64_t NOT_MANAGED_ID = 0;
+  inline static constexpr uint64_t NOOP_SERIES_ID = 0;
+  inline static constexpr uint64_t INITIAL_SERIES_ID = 1;
+  inline static constexpr uint64_t REGISTRATION_SERIES_ID = UINT64_MAX - 1;
+  inline static constexpr uint64_t UNREGISTRATION_SERIES_ID = UINT64_MAX;
 
   uint64_t cluster_id = 0;
   uint64_t client_id = 0;

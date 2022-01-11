@@ -122,20 +122,12 @@ const char* name(enum checksum_type type) {
 }
 
 bool group_id::valid() const noexcept {
-  return cluster != invalid_cluster && node != invalid_node;
-}
-
-string group_id::to_string() const {
-  return fmt::format("gid[{:05d},{:05d}]", cluster, node);
+  return cluster != INVALID_CLUSTER && node != INVALID_NODE;
 }
 
 std::ostream& operator<<(std::ostream& os, const group_id& id) {
   return os << "gid[" << std::setfill('0') << std::setw(5) << id.cluster << ","
             << std::setfill('0') << std::setw(5) << id.node << "]";
-}
-
-string log_id::to_string() const {
-  return fmt::format("lid[{},{}]", term, index);
 }
 
 std::ostream& operator<<(std::ostream& os, const log_id& id) {
@@ -168,8 +160,8 @@ bool log_entry::is_config_change() const noexcept {
 }
 
 bool hard_state::empty() const noexcept {
-  return term == log_id::invalid_term && vote == group_id::invalid_node &&
-         commit == log_id::invalid_index;
+  return term == log_id::INVALID_TERM && vote == group_id::INVALID_NODE &&
+         commit == log_id::INVALID_INDEX;
 }
 
 uint64_t snapshot_file::bytes() const noexcept { return sizer(*this); }
@@ -191,15 +183,15 @@ void update::fill_meta() noexcept {
 }
 
 uint64_t update::compacted_to() const noexcept {
-  if (first_index == log_id::invalid_index &&
-      last_index == log_id::invalid_index &&
-      snapshot_index == log_id::invalid_index &&
-      state.vote == group_id::invalid_node &&
-      state.term == log_id::invalid_term &&
-      state.commit != log_id::invalid_index) {
+  if (first_index == log_id::INVALID_INDEX &&
+      last_index == log_id::INVALID_INDEX &&
+      snapshot_index == log_id::INVALID_INDEX &&
+      state.vote == group_id::INVALID_NODE &&
+      state.term == log_id::INVALID_TERM &&
+      state.commit != log_id::INVALID_INDEX) {
     return state.commit;
   }
-  return log_id::invalid_index;
+  return log_id::INVALID_INDEX;
 }
 
 bool update::has_update() const noexcept {

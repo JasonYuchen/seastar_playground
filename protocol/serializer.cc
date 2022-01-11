@@ -16,19 +16,19 @@ using namespace std;
 class serializer_adapter {
  public:
   serializer_adapter(char* buf, size_t size)
-      : _buf(buf), _end(_buf + size), _cur(buf) {}
+    : _buf(buf), _end(_buf + size), _cur(buf) {}
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   void write(T data) {
     write(reinterpret_cast<const char*>(&data), sizeof(T));
   }
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   void write_le(T data) {
     write(htole(data));
   }
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   void write_be(T data) {
     write(htobe(data));
   }
@@ -41,7 +41,7 @@ class serializer_adapter {
     _cur += size;
   }
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   T read() {
     if (_end - _cur < sizeof(T)) [[unlikely]] {
       throw util::short_read_error();
@@ -52,12 +52,12 @@ class serializer_adapter {
     return obj;
   }
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   T read_le() {
     return letoh(read<T>());
   }
 
-  template<util::endian::detail::numerical T>
+  template <util::endian::detail::numerical T>
   T read_be() {
     return betoh(read<T>());
   }

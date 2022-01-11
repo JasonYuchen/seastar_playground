@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <stdint.h>
-
 #include <seastar/core/shared_ptr.hh>
 #include <span>
 #include <string>
@@ -26,37 +24,35 @@ enum raft_role : uint8_t {
 const char *name(enum raft_role role);
 
 struct group_id {
-  inline static constexpr uint64_t invalid_cluster = 0;
-  inline static constexpr uint64_t invalid_node = 0;
+  inline static constexpr uint64_t INVALID_CLUSTER = 0;
+  inline static constexpr uint64_t INVALID_NODE = 0;
 
-  uint64_t cluster = invalid_cluster;
-  uint64_t node = invalid_node;
+  uint64_t cluster = INVALID_CLUSTER;
+  uint64_t node = INVALID_NODE;
 
   bool valid() const noexcept;
-  std::string to_string() const;
-  constexpr uint64_t bytes() const noexcept { return 16; }
+
+  static constexpr uint64_t bytes() noexcept { return 16; }
 
   std::strong_ordering operator<=>(const group_id &) const = default;
 
-  friend std::ostream& operator<<(std::ostream& os, const group_id& id);
+  friend std::ostream &operator<<(std::ostream &os, const group_id &id);
 };
 
 struct log_id {
-  inline static constexpr uint64_t invalid_term = 0;
-  inline static constexpr uint64_t invalid_index = 0;
+  inline static constexpr uint64_t INVALID_TERM = 0;
+  inline static constexpr uint64_t INVALID_INDEX = 0;
 
-  uint64_t term = invalid_term;
-  uint64_t index = invalid_index;
+  uint64_t term = INVALID_TERM;
+  uint64_t index = INVALID_INDEX;
 
-  std::string to_string() const;
-  constexpr uint64_t bytes() const noexcept { return 16; }
+  static constexpr uint64_t bytes() noexcept { return 16; }
 
   std::strong_ordering operator<=>(const log_id &) const = default;
 
-  friend std::ostream& operator<<(std::ostream& os, const log_id& id);
+  friend std::ostream &operator<<(std::ostream &os, const log_id &id);
 };
 
-// TODO: use different message class instead of one message with different types
 enum class message_type : uint8_t {
   noop,
   local_tick,
@@ -184,11 +180,11 @@ using log_entry_vector = std::vector<log_entry_ptr>;
 using log_entry_span = std::span<log_entry_ptr>;
 
 struct hard_state {
-  uint64_t term = log_id::invalid_term;
-  uint64_t vote = group_id::invalid_node;
-  uint64_t commit = log_id::invalid_index;
+  uint64_t term = log_id::INVALID_TERM;
+  uint64_t vote = group_id::INVALID_NODE;
+  uint64_t commit = log_id::INVALID_INDEX;
 
-  constexpr uint64_t bytes() const noexcept { return 24; }
+  static constexpr uint64_t bytes() noexcept { return 24; }
   bool empty() const noexcept;
 
   std::strong_ordering operator<=>(const hard_state &) const = default;
@@ -229,7 +225,7 @@ struct hint {
   uint64_t low = 0;
   uint64_t high = 0;
 
-  constexpr uint64_t bytes() const noexcept { return 16; }
+  static constexpr uint64_t bytes() noexcept { return 16; }
 
   std::strong_ordering operator<=>(const hint &) const = default;
 };
@@ -238,12 +234,12 @@ using hint_vector = std::vector<hint>;
 
 struct message {
   message_type type = message_type::noop;
-  uint64_t cluster = group_id::invalid_cluster;
-  uint64_t from = group_id::invalid_node;
-  uint64_t to = group_id::invalid_node;
-  uint64_t term = log_id::invalid_term;
+  uint64_t cluster = group_id::INVALID_CLUSTER;
+  uint64_t from = group_id::INVALID_NODE;
+  uint64_t to = group_id::INVALID_NODE;
+  uint64_t term = log_id::INVALID_TERM;
   struct log_id lid;
-  uint64_t commit = log_id::invalid_index;
+  uint64_t commit = log_id::INVALID_INDEX;
   // replicate messages sent to witness will only include the Entry.Index and
   // the Entry.Term with Entry.Type=Metadata, other fields will be ignored
   // (except for the ConfigChange entries)
@@ -287,14 +283,14 @@ struct snapshot_header {
   enum checksum_type checksum_type = checksum_type::crc32;
   enum compression_type compression_type = compression_type::no_compression;
 
-  constexpr uint64_t bytes() const noexcept { return 26; }
+  static constexpr uint64_t bytes() noexcept { return 26; }
 };
 
 struct snapshot_chunk {
   uint64_t deployment_id = 0;
   struct group_id group_id;
   struct log_id log_id;
-  uint64_t from = group_id::invalid_node;
+  uint64_t from = group_id::INVALID_NODE;
   uint64_t id = 0;
   uint64_t size = 0;
   uint64_t count = 0;
@@ -305,17 +301,19 @@ struct snapshot_chunk {
   uint64_t file_chunk_id = 0;
   uint64_t file_chunk_count = 0;
   snapshot_file_ptr file_info;
-  uint64_t on_disk_index = log_id::invalid_index;
+  uint64_t on_disk_index = log_id::INVALID_INDEX;
   bool witness = false;
 
   uint64_t bytes() const noexcept;
 };
 
+using snapshot_chunk_ptr = seastar::lw_shared_ptr<snapshot_chunk>;
+
 struct ready_to_read {
-  uint64_t index = log_id::invalid_index;
+  uint64_t index = log_id::INVALID_INDEX;
   struct hint context;
 
-  constexpr uint64_t bytes() const noexcept { return 24; }
+  static constexpr uint64_t bytes() noexcept { return 8 + hint::bytes(); }
 };
 
 using ready_to_read_vector = std::vector<ready_to_read>;
@@ -324,12 +322,12 @@ using ready_to_read_vector = std::vector<ready_to_read>;
 // progress the state of Raft.
 struct update_commit {
   // The last index known to be pushed to rsm for execution.
-  uint64_t processed = log_id::invalid_index;
+  uint64_t processed = log_id::INVALID_INDEX;
   // The last index confirmed to be executed by rsm.
-  uint64_t last_applied = log_id::invalid_index;
+  uint64_t last_applied = log_id::INVALID_INDEX;
   struct log_id stable_log_id;
-  uint64_t stable_snapshot_to = log_id::invalid_index;
-  uint64_t ready_to_read = log_id::invalid_index;
+  uint64_t stable_snapshot_to = log_id::INVALID_INDEX;
+  uint64_t ready_to_read = log_id::INVALID_INDEX;
 };
 
 // update is a collection of state, entries and messages that are expected to be
@@ -343,9 +341,9 @@ struct update {
   // entries_to_save are entries waiting to be stored onto persistent storage.
   // first_index is the first index of the entries_to_save
   // last_index is the last index of the entries_to_save
-  uint64_t first_index = log_id::invalid_index;
-  uint64_t last_index = log_id::invalid_index;
-  uint64_t snapshot_index = log_id::invalid_index;
+  uint64_t first_index = log_id::INVALID_INDEX;
+  uint64_t last_index = log_id::INVALID_INDEX;
+  uint64_t snapshot_index = log_id::INVALID_INDEX;
   log_entry_vector entries_to_save;
   // snapshot is the metadata of the snapshot ready to be applied.
   snapshot_ptr snapshot;
@@ -367,7 +365,7 @@ struct update {
   // onto persistent storage.
   message_vector messages;
   // last_applied is the actual last applied index reported by the rsm.
-  uint64_t LastApplied = log_id::invalid_index;
+  uint64_t LastApplied = log_id::INVALID_INDEX;
   // update_commit contains info on how the Update instance can be committed
   // to actually progress the state of Raft.
   struct update_commit update_commit;
@@ -384,8 +382,6 @@ struct update {
   void validate() const;
   void set_fast_apply() const noexcept;
   void set_update_commit() const noexcept;
-
-  std::string debug_string(bool detail) const;
 
   // total size + gid + state + fi + li + snapshot index
   static constexpr uint64_t meta_bytes() noexcept { return 72; }

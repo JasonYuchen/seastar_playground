@@ -28,8 +28,6 @@ namespace rafter::util {
 // auto buffer = fragmented_temporary_buffer::from_stream_exactly();
 // some_structure.deserialize(buffer.as_istream());
 
-// TODO: add tests for fragmented_temporary_buffer
-
 class fragmented_temporary_buffer {
  public:
   using fragment_list = std::list<seastar::temporary_buffer<char>>;
@@ -39,15 +37,15 @@ class fragmented_temporary_buffer {
   class ostream;
   class view;
 
-  static constexpr size_t default_fragment_size = 128 * 1024;
-  static constexpr size_t default_fragment_alignment = 4096;
+  static constexpr size_t DEFAULT_FRAGMENT_SIZE = 128 * 1024;
+  static constexpr size_t DEFAULT_FRAGMENT_ALIGNMENT = 4096;
 
   fragmented_temporary_buffer() = default;
 
   explicit fragmented_temporary_buffer(
       size_t bytes,
-      size_t alignment = default_fragment_alignment,
-      size_t fragment_size = default_fragment_size);
+      size_t alignment = DEFAULT_FRAGMENT_ALIGNMENT,
+      size_t fragment_size = DEFAULT_FRAGMENT_SIZE);
 
   fragmented_temporary_buffer(fragment_list fragments, size_t bytes);
 
@@ -58,7 +56,7 @@ class fragmented_temporary_buffer {
 
   size_t bytes() const noexcept { return _bytes; }
 
-  bool empty() const noexcept { return !_bytes; }
+  bool empty() const noexcept { return _bytes == 0; }
 
   void remove_prefix(size_t n) noexcept;
 
@@ -78,13 +76,13 @@ class fragmented_temporary_buffer {
 
   char* get_write(size_t index = 0);
 
-  void add_fragment(size_t fragment_size = default_fragment_size);
+  void add_fragment(size_t fragment_size = DEFAULT_FRAGMENT_SIZE);
 
  private:
   fragment_list _fragments;
   size_t _bytes = 0;
-  size_t _alignment = default_fragment_alignment;
-  size_t _fragment_size = default_fragment_size;
+  size_t _alignment = DEFAULT_FRAGMENT_ALIGNMENT;
+  size_t _fragment_size = DEFAULT_FRAGMENT_SIZE;
 };
 
 class fragmented_temporary_buffer::iterator {
@@ -164,9 +162,8 @@ class fragmented_temporary_buffer::istream {
 
  private:
   void next_fragment();
-  void check_range(size_t size);
+  void check_range(size_t size) const;
 
- private:
   fragment_list::const_iterator _current;
   const char* _curr_pos = nullptr;
   const char* _curr_end = nullptr;
@@ -206,7 +203,6 @@ class fragmented_temporary_buffer::ostream {
  private:
   void next_fragment();
 
- private:
   fragmented_temporary_buffer& _buffer;
   fragment_list::iterator _current;
   char* _curr_pos = nullptr;
@@ -218,8 +214,8 @@ class fragmented_temporary_buffer::view {
  public:
   view() = default;
   view(fragment_list::const_iterator it, size_t pos, size_t size);
-  view(std::string_view s) noexcept;
-  view(const std::string& s) noexcept;
+  explicit view(std::string_view s) noexcept;
+  explicit view(const std::string& s) noexcept;
 
   bool operator==(const view& rhs) const noexcept;
   bool operator!=(const view& rhs) const noexcept;
@@ -230,7 +226,7 @@ class fragmented_temporary_buffer::view {
 
   iterator end() const noexcept;
 
-  bool empty() const noexcept { return !_total_size; }
+  bool empty() const noexcept { return _total_size == 0; }
   size_t size() const noexcept { return _total_size; }
 
  private:

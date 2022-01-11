@@ -17,22 +17,20 @@ namespace rafter::storage {
 
 struct raft_state {
   protocol::hard_state hard_state;
-  uint64_t first_index = protocol::log_id::invalid_index;
+  uint64_t first_index = protocol::log_id::INVALID_INDEX;
   uint64_t entry_count = 0;
 };
 
 // sharded<segment_manager>
 class segment_manager {
  public:
-  // TODO: storage configuration class
+  // TODO(jyc): storage configuration class
   explicit segment_manager(const config& config);
   ~segment_manager() = default;
   seastar::future<> start();
   seastar::future<> stop();
   stats stats() const noexcept;
 
-  // TODO: implement logdb
-  // TODO: batch append
   seastar::future<bool> append(const protocol::update& up);
   seastar::future<> remove(protocol::group_id id, uint64_t index);
   seastar::future<protocol::snapshot_ptr> query_snapshot(protocol::group_id id);
@@ -56,7 +54,7 @@ class segment_manager {
   const config& _config;
   // segments dir, e.g. <data_dir>
   std::string _log_dir;
-  // TODO: more options
+  // TODO(jyc): more options
 
   // used to allocate new segments
   // the format of a segment name is <shard_id:05d>_<segment_id:020d>

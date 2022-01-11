@@ -37,9 +37,8 @@ future<> segment_manager::start() {
   co_await recovery_compaction();
   // TODO: run obsolete segments deleter on shard 0 only, shard X passes the
   //  path to shard 0's deleter
-  _gc_worker.start([this](auto& t, bool& open) {
-    return this->gc_service(t, open);
-  });
+  _gc_worker.start(
+      [this](auto& t, bool& open) { return this->gc_service(t, open); });
 }
 
 future<> segment_manager::stop() {
@@ -110,7 +109,7 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
   }
   auto segment = it->second.get();
   auto up = co_await segment->query(i);
-  if (up.snapshot->log_id.index == log_id::invalid_index) {
+  if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
     l.error("{} segment_manager::query_snapshot: empty", id);
     co_return coroutine::make_exception(util::corruption_error());
   }
@@ -170,7 +169,7 @@ future<log_entry_vector> segment_manager::query_entries(
   uint64_t prev_filename = indexes.front().filename;
   for (size_t i = 1; i < indexes.size(); ++i) {
     if (indexes[i].filename != prev_filename) {
-      // TODO: check the continuity of entry's index
+      // TODO(jyc): check the continuity of entry's index
       max_size = co_await _segments[prev_filename]->query(
           indexes.subspan(start, count), entries, max_size);
       if (max_size == 0) {
@@ -233,7 +232,7 @@ future<> segment_manager::parse_existing_segments(directory_entry s) {
 }
 
 seastar::future<> segment_manager::recovery_compaction() {
-  // TODO: use callback and avoid this allocation
+  // TODO(jyc): use callback and avoid this allocation
   auto groups = _index_group.managed_groups();
   for (auto gid : groups) {
     co_await compaction(gid);
@@ -277,8 +276,10 @@ future<> segment_manager::gc_service(std::vector<uint64_t>& segs, bool& open) {
       co_await s->remove();
       _stats._del_segment++;
     } catch (std::runtime_error& e) {
-      l.warn("segment_manager::gc_service: failed to remove segment:{}, {}",
-             segment::form_path(_log_dir, seg), e.what());
+      l.warn(
+          "segment_manager::gc_service: failed to remove segment:{}, {}",
+          segment::form_path(_log_dir, seg),
+          e.what());
     }
   }
   co_await sync_directory(_log_dir);

@@ -35,7 +35,7 @@ fragmented_temporary_buffer::from_stream_exactly(
     input_stream<char>& in, size_t size) {
   fragment_list fragments;
   auto left = size;
-  while (left) {
+  while (left > 0) {
     auto tmp = co_await in.read_up_to(left);
     if (tmp.empty()) {
       co_return fragmented_temporary_buffer();
@@ -51,7 +51,7 @@ fragmented_temporary_buffer::from_stream_up_to(
     input_stream<char>& in, size_t size) {
   fragment_list fragments;
   auto left = size;
-  while (left) {
+  while (left > 0) {
     auto tmp = co_await in.read_up_to(left);
     if (tmp.empty()) {
       break;
@@ -148,21 +148,21 @@ fragmented_temporary_buffer::iterator::operator++(int) noexcept {
 fragmented_temporary_buffer::istream::istream(
     fragment_list::const_iterator it, size_t size) noexcept
   : _current(it)
-  , _curr_pos(size ? _current->get() : nullptr)
-  , _curr_end(size ? _current->get() + _current->size() : nullptr)
+  , _curr_pos(size > 0 ? _current->get() : nullptr)
+  , _curr_end(size > 0 ? _current->get() + _current->size() : nullptr)
   , _bytes_left(size) {}
 
 size_t fragmented_temporary_buffer::istream::bytes_left() const noexcept {
-  return _bytes_left ? _bytes_left - (_curr_pos - _current->get()) : 0;
+  return _bytes_left > 0 ? _bytes_left - (_curr_pos - _current->get()) : 0;
 }
 
 void fragmented_temporary_buffer::istream::skip(size_t n) noexcept {
   if (_curr_end - _curr_pos < n) [[unlikely]] {
     auto left = std::min(n, bytes_left());
-    while (left) {
+    while (left > 0) {
       auto len = std::min(left, static_cast<size_t>(_curr_end - _curr_pos));
       left -= len;
-      if (left) {
+      if (left > 0) {
         next_fragment();
       } else {
         _curr_pos += len;
@@ -179,7 +179,7 @@ void fragmented_temporary_buffer::istream::read(char* data, size_t n) {
     return;
   }
   check_range(n);
-  auto pos = data;
+  auto* pos = data;
   auto view = read(n);
   for (auto v : view) {
     std::copy_n(v.data(), v.size(), pos);
@@ -230,7 +230,7 @@ string fragmented_temporary_buffer::istream::read_string(size_t n) {
 
 void fragmented_temporary_buffer::istream::next_fragment() {
   _bytes_left -= _current->size();
-  if (_bytes_left) {
+  if (_bytes_left > 0) {
     _current++;
     _curr_pos = _current->get();
     _curr_end = _current->get() + _current->size();
@@ -240,7 +240,7 @@ void fragmented_temporary_buffer::istream::next_fragment() {
   }
 }
 
-void fragmented_temporary_buffer::istream::check_range(size_t size) {
+void fragmented_temporary_buffer::istream::check_range(size_t size) const {
   if (bytes_left() < size) [[unlikely]] {
     throw util::out_of_range_error(fmt::format(
         "fragmented_temporary_buffer::istream read error, want={}, left={}",
@@ -255,19 +255,19 @@ fragmented_temporary_buffer::ostream::ostream(
     size_t size) noexcept
   : _buffer(buffer)
   , _current(it)
-  , _curr_pos(size ? _current->get_write() : nullptr)
-  , _curr_end(size ? _current->get_write() + _current->size() : nullptr)
+  , _curr_pos(size > 0 ? _current->get_write() : nullptr)
+  , _curr_end(size > 0 ? _current->get_write() + _current->size() : nullptr)
   , _bytes_left(size) {}
 
 void fragmented_temporary_buffer::ostream::write(
     const char* data, size_t size) {
   if (_curr_end - _curr_pos < size) [[unlikely]] {
     size_t left = size;
-    while (left) {
+    while (left > 0) {
       auto len = std::min(left, static_cast<size_t>(_curr_end - _curr_pos));
       std::copy_n(data + size - left, len, _curr_pos);
       left -= len;
-      if (left) {
+      if (left > 0) {
         next_fragment();
       } else {
         _curr_pos += len;
@@ -282,11 +282,11 @@ void fragmented_temporary_buffer::ostream::write(
 void fragmented_temporary_buffer::ostream::fill(char c, size_t size) {
   if (_curr_end - _curr_pos < size) [[unlikely]] {
     size_t left = size;
-    while (left) {
+    while (left > 0) {
       auto len = std::min(left, static_cast<size_t>(_curr_end - _curr_pos));
       std::fill_n(_curr_pos, len, c);
       left -= len;
-      if (left) {
+      if (left > 0) {
         next_fragment();
       } else {
         _curr_pos += len;
@@ -299,13 +299,13 @@ void fragmented_temporary_buffer::ostream::fill(char c, size_t size) {
 }
 
 void fragmented_temporary_buffer::ostream::remove_suffix_to_fit() noexcept {
-  auto left = _bytes_left ? _bytes_left - (_curr_pos - _current->get()) : 0;
+  auto left = _bytes_left > 0 ? _bytes_left - (_curr_pos - _current->get()) : 0;
   _buffer.remove_suffix(left);
 }
 
 void fragmented_temporary_buffer::ostream::next_fragment() {
   _bytes_left -= _current->size();
-  if (!_bytes_left) {
+  if (_bytes_left == 0) {
     _buffer.add_fragment(_buffer._fragment_size);
     _current++;
     _bytes_left += _current->size();

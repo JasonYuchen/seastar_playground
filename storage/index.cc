@@ -14,17 +14,11 @@ namespace rafter::storage {
 using namespace seastar;
 using namespace std;
 
-bool index::entry::empty() const noexcept {
-  return filename == 0;
-}
+bool index::entry::empty() const noexcept { return filename == 0; }
 
-bool index::entry::is_normal() const noexcept {
-  return type == type::normal;
-}
+bool index::entry::is_normal() const noexcept { return type == type::normal; }
 
-bool index::entry::is_state() const noexcept {
-  return type == type::state;
-}
+bool index::entry::is_state() const noexcept { return type == type::state; }
 
 bool index::entry::is_snapshot() const noexcept {
   return type == type::snapshot;
@@ -35,10 +29,8 @@ bool index::entry::is_compaction() const noexcept {
 }
 
 bool index::entry::try_merge(index::entry& e) noexcept {
-  if (last_index + 1 == e.first_index &&
-      offset + length == e.offset &&
-      filename == e.filename &&
-      type == e.type) {
+  if (last_index + 1 == e.first_index && offset + length == e.offset &&
+      filename == e.filename && type == e.type) {
     last_index = e.last_index;
     length += e.length;
     e = entry{};
@@ -48,8 +40,14 @@ bool index::entry::try_merge(index::entry& e) noexcept {
 }
 
 std::string index::entry::debug_string() const {
-  return fmt::format("entry[fi:{}, li:{}, fn:{}, off:{}, len:{}, type:{}]",
-      first_index, last_index, filename, offset, length, uint8_t{type});
+  return fmt::format(
+      "entry[fi:{}, li:{}, fn:{}, off:{}, len:{}, type:{}]",
+      first_index,
+      last_index,
+      filename,
+      offset,
+      length,
+      uint8_t{type});
 }
 
 index& index::set_compacted_to(uint64_t compacted_to) noexcept {
@@ -57,17 +55,11 @@ index& index::set_compacted_to(uint64_t compacted_to) noexcept {
   return *this;
 }
 
-uint64_t index::compacted_to() const noexcept {
-  return _compacted_to;
-}
+uint64_t index::compacted_to() const noexcept { return _compacted_to; }
 
-size_t index::size() const noexcept {
-  return _entries.size();
-}
+size_t index::size() const noexcept { return _entries.size(); }
 
-bool index::empty() const noexcept {
-  return _entries.empty();
-}
+bool index::empty() const noexcept { return _entries.empty(); }
 
 index& index::update(index::entry e) {
   if (empty()) [[unlikely]] {
@@ -78,14 +70,14 @@ index& index::update(index::entry e) {
     _entries.emplace_back(std::move(e));
     return *this;
   }
-  auto [idx, found] = binary_search(
-      0, _entries.size() - 1, e.first_index);
+  auto [idx, found] = binary_search(0, _entries.size() - 1, e.first_index);
   if (!found) [[unlikely]] {
-    l.error("{} index::update: first index {} out of range [{}, {}]",
-            _gid,
-            e.first_index,
-            _entries.front().first_index,
-            _entries.back().last_index);
+    l.error(
+        "{} index::update: first index {} out of range [{}, {}]",
+        _gid,
+        e.first_index,
+        _entries.front().first_index,
+        _entries.back().last_index);
     throw util::out_of_range_error();
   }
   auto st = _entries.begin();
@@ -133,8 +125,8 @@ span<const index::entry> index::query(protocol::hint range) const noexcept {
     if (range.high < _entries[end].first_index) {
       break;
     }
-    if (_entries[end - 1].last_index + 1 !=
-        _entries[end].first_index) [[unlikely]] {
+    if (_entries[end - 1].last_index + 1 != _entries[end].first_index)
+        [[unlikely]] {
       break;
     }
   }
@@ -161,7 +153,7 @@ uint64_t index::compaction() {
   uint64_t max_obsolete = prev_filename - 1;
   for (size_t i = 1; i < _entries.size(); ++i) {
     const auto& e = _entries[i];
-    const auto& prev_e = _entries[i-1];
+    const auto& prev_e = _entries[i - 1];
     if (!e.is_normal()) [[unlikely]] {
       throw util::failed_precondition_error("invalid index type");
     }
@@ -175,7 +167,8 @@ uint64_t index::compaction() {
   return max_obsolete;
 }
 
-vector<uint64_t> index::remove_obsolete_entries(uint64_t max_obsolete_filename) {
+vector<uint64_t> index::remove_obsolete_entries(
+    uint64_t max_obsolete_filename) {
   vector<uint64_t> obsoletes;
   auto it = _entries.begin();
   for (; it != _entries.end(); ++it) {
@@ -189,8 +182,7 @@ vector<uint64_t> index::remove_obsolete_entries(uint64_t max_obsolete_filename) 
 }
 
 bool index::operator==(const index& rhs) const noexcept {
-  return _gid == rhs._gid &&
-         _compacted_to == rhs._compacted_to &&
+  return _gid == rhs._gid && _compacted_to == rhs._compacted_to &&
          _entries == rhs._entries;
 }
 
@@ -198,13 +190,11 @@ bool index::operator!=(const index& rhs) const noexcept {
   return !(*this == rhs);
 }
 
-std::string index::debug_string() const {
-  return "NOT IMPLEMENTED";
-}
+std::string index::debug_string() const { return "NOT IMPLEMENTED"; }
 
 bool node_index::update_entry(const index::entry& e) {
-  if (e.first_index != protocol::log_id::invalid_index &&
-      e.last_index != protocol::log_id::invalid_index) {
+  if (e.first_index != protocol::log_id::INVALID_INDEX &&
+      e.last_index != protocol::log_id::INVALID_INDEX) {
     _index.update(e);
     return _filenames.insert(e.filename).second;
   }
@@ -228,9 +218,8 @@ bool node_index::update_state(const index::entry& e) {
 }
 
 bool node_index::file_in_use(uint64_t filename) const noexcept {
-  return _snapshot.filename == filename ||
-      _state.filename == filename ||
-      _index.file_in_use(filename);
+  return _snapshot.filename == filename || _state.filename == filename ||
+         _index.file_in_use(filename);
 }
 
 bool node_index::file_in_tracking(uint64_t filename) const noexcept {
@@ -242,13 +231,9 @@ span<const index::entry> node_index::query(
   return _index.query(range);
 }
 
-index::entry node_index::query_state() const noexcept {
-  return _state;
-}
+index::entry node_index::query_state() const noexcept { return _state; }
 
-index::entry node_index::query_snapshot() const noexcept {
-  return _snapshot;
-}
+index::entry node_index::query_snapshot() const noexcept { return _snapshot; }
 
 uint64_t node_index::compacted_to() const noexcept {
   return _index.compacted_to();
@@ -271,7 +256,7 @@ vector<uint64_t> node_index::compaction() {
   }
   _index.remove_obsolete_entries(max_obsolete);
   vector<uint64_t> obsoletes;
-  for (auto it = _filenames.begin(); it != _filenames.end(); ) {
+  for (auto it = _filenames.begin(); it != _filenames.end();) {
     if (*it <= max_obsolete) {
       obsoletes.emplace_back(*it);
       it = _filenames.erase(it);
@@ -283,10 +268,8 @@ vector<uint64_t> node_index::compaction() {
 }
 
 bool node_index::operator==(const node_index& rhs) const noexcept {
-  return _gid == rhs._gid &&
-         _snapshot == rhs._snapshot &&
-         _state == rhs._state &&
-         _index == rhs._index &&
+  return _gid == rhs._gid && _snapshot == rhs._snapshot &&
+         _state == rhs._state && _index == rhs._index &&
          _filenames == rhs._filenames;
 }
 
@@ -341,13 +324,13 @@ bool index_group::update(const protocol::update& u, index::entry e) {
   assert(u.gid.valid());
   auto i = get_node_index(u.gid);
   auto compacted_to = u.compacted_to();
-  if (compacted_to != protocol::log_id::invalid_index) {
+  if (compacted_to != protocol::log_id::INVALID_INDEX) {
     i->set_compacted_to(compacted_to);
     return false;
   }
   bool new_tracking = false;
-  if (u.first_index != protocol::log_id::invalid_index &&
-      u.last_index != protocol::log_id::invalid_index) {
+  if (u.first_index != protocol::log_id::INVALID_INDEX &&
+      u.last_index != protocol::log_id::INVALID_INDEX) {
     e.first_index = u.first_index;
     e.last_index = u.last_index;
     e.type = index::entry::type::normal;
@@ -355,14 +338,14 @@ bool index_group::update(const protocol::update& u, index::entry e) {
   }
   if (!u.state.empty()) {
     e.first_index = u.state.commit;
-    e.last_index = protocol::log_id::invalid_index;
+    e.last_index = protocol::log_id::INVALID_INDEX;
     e.type = index::entry::type::state;
     _states[u.gid] = u.state;
     new_tracking = new_tracking || i->update_state(e);
   }
-  if (u.snapshot_index != protocol::log_id::invalid_index) {
+  if (u.snapshot_index != protocol::log_id::INVALID_INDEX) {
     e.first_index = u.snapshot_index;
-    e.last_index = protocol::log_id::invalid_index;
+    e.last_index = protocol::log_id::INVALID_INDEX;
     e.type = index::entry::type::snapshot;
     new_tracking = new_tracking || i->update_snapshot(e);
   }

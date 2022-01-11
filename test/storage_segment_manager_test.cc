@@ -221,7 +221,7 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
     co_await _manager->append(up);
   }
   co_await _manager->remove({4, 4}, ups.back().first_index);
-  auto backoff = rafter::util::backoff::linear(3, 500ms);
+  auto backoff = rafter::util::backoff<>::linear(3, 500ms);
   co_await backoff.attempt([this] {
     return make_ready_future<bool>(_manager->stats()._del_segment > 1);
   });
@@ -230,14 +230,14 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
   co_return;
 }
 
-RAFTER_TEST_P(segment_manager_test, recovery_compaction) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_recovery_compaction) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, query_snapshot) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_query_snapshot) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, query_raft_state) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_query_raft_state) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, query_entries) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_query_entries) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, integrated) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_integrated) { co_return; }
 
 }  // namespace

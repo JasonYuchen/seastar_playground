@@ -9,9 +9,8 @@
 #include "util/fragmented_temporary_buffer.hh"
 
 using namespace rafter::util;
+using view = rafter::util::fragmented_temporary_buffer::view;
 using namespace std::string_view_literals;
-
-// TODO: add test cases
 
 namespace {
 
@@ -32,7 +31,7 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, zero_can_be_expanded) {
   EXPECT_EQ(_buffer->bytes(), 14);
   auto is = _buffer->as_istream();
   EXPECT_EQ(is.read<uint64_t>(), 123ULL);
-  EXPECT_EQ("number"sv, is.read(6));
+  EXPECT_EQ(view("number"sv), is.read(6));
   EXPECT_EQ(_buffer->bytes(), 14);
   co_return;
 }
@@ -46,11 +45,6 @@ RAFTER_TEST_F(fragmented_temporary_buffer_basic, throw_if_out_of_range) {
   is = _buffer->as_istream();
   is.read<uint64_t>();
   EXPECT_THROW(is.read(1), rafter::util::out_of_range_error);
-  co_return;
-}
-
-RAFTER_TEST_F(fragmented_temporary_buffer_basic, from_stream) {
-  // TODO
   co_return;
 }
 
@@ -94,7 +88,7 @@ RAFTER_TEST_P(fragmented_temporary_buffer_fit, remove_to_fit) {
   EXPECT_EQ(is.bytes_left(), GetParam());
   // if read(0) will trigger a false UB alarm, avoid it
   if (GetParam() > 0) {
-    EXPECT_EQ(data, is.read(GetParam()));
+    EXPECT_EQ(view(data), is.read(GetParam()));
   }
   co_return;
 }
@@ -111,7 +105,7 @@ class fragmented_temporary_buffer_segment
     auto fragment_size = size / GetParam();
     _buffer = std::make_unique<fragmented_temporary_buffer>(
         size,
-        fragmented_temporary_buffer::default_fragment_alignment,
+        fragmented_temporary_buffer::DEFAULT_FRAGMENT_ALIGNMENT,
         fragment_size);
   }
 
@@ -138,11 +132,11 @@ RAFTER_TEST_P(
   all.append(data);
   os.write(data.data(), data.size());
   auto is = _buffer->as_istream();
-  EXPECT_EQ(std::string(4000, 0), is.read(4000));
+  EXPECT_EQ(view(std::string(4000, 0)), is.read(4000));
   is.skip(90);
   EXPECT_EQ(UINT64_MAX, is.read<uint64_t>());
   EXPECT_EQ("number", is.read_string(6));
-  EXPECT_EQ(std::string(3000, 'c'), is.read(3000));
+  EXPECT_EQ(view(std::string(3000, 'c')), is.read(3000));
   std::string reassemble;
   for (auto&& fragment : *_buffer) {
     switch (GetParam()) {
