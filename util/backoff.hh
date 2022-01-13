@@ -10,23 +10,45 @@
 
 namespace rafter::util {
 
+template <typename Clock = std::chrono::system_clock>
+class backoff_waiter {
+ public:
+  using duration = typename Clock::duration;
+
+  explicit backoff_waiter(duration base_interval, double factor = 1.0)
+    : _base(base_interval), _next(base_interval), _factor(factor) {}
+
+  duration next() {
+    auto ret = _next;
+    _next *= _factor;
+    return ret;
+  }
+
+  duration next_duration() const noexcept { return _next; }
+
+  void reset() { _next = _base; }
+
+ private:
+  duration _base;
+  duration _next;
+  double _factor = 1.0;
+};
+
+template <typename Clock = std::chrono::system_clock>
 class backoff {
  public:
-  template <typename Rep, typename Period>
-  static backoff linear(
-      uint64_t try_limit, std::chrono::duration<Rep, Period> base_interval) {
+  using duration = typename Clock::duration;
+
+  static backoff linear(uint64_t try_limit, duration base_interval) {
     return exponential(try_limit, base_interval, 1.0);
   }
 
-  template <typename Rep, typename Period>
   static backoff exponential(
-      uint64_t try_limit,
-      std::chrono::duration<Rep, Period> base_interval,
-      double factor) {
+      uint64_t try_limit, duration base_interval, double factor) {
     using namespace std::chrono;
     backoff b;
     b._count = try_limit < 1 ? 1 : try_limit;
-    b._base_ns = duration_cast<nanoseconds>(base_interval).count();
+    b._base = base_interval;
     b._factor = factor < 1.0 ? 1.0 : factor;
     return b;
   }
@@ -38,21 +60,20 @@ class backoff {
   seastar::future<bool> attempt(Func func) const {
     bool done = false;
     auto count = _count;
-    auto next_wait = std::chrono::nanoseconds(_base_ns);
+    auto waiter = backoff_waiter<Clock>(_base, _factor);
     while (count--) {
       done = co_await func();
       if (done) {
         break;
       }
-      co_await seastar::sleep(next_wait);
-      next_wait *= _factor;
+      co_await seastar::sleep(waiter.next());
     }
     co_return done;
   }
 
  private:
   uint64_t _count = 0;
-  uint64_t _base_ns = 0;
+  duration _base;
   double _factor = 1.0;
 };
 
