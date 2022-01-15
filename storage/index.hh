@@ -30,9 +30,9 @@ class index {
       snapshot,
       compaction,
     };
-    // the first included raft log entry index
+    // the first included raft log entry index, inclusive
     uint64_t first_index = protocol::log_id::INVALID_INDEX;
-    // the last included raft log entry index
+    // the last included raft log entry index, inclusive
     uint64_t last_index = protocol::log_id::INVALID_INDEX;
     // the filename of the segment file
     uint64_t filename = 0;
@@ -70,6 +70,7 @@ class index {
   std::pair<uint64_t, bool> binary_search(
       uint64_t start, uint64_t end, uint64_t raft_index) const noexcept;
 
+  // we follow the convention that low: inclusive, high: exclusive
   std::span<const entry> query(protocol::hint range) const noexcept;
 
   bool file_in_use(uint64_t filename) const noexcept;

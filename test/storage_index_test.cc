@@ -193,14 +193,14 @@ RAFTER_TEST_F(index_test, query) {
     rafter::protocol::hint range;
     std::vector<storage::index::entry> expected_idx;
   } tests[] = {
-      {{9, 10}, {}},
-      {{10, 10}, {_init_idx[0]}},
+      {{9, 11}, {}},
       {{10, 11}, {_init_idx[0]}},
-      {{11, 13}, {_init_idx[0], _init_idx[1]}},
-      {{12, 16}, {_init_idx[0], _init_idx[1], _init_idx[2]}},
-      {{15, 21}, {_init_idx[1], _init_idx[2], _init_idx[3]}},
-      {{21, 22}, {_init_idx[3]}},
-      {{22, 23}, {}},
+      {{10, 12}, {_init_idx[0]}},
+      {{11, 14}, {_init_idx[0], _init_idx[1]}},
+      {{12, 17}, {_init_idx[0], _init_idx[1], _init_idx[2]}},
+      {{15, 22}, {_init_idx[1], _init_idx[2], _init_idx[3]}},
+      {{21, 23}, {_init_idx[3]}},
+      {{22, 24}, {}},
   };
   for (auto&& [range, expect] : tests) {
     auto es = _idx.query(range);
