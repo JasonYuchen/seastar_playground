@@ -13,10 +13,10 @@ sharded and maintains a shard-to-node connection map.
 ![transport.drawio.png](transport.drawio.png)
 
 - Each shard will connect to a remote node (the shard with overlapping raft clusters) independently
-    - the target shard is specified with the help of [Seastar's *
-      port* policy](https://github.com/scylladb/seastar/blob/master/doc/network-connection-load-balancing.md#load-balancing)
+    - the target shard is specified with the help of [Seastar's *port*
+      policy](https://github.com/scylladb/seastar/blob/master/doc/network-connection-load-balancing.md#load-balancing)
     - all shards use a special *meta* gateway to exchange the knowledge of hosting nodes (e.g. shard count, raft cluster
-      info, etc)
+      info, etc.)
 - For a cross-shard message, e.g. the connection delivers a `cluster#2`'s message from `node#1.shard#2`
   to `node#3.shard#0`, shared-nothing is honored and `smp::submit_to` is invoked to forward this message
   to `node#3.shard#2`

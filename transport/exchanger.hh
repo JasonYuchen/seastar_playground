@@ -8,6 +8,7 @@
 
 #include "protocol/serializer.hh"
 #include "rafter/config.hh"
+#include "transport/express.hh"
 #include "transport/registry.hh"
 
 namespace rafter::transport {
@@ -28,6 +29,7 @@ class exchanger
   , public seastar::peering_sharded_service<exchanger> {
  public:
   explicit exchanger(const config& config, registry& reg);
+  const config& config() const noexcept { return _config; }
 
   using rpc_protocol =
       seastar::rpc::protocol<protocol::serializer, messaging_verb>;
@@ -73,6 +75,7 @@ class exchanger
   }
 
   seastar::future<> send_message(protocol::message_ptr message);
+  seastar::future<> send_snapshot(protocol::snapshot_ptr snapshot);
 
   void register_snapshot_chunk(
       std::function<seastar::future<>(
@@ -89,6 +92,9 @@ class exchanger
   seastar::future<seastar::rpc::sink<protocol::snapshot_chunk_ptr>>
   make_sink_for_snapshot_chunk(protocol::group_id gid);
 
+  seastar::future<> notify_unreachable(protocol::group_id target) { co_return; }
+  seastar::future<> notify_successful(protocol::group_id target) { co_return; }
+
  private:
   // TODO(jyc): split normal client and streaming client
   seastar::shared_ptr<rpc_protocol_client> get_rpc_client(
@@ -103,6 +109,7 @@ class exchanger
   std::unique_ptr<rpc_protocol> _rpc;
   std::unique_ptr<rpc_protocol_server> _server;
   std::unordered_map<peer_address, peer_info, peer_address::hash> _clients;
+  std::unordered_map<protocol::group_id, express_ptr> _expresses;
 };
 
 }  // namespace rafter::transport

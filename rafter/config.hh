@@ -18,7 +18,7 @@ using seastar::MB;
 
 // config file is shared among all shards
 struct config {
-  // TODO: add scheduling group configuration here
+  // TODO(jyc): add scheduling group configuration here
   // the absolute path of a directory for data (WAL, snapshot, etc) storage
   std::string data_dir;
   // the rolling threshold size in bytes for segment files
@@ -30,8 +30,11 @@ struct config {
   // the listening port for raft messages
   uint16_t listen_port = 10615;
 
+  // the snapshot chunk size
+  uint64_t snapshot_chunk_size = 1UL * MB;
+
   void validate() const;
-  // TODO: read from yaml?
+  // TODO(jyc): read from yaml?
 };
 
 }  // namespace rafter
