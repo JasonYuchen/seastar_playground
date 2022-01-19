@@ -122,7 +122,7 @@ span<const index::entry> index::query(protocol::hint range) const noexcept {
   }
   uint64_t end = start + 1;
   for (; end < _entries.size(); ++end) {
-    if (range.high < _entries[end].first_index) {
+    if (range.high <= _entries[end].first_index) {
       break;
     }
     if (_entries[end - 1].last_index + 1 != _entries[end].first_index)
