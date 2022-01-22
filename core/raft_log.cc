@@ -108,7 +108,7 @@ void in_memory_log::advance_applied_log(uint64_t applied_index) {
   std::advance(end, new_marker - _marker);
   _entries.erase(_entries.begin(), end);
   _marker = new_marker;
-  assertMarker();
+  assert_marker();
   // TODO(jyc): resize entry slice
   // TODO(jyc): rate limiter
 }
@@ -138,7 +138,7 @@ void in_memory_log::merge(protocol::log_entry_span entries) {
   if (first_index >= _marker + _entries.size()) {
     protocol::utils::assert_continuous(_entries, entries);
     _entries.insert(_entries.end(), entries.begin(), entries.end());
-    assertMarker();
+    assert_marker();
     return;
   }
 
@@ -147,18 +147,18 @@ void in_memory_log::merge(protocol::log_entry_span entries) {
     _shrunk = false;
     _entries = {entries.begin(), entries.end()};
     _saved = first_index - 1;
-    assertMarker();
+    assert_marker();
     return;
   }
 
   auto start = _entries.begin();
   std::advance(start, first_index - _marker);
   _entries.erase(start, _entries.end());
-  protocol::util::assert_continuous(_entries, entries);
+  protocol::utils::assert_continuous(_entries, entries);
   _entries.insert(_entries.end(), entries.begin(), entries.end());
   _saved = std::min(_saved, first_index - 1);
   _shrunk = false;
-  assertMarker();
+  assert_marker();
 }
 
 void in_memory_log::restore(protocol::snapshot_ptr snapshot) {
@@ -171,7 +171,7 @@ void in_memory_log::restore(protocol::snapshot_ptr snapshot) {
   // TODO(jyc): reset rate limiter
 }
 
-void in_memory_log::assertMarker() const {
+void in_memory_log::assert_marker() const {
   if (!_entries.empty() && _entries.front()->lid.index != _marker) {
     throw util::failed_precondition_error(fmt::format(
         "mismatch marker:{}, first index:{}",

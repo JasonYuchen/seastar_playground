@@ -177,7 +177,7 @@ struct log_entry {
 
 using log_entry_ptr = seastar::lw_shared_ptr<log_entry>;
 using log_entry_vector = std::vector<log_entry_ptr>;
-using log_entry_span = std::span<log_entry_ptr>;
+using log_entry_span = std::span<const log_entry_ptr>;
 
 struct hard_state {
   uint64_t term = log_id::INVALID_TERM;
@@ -188,6 +188,8 @@ struct hard_state {
   bool empty() const noexcept;
 
   std::strong_ordering operator<=>(const hard_state &) const = default;
+
+  friend std::ostream &operator<<(std::ostream &os, const hard_state &state);
 };
 
 struct snapshot_file {
@@ -222,12 +224,14 @@ struct snapshot {
 using snapshot_ptr = seastar::lw_shared_ptr<snapshot>;
 
 struct hint {
-  uint64_t low = 0;
-  uint64_t high = 0;
+  uint64_t low = 0;   // inclusive
+  uint64_t high = 0;  // exclusive
 
   static constexpr uint64_t bytes() noexcept { return 16; }
 
   std::strong_ordering operator<=>(const hint &) const = default;
+
+  friend std::ostream &operator<<(std::ostream &os, const hint &h);
 };
 
 using hint_vector = std::vector<hint>;
@@ -388,5 +392,10 @@ struct update {
 };
 
 using update_ptr = seastar::lw_shared_ptr<update>;
+
+class utils {
+ public:
+  static void assert_continuous(log_entry_span left, log_entry_span right);
+};
 
 }  // namespace rafter::protocol

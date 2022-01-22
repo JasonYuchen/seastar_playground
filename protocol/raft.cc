@@ -8,6 +8,7 @@
 #include <fmt/ostream.h>
 
 #include "protocol/serializer.hh"
+#include "util/error.hh"
 
 namespace rafter::protocol {
 
@@ -135,6 +136,15 @@ std::ostream& operator<<(std::ostream& os, const log_id& id) {
             << std::setfill('0') << std::setw(5) << id.index << "]";
 }
 
+std::ostream& operator<<(std::ostream& os, const hint& h) {
+  return os << "[" << h.low << "," << h.high << "]";
+}
+
+std::ostream& operator<<(std::ostream& os, const hard_state& state) {
+  return os << "[" << state.term << "," << state.vote << "," << state.commit
+            << "]";
+}
+
 uint64_t bootstrap::bytes() const noexcept { return sizer(*this); }
 
 uint64_t membership::bytes() const noexcept { return sizer(*this); }
@@ -201,5 +211,23 @@ bool update::has_update() const noexcept {
 }
 
 uint64_t update::bytes() const noexcept { return sizer(*this); }
+
+void utils::assert_continuous(log_entry_span left, log_entry_span right) {
+  if (left.empty() || right.empty()) {
+    return;
+  }
+  if (left.back()->lid.index + 1 != right.front()->lid.index) {
+    throw util::failed_precondition_error(fmt::format(
+        "gap found, left:{}, right:{}",
+        left.back()->lid.index,
+        right.front()->lid.index));
+  }
+  if (left.back()->lid.term > right.front()->lid.term) {
+    throw util::failed_precondition_error(fmt::format(
+        "decreasing term, left:{}, right:{}",
+        left.back()->lid.term,
+        right.front()->lid.term));
+  }
+}
 
 }  // namespace rafter::protocol

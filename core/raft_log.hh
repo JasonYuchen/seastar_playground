@@ -27,7 +27,7 @@ class in_memory_log {
   void restore(protocol::snapshot_ptr snapshot);
 
  private:
-  void assertMarker() const;
+  void assert_marker() const;
 
   bool _shrunk = false;
   protocol::snapshot_ptr _snapshot;
