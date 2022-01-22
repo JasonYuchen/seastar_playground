@@ -33,11 +33,10 @@ class express : seastar::enable_lw_shared_from_this<express> {
 
  private:
   seastar::future<> split(
-      const protocol::snapshot& snapshot,
-      const std::string& file_path,
-      uint64_t start_chunk_id,
-      protocol::snapshot_file_ptr file,
-      std::vector<protocol::snapshot_chunk_ptr>& chunks);
+      protocol::snapshot_ptr snapshot,
+      uint64_t& chunk_id,
+      uint64_t total_chunks,
+      protocol::snapshot_file_ptr file);
   seastar::future<> split(protocol::snapshot_ptr snapshot);
   seastar::future<> main(
       std::vector<protocol::snapshot_chunk_ptr>& chunks, bool& open);
