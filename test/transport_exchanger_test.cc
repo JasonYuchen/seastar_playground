@@ -109,18 +109,30 @@ RAFTER_TEST_F(exchanger_test, streaming) {
   };
 
   co_await _exchanger->invoke_on_all([fiber](exchanger& exc) -> future<> {
-    exc.register_snapshot_chunk([fiber](auto& info, auto source) -> future<> {
-      // use this source to make a sink for bidirectional communication
-      // save this source/sink in other coroutine
-      l.info("source from {}", info.addr);
-      (void)fiber(source).handle_exception(
-          [](std::exception_ptr ep) { ADD_FAILURE() << "exception: " << ep; });
-      co_return;
-    });
+    exc.register_snapshot_chunk(
+        [fiber](
+            auto& info,
+            uint64_t cluster,
+            uint64_t from,
+            uint64_t to,
+            auto source) -> future<> {
+          // use this source to make a sink for bidirectional communication
+          // save this source/sink in other coroutine
+          l.info(
+              "source from {}, cluster:{}, from:{}, to:{}",
+              info.addr,
+              cluster,
+              from,
+              to);
+          (void)fiber(source).handle_exception([](std::exception_ptr ep) {
+            ADD_FAILURE() << "exception: " << ep;
+          });
+          co_return;
+        });
     return make_ready_future<>();
   });
   auto sink = co_await _exchanger->invoke_on(
-      0, &exchanger::make_sink_for_snapshot_chunk, _gid);
+      0, &exchanger::make_sink_for_snapshot_chunk, _gid.cluster, 2, _gid.node);
   EXPECT_EQ(state, fiber_state::created);
   EXPECT_EQ(sink.get_id().id, source_stream_id);
   auto chunk = make_lw_shared<protocol::snapshot_chunk>();

@@ -20,6 +20,16 @@ struct pair_hasher {
   }
 };
 
+struct tri_hasher {
+  template <typename T>
+  std::size_t operator()(T&& tri) const noexcept {
+    auto&& [one, two, thr] = tri;
+    return std::hash<std::remove_cvref_t<decltype(one)>>()(one) ^
+           std::hash<std::remove_cvref_t<decltype(two)>>()(two) ^
+           std::hash<std::remove_cvref_t<decltype(thr)>>()(thr);
+  }
+};
+
 template <typename T>
 std::string print(T items) {
   std::stringstream ss;

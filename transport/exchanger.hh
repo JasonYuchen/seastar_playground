@@ -45,6 +45,7 @@ class exchanger
     seastar::shared_ptr<rpc_protocol_client> rpc_client;
     seastar::rpc::stats stats() const { return rpc_client->get_stats(); }
   };
+  // TODO(jyc): initialize all handlers
   seastar::future<> start_listen();
   seastar::future<> shutdown();
   seastar::future<> stop() { return seastar::make_ready_future<>(); }
@@ -70,30 +71,33 @@ class exchanger
     _rpc->register_handler(messaging_verb::message, std::move(func));
   }
 
-  seastar::future<> register_message() {
+  seastar::future<> unregister_message() {
     return _rpc->unregister_handler(messaging_verb::message);
   }
 
   seastar::future<> send_message(protocol::message_ptr message);
-  seastar::future<> send_snapshot(protocol::snapshot_ptr snapshot);
+  seastar::future<> send_snapshot(protocol::message_ptr message);
 
   void register_snapshot_chunk(
       std::function<seastar::future<>(
           const seastar::rpc::client_info& info,
+          uint64_t cluster,
+          uint64_t from,
+          uint64_t to,
           seastar::rpc::source<protocol::snapshot_chunk_ptr> source)>&& func) {
     _rpc->register_handler(messaging_verb::snapshot, std::move(func));
   }
 
-  seastar::future<> register_snapshot_chunk() {
+  seastar::future<> unregister_snapshot_chunk() {
     return _rpc->unregister_handler(messaging_verb::snapshot);
   }
 
   // TODO(jyc): use raft group_id to get address from registry
   seastar::future<seastar::rpc::sink<protocol::snapshot_chunk_ptr>>
-  make_sink_for_snapshot_chunk(protocol::group_id gid);
+  make_sink_for_snapshot_chunk(uint64_t cluster_id, uint64_t from, uint64_t to);
 
-  seastar::future<> notify_unreachable(protocol::group_id target) { co_return; }
-  seastar::future<> notify_successful(protocol::group_id target) { co_return; }
+  seastar::future<> notify_unreachable(protocol::group_id target);
+  seastar::future<> notify_successful(protocol::group_id target);
 
  private:
   // TODO(jyc): split normal client and streaming client
@@ -102,14 +106,14 @@ class exchanger
 
   bool remove_rpc_client(peer_address address);
 
-  const config& _config;
+  const struct config& _config;
   registry& _registry;
+  express _express;
   bool _shutting_down = false;
   uint64_t _dropped_messages[static_cast<int32_t>(messaging_verb::num_of_verb)];
   std::unique_ptr<rpc_protocol> _rpc;
   std::unique_ptr<rpc_protocol_server> _server;
   std::unordered_map<peer_address, peer_info, peer_address::hash> _clients;
-  std::unordered_map<protocol::group_id, express_ptr> _expresses;
 };
 
 }  // namespace rafter::transport

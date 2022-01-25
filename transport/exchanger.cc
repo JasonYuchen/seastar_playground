@@ -16,9 +16,10 @@ using namespace protocol;
 using namespace seastar;
 using namespace std::chrono_literals;
 
-exchanger::exchanger(const config& config, registry& reg)
+exchanger::exchanger(const struct config& config, registry& reg)
   : _config(config)
   , _registry(reg)
+  , _express(*this)
   , _dropped_messages{0}
   , _rpc(std::make_unique<rpc_protocol>(serializer{})) {
   _rpc->set_logger(&l);
@@ -52,6 +53,7 @@ future<> exchanger::shutdown() {
     l.info("exchanger::shutdown: closing connection to {}", peer.first);
     co_await peer.second.rpc_client->stop();
   });
+  co_await _express.stop();
   l.info("exchanger::shutdown: done");
 }
 
@@ -68,22 +70,43 @@ future<> exchanger::send_message(message_ptr msg) {
       messaging_verb::message, *address, std::move(msg));
 }
 
+future<> exchanger::send_snapshot(protocol::message_ptr message) {
+  if (!message->snapshot) {
+    throw util::invalid_argument("snapshot", "empty snapshot in message");
+  }
+  return _express.send(message);
+}
+
 future<rpc::sink<snapshot_chunk_ptr>> exchanger::make_sink_for_snapshot_chunk(
-    group_id gid) {
+    uint64_t cluster_id, uint64_t from, uint64_t to) {
   // if shutting down
-  auto address = _registry.resolve(gid);
+  protocol::group_id remote = {.cluster = cluster_id, .node = to};
+  auto address = _registry.resolve(remote);
   if (!address) {
     // TODO(jyc): group unreachable
-    co_return coroutine::make_exception(util::peer_not_found_error(gid));
+    co_return coroutine::make_exception(util::peer_not_found_error(remote));
   }
   auto client = get_rpc_client(messaging_verb::message, *address);
   auto sink =
       co_await client->make_stream_sink<serializer, snapshot_chunk_ptr>();
   // register streaming pipeline in the server
-  auto rpc_handler = _rpc->make_client<void(rpc::sink<snapshot_chunk_ptr>)>(
+  auto rpc_handler = _rpc->make_client<void(
+      uint64_t, uint64_t, uint64_t, rpc::sink<snapshot_chunk_ptr>)>(
       messaging_verb::snapshot);
-  co_await rpc_handler(*client, sink);
+  co_await rpc_handler(*client, cluster_id, from, to, sink);
   co_return sink;
+}
+
+future<> exchanger::notify_unreachable(protocol::group_id target) {
+  // TODO(jyc): notify unreachable
+  l.warn("exchanger::notify_unreachable: {}", target);
+  co_return;
+}
+
+future<> exchanger::notify_successful(protocol::group_id target) {
+  // TODO(jyc): notify successful
+  l.info("exchanger::notify_successful: {}", target);
+  co_return;
 }
 
 shared_ptr<exchanger::rpc_protocol_client> exchanger::get_rpc_client(

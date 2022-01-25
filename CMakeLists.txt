@@ -63,6 +63,8 @@ set(SOURCES
     storage/stats.hh
     transport/exchanger.cc
     transport/exchanger.hh
+    transport/express.cc
+    transport/express.hh
     transport/logger.cc
     transport/logger.hh
     transport/registry.cc
