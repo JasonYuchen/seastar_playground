@@ -31,7 +31,7 @@ enum class code : uint8_t {
   failed_precondition,
   failed_postcondition,
   unknown,
-  invalid,
+  invalid_argument,
   no_data,
   num_of_codes,
 };
@@ -166,6 +166,14 @@ class failed_postcondition_error : public logic_error {
   failed_postcondition_error() : logic_error(code::failed_postcondition) {}
   failed_postcondition_error(std::string_view msg)
     : logic_error("{}: {}", code::failed_postcondition, msg) {}
+};
+
+class invalid_argument : public logic_error {
+ public:
+  using logic_error::logic_error;
+  invalid_argument() : logic_error(code::invalid_argument) {}
+  invalid_argument(std::string_view arg, std::string_view msg)
+    : logic_error("{}: arg:{}, reason:{}", code::invalid_argument, arg, msg) {}
 };
 
 }  // namespace rafter::util

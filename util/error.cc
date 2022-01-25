@@ -23,7 +23,7 @@ const char* status_string(enum code e) {
       "corruption",
       "failed_precondition",
       "failed_postcondition",
-      "invalid",
+      "invalid_argument",
       "no_data",
       "unknown"};
   static_assert(
