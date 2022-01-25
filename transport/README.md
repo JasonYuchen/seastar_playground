@@ -28,7 +28,20 @@ sharded and maintains a shard-to-node connection map.
 
 ## Snapshot Streaming
 
-TODO: introduce the snapshot express and the management of ongoing/out-dated snapshots.
+### Sender
+
+Once received a `send_snapshot` request, transport layer will instantiate a new `express` object for snapshot loading
+and sending. The snapshot files (snapshot itself and corresponding disk files specified by the replicated state machine)
+will be loaded and sent concurrently as they belong to two different IO stack:
+
+- load snapshot chunks (**disk IO**) and push them to the worker queue
+- fetch chunks from worker queue and send them out (**network IO**)
+
+![transport.snapshot.drawio.png](transport.snapshot.drawio.png)
+
+### Receiver
+
+TODO: introduce the receiving-side management of ongoing/out-dated snapshots.
 
 ## Node Discovery & Registry
 

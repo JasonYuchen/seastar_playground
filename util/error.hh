@@ -135,7 +135,7 @@ class closed_error : public base_error {
  public:
   using base_error::base_error;
   closed_error() : base_error(code::closed) {}
-  closed_error(std::string_view service)
+  explicit closed_error(std::string_view service)
     : base_error("{}: service {} closed", code::closed, service) {}
 };
 
@@ -148,7 +148,7 @@ class out_of_range_error : public logic_error {
  public:
   using logic_error::logic_error;
   out_of_range_error() : logic_error(code::out_of_range) {}
-  out_of_range_error(std::string_view msg)
+  explicit out_of_range_error(std::string_view msg)
     : logic_error("{}: {}", code::out_of_range, msg) {}
 };
 
@@ -156,7 +156,7 @@ class failed_precondition_error : public logic_error {
  public:
   using logic_error::logic_error;
   failed_precondition_error() : logic_error(code::failed_precondition) {}
-  failed_precondition_error(std::string_view msg)
+  explicit failed_precondition_error(std::string_view msg)
     : logic_error("{}: {}", code::failed_precondition, msg) {}
 };
 
@@ -164,7 +164,7 @@ class failed_postcondition_error : public logic_error {
  public:
   using logic_error::logic_error;
   failed_postcondition_error() : logic_error(code::failed_postcondition) {}
-  failed_postcondition_error(std::string_view msg)
+  explicit failed_postcondition_error(std::string_view msg)
     : logic_error("{}: {}", code::failed_postcondition, msg) {}
 };
 

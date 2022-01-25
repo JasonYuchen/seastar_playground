@@ -64,7 +64,7 @@ clusters.
 3. ⚠️exchanger test
 4. ⚠️registry, for group discovery and peer addresses management
 5. ⭕registry test
-6. ⭕express, for sending replicated state machine's snapshot
+6. ⚠️express, for sending replicated state machine's snapshot
 7. ⭕express test
 
 ### Replicated State Machine
@@ -81,8 +81,9 @@ Various utilities to support different modules of the rafter.
 1. ✔️backoff, retry in coroutine style
 2. ⚠️circuit_breaker
 3. ✔️fragmented_temporary_buffer, for aligned (de)serialization
-4. ✔️serializer, for raft message's (de)serialization
-5. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
+4. ⚠️rate limiter
+5. ✔️serializer, for raft message's (de)serialization
+6. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
    rafter
 
 ### Test
