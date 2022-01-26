@@ -12,6 +12,7 @@ Checks:          '
                  -google-readability-braces-around-statements,
                  -google-runtime-references,
                  -misc-non-private-member-variables-in-classes,
+                 -modernize-deprecated-headers,
                  -modernize-return-braced-init-list,
                  -modernize-use-nodiscard,
                  -modernize-use-trailing-return-type,
