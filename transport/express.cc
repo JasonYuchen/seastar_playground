@@ -74,11 +74,11 @@ future<> express::sender::start(snapshot_ptr snapshot) {
     uint64_t total_chunks = 0;
     uint64_t snapshot_chunk_size = _exchanger.config().snapshot_chunk_size;
     total_chunks += (snapshot->file_size - 1) / snapshot_chunk_size + 1;
-    for (auto file : snapshot->files) {
+    for (const auto& file : snapshot->files) {
       total_chunks += (file->file_size - 1) / snapshot_chunk_size + 1;
     }
     co_await split_and_send(snapshot, {}, total_chunks, chunk_id, sink);
-    for (auto file : snapshot->files) {
+    for (const auto& file : snapshot->files) {
       co_await split_and_send(snapshot, file, total_chunks, chunk_id, sink);
     }
     co_await sink.flush();

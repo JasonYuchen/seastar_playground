@@ -162,12 +162,12 @@ void in_memory_log::merge(protocol::log_entry_span entries) {
 }
 
 void in_memory_log::restore(protocol::snapshot_ptr snapshot) {
-  _snapshot = snapshot;
-  _marker = snapshot->log_id.index + 1;
-  _applied = snapshot->log_id;
+  _snapshot = std::move(snapshot);
+  _marker = _snapshot->log_id.index + 1;
+  _applied = _snapshot->log_id;
   _shrunk = false;
   _entries.clear();
-  _saved = snapshot->log_id.index;
+  _saved = _snapshot->log_id.index;
   // TODO(jyc): reset rate limiter
 }
 

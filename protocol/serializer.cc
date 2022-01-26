@@ -74,7 +74,7 @@ class serializer_adapter {
  private:
   char* _buf;
   char* _end;
-  char* _cur = 0;
+  char* _cur = nullptr;
 };
 
 }  // namespace rafter::protocol

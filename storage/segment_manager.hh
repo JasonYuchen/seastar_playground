@@ -50,7 +50,6 @@ class segment_manager {
   seastar::future<> gc_service(std::vector<uint64_t>& segs, bool& open);
   seastar::future<> compaction(protocol::group_id id);
 
- private:
   const config& _config;
   // segments dir, e.g. <data_dir>
   std::string _log_dir;

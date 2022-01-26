@@ -35,7 +35,7 @@ numbers called log index.
 
 A popular KV store (e.g. RocksDB) is considered too heavy since the pattern is simple and the Rafter respect the
 shared-nothing design in Seastar (each Raft cluster is handled within one shard). The rich feature set in KV store such
-as concurrency control, transaction, etc, will not be used in Rafter.
+as concurrency control, transaction, etc., will not be used in Rafter.
 
 We design and implement a naive storage layer for Rafter using write ahead log, WAL. The design mainly refers to
 [etcd](https://github.com/etcd-io/etcd), [braft](https://github.com/baidu/braft),

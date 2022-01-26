@@ -38,8 +38,8 @@ class segment_test : public ::testing::Test {
   void SetUp() override {
     base::submit([this]() -> future<> {
       _segment = co_await segment::open(
-          _segment_filename,
-          segment::form_path(_config.data_dir, _segment_filename),
+          SEGMENT_FILENAME,
+          segment::form_path(_config.data_dir, SEGMENT_FILENAME),
           false);
       _gids = {{1, 1}, {1, 2}, {2, 1}, {2, 2}, {3, 3}};
       co_await fulfill_segment();
@@ -54,7 +54,7 @@ class segment_test : public ::testing::Test {
       co_await _segment->close();
       co_await _segment->remove();
       EXPECT_FALSE(co_await file_exists(
-          segment::form_path(_config.data_dir, _segment_filename)));
+          segment::form_path(_config.data_dir, SEGMENT_FILENAME)));
       // data created on a shard must also be released in this shard
       _segment.reset(nullptr);
     });
@@ -88,7 +88,7 @@ class segment_test : public ::testing::Test {
   }
 
   static inline rafter::config _config;
-  static inline constexpr uint64_t _segment_filename = 1;
+  static inline constexpr uint64_t SEGMENT_FILENAME = 1;
   std::vector<group_id> _gids;
   std::vector<update> _updates;
   std::vector<index::entry> _index;
@@ -119,8 +119,8 @@ RAFTER_TEST_F(segment_test, open_and_list) {
   }
 
   auto temp_segment = co_await segment::open(
-      _segment_filename,
-      segment::form_path(_config.data_dir, _segment_filename),
+      SEGMENT_FILENAME,
+      segment::form_path(_config.data_dir, SEGMENT_FILENAME),
       true);
   EXPECT_TRUE(*temp_segment) << temp_segment->debug_string();
   ig = index_group{};
@@ -141,7 +141,7 @@ RAFTER_TEST_F(segment_test, open_and_list) {
 }
 
 RAFTER_TEST_F(segment_test, partial_written) {
-  auto path = segment::form_path(_config.data_dir, _segment_filename);
+  auto path = segment::form_path(_config.data_dir, SEGMENT_FILENAME);
   auto file = co_await open_file_dma(path, open_flags::wo);
   // truncate the update but leave a complete meta
   co_await file.truncate(_index.back().offset + _index.back().length - 1);
@@ -195,7 +195,7 @@ RAFTER_TEST_F(segment_test, append_large_entry) {
 
 RAFTER_TEST_F(segment_test, query) {
   auto stat = co_await file_stat(
-      segment::form_path(_config.data_dir, _segment_filename));
+      segment::form_path(_config.data_dir, SEGMENT_FILENAME));
   EXPECT_GE(stat.size, _index.back().offset + _index.back().length);
   for (size_t i = 0; i < _updates.size(); ++i) {
     auto up = co_await _segment->query(_index[i]);
@@ -206,7 +206,7 @@ RAFTER_TEST_F(segment_test, query) {
     }
   }
   auto ie = _index[0];
-  ie.filename = _segment_filename + 1;
+  ie.filename = SEGMENT_FILENAME + 1;
   EXPECT_THROW(co_await _segment->query(ie), rafter::util::logic_error)
       << "incorrect filename should be reported: " << _segment->debug_string();
   co_return;

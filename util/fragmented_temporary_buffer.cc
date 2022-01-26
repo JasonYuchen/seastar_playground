@@ -69,7 +69,7 @@ void fragmented_temporary_buffer::remove_prefix(size_t n) noexcept {
     n -= it->size();
     ++it;
   }
-  if (n) {
+  if (n > 0) {
     it->trim_front(n);
   }
   _fragments.erase(_fragments.begin(), it);
@@ -82,7 +82,7 @@ void fragmented_temporary_buffer::remove_suffix(size_t n) noexcept {
     n -= it->size();
     ++it;
   }
-  if (n) {
+  if (n > 0) {
     it->trim(it->size() - n);
   }
   _fragments.erase(it.base(), _fragments.end());
@@ -104,7 +104,7 @@ fragmented_temporary_buffer::as_ostream() noexcept {
 
 fragmented_temporary_buffer::iterator fragmented_temporary_buffer::begin()
     const noexcept {
-  return _bytes ? iterator{_fragments.begin(), _bytes} : iterator{};
+  return _bytes > 0 ? iterator{_fragments.begin(), _bytes} : iterator{};
 }
 
 fragmented_temporary_buffer::iterator fragmented_temporary_buffer::end()
@@ -131,7 +131,7 @@ fragmented_temporary_buffer::iterator::iterator(
 fragmented_temporary_buffer::iterator&
 fragmented_temporary_buffer::iterator::operator++() noexcept {
   _left -= _current.size();
-  if (_left) {
+  if (_left > 0) {
     ++_it;
     _current = string_view(_it->get(), std::min(_left, _it->size()));
   }
@@ -370,7 +370,7 @@ bool fragmented_temporary_buffer::view::operator!=(
 fragmented_temporary_buffer::view::iterator&
 fragmented_temporary_buffer::view::iterator::operator++() noexcept {
   _left -= _current.size();
-  if (_left) {
+  if (_left > 0) {
     ++_it;
     _current = string_view{
         reinterpret_cast<const char*>(_it->get()),

@@ -215,7 +215,7 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
   EXPECT_EQ(_manager->stats()._del_segment, 0);
   if (GetParam()) {
     std::map<group_id, uint64_t> compaction;
-    for (auto up : _updates) {
+    for (const auto& up : _updates) {
       compaction[up.gid] = std::max(compaction[up.gid], up.last_index);
     }
     for (auto [gid, remove] : compaction) {

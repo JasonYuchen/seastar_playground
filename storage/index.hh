@@ -54,7 +54,7 @@ class index {
     std::string debug_string() const;
   };
 
-  index(group_id gid) : _gid(gid) {}
+  explicit index(group_id gid) : _gid(gid) {}
 
   index& set_compacted_to(uint64_t compacted_to) noexcept;
 

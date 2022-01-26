@@ -57,13 +57,12 @@ class exchanger_test : public ::testing::Test {
       net::inet_address("::1"), 20615, 10};
   std::unique_ptr<seastar::sharded<registry>> _registry;
   std::unique_ptr<seastar::sharded<exchanger>> _exchanger;
-  // TODO
 };
 
 RAFTER_TEST_F(exchanger_test, connect) {
   protocol::message_type type = protocol::message_type::noop;
   co_await _exchanger->invoke_on_all([&type](exchanger& exc) -> future<> {
-    exc.register_message([&type](auto& info, protocol::message_ptr msg) {
+    exc.register_message([&type](auto&, protocol::message_ptr msg) {
       type = msg->type;
       EXPECT_EQ(msg->type, protocol::message_type::election);
       return rpc::no_wait;
@@ -99,10 +98,9 @@ RAFTER_TEST_F(exchanger_test, streaming) {
       auto m = co_await source();
       if (!m) {
         break;
-      } else {
-        payload = std::get<0>(*m)->data;
-        state = fiber_state::fetched;
       }
+      payload = std::get<0>(*m)->data;
+      state = fiber_state::fetched;
     }
     state = fiber_state::exited;
     co_return;

@@ -67,7 +67,7 @@ class serialization_error : public base_error {
  public:
   using base_error::base_error;
   serialization_error() : base_error(code::serialization) {}
-  serialization_error(std::string_view type)
+  explicit serialization_error(std::string_view type)
     : base_error("{}: failed type:{}", code::serialization, type) {}
 };
 
@@ -80,7 +80,7 @@ class short_read_error : public io_error {
  public:
   using io_error::io_error;
   short_read_error() : io_error(code::short_read) {}
-  short_read_error(std::string_view msg)
+  explicit short_read_error(std::string_view msg)
     : io_error("{}: {}", code::short_read, msg) {}
 };
 
@@ -88,7 +88,7 @@ class short_write_error : public io_error {
  public:
   using io_error::io_error;
   short_write_error() : io_error(code::short_write) {}
-  short_write_error(std::string_view msg)
+  explicit short_write_error(std::string_view msg)
     : io_error("{}: {}", code::short_write, msg) {}
 };
 
@@ -96,7 +96,7 @@ class peer_not_found_error : public io_error {
  public:
   using io_error::io_error;
   peer_not_found_error() : io_error(code::peer_not_found) {}
-  peer_not_found_error(protocol::group_id gid)
+  explicit peer_not_found_error(protocol::group_id gid)
     : io_error("{}: cannot resolve {}", code::peer_not_found, gid) {}
 };
 
@@ -104,7 +104,7 @@ class corruption_error : public io_error {
  public:
   using io_error::io_error;
   corruption_error() : io_error(code::corruption) {}
-  corruption_error(std::string_view msg)
+  explicit corruption_error(std::string_view msg)
     : io_error("{}: {}", code::corruption, msg) {}
 };
 

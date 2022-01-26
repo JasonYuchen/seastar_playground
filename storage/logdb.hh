@@ -8,7 +8,6 @@ namespace rafter::storage {
 
 class logdb {
  public:
-  // TODO: logdb interface
  private:
 };
 

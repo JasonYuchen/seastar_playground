@@ -24,7 +24,7 @@ class remote {
     //    and set the remote as Retry.
     // 4. The leader receives an acceptance of replication, if the remote is in
     //    Snapshot state and the match >= snapshotIndex, set the remote as Retry
-    //    and do probing.
+    //    and do probe.
     // 5. The remote is unreachable, if it is Replicate then set it as Retry.
     // Retry is an active state and the leader can send messages.
     retry,

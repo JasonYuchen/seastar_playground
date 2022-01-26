@@ -160,7 +160,7 @@ template <typename T>
 struct container_traits<std::vector<T>> {
   struct inserter {
     std::vector<T>& c;
-    inserter(std::vector<T>& c) : c(c) {}
+    explicit inserter(std::vector<T>& c) : c(c) {}
     void operator()(T&& v) { c.emplace_back(std::move(v)); }
   };
 };
@@ -169,7 +169,7 @@ template <typename T>
 struct container_traits<std::set<T>> {
   struct inserter {
     std::set<T>& c;
-    inserter(std::set<T>& c) : c(c) {}
+    explicit inserter(std::set<T>& c) : c(c) {}
     void operator()(T&& v) { c.emplace(std::move(v)); }
   };
 };
@@ -178,7 +178,7 @@ template <typename T>
 struct container_traits<std::unordered_set<T>> {
   struct inserter {
     std::unordered_set<T>& c;
-    inserter(std::unordered_set<T>& c) : c(c) {}
+    explicit inserter(std::unordered_set<T>& c) : c(c) {}
     void operator()(T&& v) { c.emplace(std::move(v)); }
   };
 };

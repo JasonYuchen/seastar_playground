@@ -63,11 +63,11 @@ bool index::empty() const noexcept { return _entries.empty(); }
 
 index& index::update(index::entry e) {
   if (empty()) [[unlikely]] {
-    _entries.emplace_back(std::move(e));
+    _entries.emplace_back(e);
     return *this;
   }
   if (e.first_index == _entries.back().last_index + 1) [[likely]] {
-    _entries.emplace_back(std::move(e));
+    _entries.emplace_back(e);
     return *this;
   }
   auto [idx, found] = binary_search(0, _entries.size() - 1, e.first_index);
@@ -88,7 +88,7 @@ index& index::update(index::entry e) {
     _entries[idx].last_index = e.first_index - 1;
   }
   _entries.erase(st, _entries.end());
-  _entries.emplace_back(std::move(e));
+  _entries.emplace_back(e);
   return *this;
 }
 
