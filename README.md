@@ -39,7 +39,18 @@ TBD
 
 The raft core state machine implements the raft algorithm based on the etcd's design.
 
-TBD
+1. ⭕design doc
+2. ⭕election
+3. ⭕prevote
+4. ⭕leader lease
+5. ⭕leadership transfer
+6. ⭕log compaction
+7. ⭕single membership change
+8. ⭕joint consensus
+9. ⭕observer
+10. ⭕witness
+11. ⭕quiesce
+12. ⭕linearizable semantics
 
 ### Storage
 
