@@ -147,22 +147,20 @@ future<raft_state> segment_manager::query_raft_state(
   co_return r;
 }
 
-future<log_entry_vector> segment_manager::query_entries(
-    group_id id, hint range, uint64_t max_size) {
+future<> segment_manager::query_entries(
+    group_id id, hint range, log_entry_vector& entries, uint64_t max_bytes) {
   _stats._query_entry++;
-
+  if (max_bytes == 0) {
+    co_return;
+  }
   auto ni = _index_group.get_node_index(id);
   auto compacted_to = ni->compacted_to();
   if (range.low <= compacted_to) {
-    co_return log_entry_vector{};
+    co_return;
   }
   auto indexes = ni->query(range);
   if (indexes.empty()) {
-    co_return log_entry_vector{};
-  }
-  log_entry_vector entries;
-  if (max_size == 0) {
-    max_size = UINT64_MAX;
+    co_return;
   }
   size_t start = 0;
   size_t count = 1;
@@ -170,9 +168,9 @@ future<log_entry_vector> segment_manager::query_entries(
   for (size_t i = 1; i < indexes.size(); ++i) {
     if (indexes[i].filename != prev_filename) {
       // TODO(jyc): check the continuity of entry's index
-      max_size = co_await _segments[prev_filename]->query(
-          indexes.subspan(start, count), entries, max_size);
-      if (max_size == 0) {
+      max_bytes = co_await _segments[prev_filename]->query(
+          indexes.subspan(start, count), entries, max_bytes);
+      if (max_bytes == 0) {
         break;
       }
       prev_filename = indexes[i].filename;
@@ -182,11 +180,10 @@ future<log_entry_vector> segment_manager::query_entries(
       count++;
     }
   }
-  if (max_size != 0) {
+  if (max_bytes != 0) {
     co_await _segments[prev_filename]->query(
-        indexes.subspan(start, count), entries, max_size);
+        indexes.subspan(start, count), entries, max_bytes);
   }
-  co_return std::move(entries);
 }
 
 future<> segment_manager::sync() {

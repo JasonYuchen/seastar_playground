@@ -126,17 +126,21 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
   const auto& up1 = _updates.front();
   const auto& up2 = _updates.back();
   EXPECT_EQ(_manager->stats()._new_segment, 3) << "failed to load 2 segments";
-  auto entries = co_await _manager->query_entries(
+  log_entry_vector entries;
+  co_await _manager->query_entries(
       up1.gid,
       {.low = up1.first_index, .high = up1.last_index + 1},
+      entries,
       UINT64_MAX);
   EXPECT_TRUE(test::util::compare(
       update{.entries_to_save = entries},
       update{.entries_to_save = up1.entries_to_save}))
       << "failed to query existing segment 3";
-  entries = co_await _manager->query_entries(
+  entries.clear();
+  co_await _manager->query_entries(
       up2.gid,
       {.low = up2.first_index, .high = up2.last_index + 1},
+      entries,
       UINT64_MAX);
   EXPECT_TRUE(test::util::compare(
       update{.entries_to_save = entries},
@@ -150,10 +154,11 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
       size += test::util::extract_entries(up, expected);
     }
   }
-  entries = co_await _manager->query_entries(
+  co_await _manager->query_entries(
       gid,
       {.low = expected.front()->lid.index,
        .high = expected.back()->lid.index + 1},
+      entries,
       size - 1);
   expected.pop_back();
   EXPECT_TRUE(test::util::compare(
@@ -200,10 +205,12 @@ RAFTER_TEST_P(segment_manager_test, append_and_rolling) {
   for (const auto& up : ups) {
     test::util::extract_entries(up, expected);
   }
-  auto queried = co_await _manager->query_entries(
+  log_entry_vector queried;
+  co_await _manager->query_entries(
       {4, 4},
       {.low = expected.front()->lid.index,
        .high = expected.back()->lid.index + 1},
+      queried,
       UINT64_MAX);
   EXPECT_TRUE(test::util::compare(
       update{.entries_to_save = queried}, update{.entries_to_save = expected}))
