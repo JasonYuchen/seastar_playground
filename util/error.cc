@@ -17,6 +17,7 @@ const char* status_string(enum code e) {
       "compacted",
       "unavailable",
       "out_of_range",
+      "out_of_date",
       "closed",
       "timed_out",
       "cancelled",

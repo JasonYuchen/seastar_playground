@@ -23,6 +23,7 @@ enum class code : uint8_t {
   peer_not_found,
   compacted,
   unavailable,
+  out_of_date,
   out_of_range,
   closed,
   timed_out,
@@ -129,6 +130,14 @@ class unavailable_error : public raft_error {
   unavailable_error() : raft_error(code::unavailable) {}
   unavailable_error(uint64_t index, uint64_t last_index)
     : raft_error("{}: {} > {}", code::unavailable, index, last_index) {}
+};
+
+class out_of_date_error : public raft_error {
+ public:
+  using raft_error::raft_error;
+  out_of_date_error() : raft_error(code::out_of_date) {}
+  out_of_date_error(std::string_view msg, uint64_t cur_index, uint64_t index)
+    : raft_error("{}: {} {} >= {}", code::out_of_date, msg, cur_index, index) {}
 };
 
 class closed_error : public base_error {

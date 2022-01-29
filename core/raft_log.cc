@@ -9,6 +9,8 @@
 
 namespace rafter::core {
 
+using namespace seastar;
+
 in_memory_log::in_memory_log(uint64_t last_index)
   : _marker(last_index + 1), _saved(last_index) {}
 
@@ -178,6 +180,122 @@ void in_memory_log::assert_marker() const {
         _marker,
         _entries.front()->lid.index));
   }
+}
+
+log_reader::log_reader(protocol::group_id gid, storage::segment_manager& log)
+  : _gid(gid), _log(log), _snapshot(make_lw_shared<protocol::snapshot>()) {}
+
+protocol::hard_state log_reader::get_state() const noexcept { return _state; }
+void log_reader::set_state(protocol::hard_state state) { _state = state; }
+
+protocol::membership_ptr log_reader::get_membership() const noexcept {
+  return _snapshot->membership;
+}
+
+future<> log_reader::query(
+    protocol::hint range,
+    protocol::log_entry_vector& entries,
+    size_t max_size) {
+  if (range.low < first_index()) [[unlikely]] {
+    throw util::compacted_error(range.low, first_index());
+  }
+
+  if (range.high > last_index() + 1) [[unlikely]] {
+    throw util::unavailable_error(range.high, last_index() + 1);
+  }
+  co_await _log.query_entries(_gid, range, entries, max_size);
+  if (entries.size() == range.high - range.low) {
+    co_return;
+  }
+  if (!entries.empty()) {
+    if (range.low < entries.front()->lid.index) {
+      throw util::compacted_error(range.low, entries.front()->lid.index);
+    }
+    if (last_index() < entries.back()->lid.index) {
+      throw util::unavailable_error(
+          entries.back()->lid.index, last_index() + 1);
+    }
+    throw util::failed_precondition_error(fmt::format(
+        "log hole found in [{}:{}) at {}",
+        range.low,
+        range.high,
+        entries.back()->lid.index + 1));
+  }
+  throw util::unavailable_error(range.low, 0);
+}
+
+future<uint64_t> log_reader::get_term(uint64_t index) {
+  if (index == _marker.index) {
+    co_return _marker.term;
+  }
+  protocol::log_entry_vector entry;
+  co_await query({.low = index, .high = index + 1}, entry, UINT64_MAX);
+  if (entry.empty()) {
+    co_return protocol::log_id::INVALID_INDEX;
+  }
+  co_return entry.front()->lid.term;
+}
+
+protocol::hint log_reader::get_range() const noexcept {
+  return {first_index(), last_index()};
+}
+
+void log_reader::set_range(
+    protocol::hint range) {  // range.high = range.low + length
+  if (range.low == range.high) {
+    return;
+  }
+  auto first = first_index();
+  if (range.high - 1 < first) {
+    return;
+  }
+  range.low = std::max(range.low, first);
+  auto offset = range.low - _marker.index;
+  if (_length > offset) {
+    _length = range.high - _marker.index;
+  } else if (_length == offset) {
+    _length += offset;
+  } else {
+    throw util::failed_precondition_error("");
+  }
+}
+
+protocol::snapshot_ptr log_reader::get_snapshot() const noexcept {
+  return _snapshot;
+}
+
+void log_reader::apply_snapshot(protocol::snapshot_ptr snapshot) {
+  if (_snapshot->log_id.index >= snapshot->log_id.index) {
+    throw util::out_of_date_error(
+        "snapshot", _snapshot->log_id.index, snapshot->log_id.index);
+  }
+  _snapshot = snapshot;
+}
+
+void log_reader::apply_entries(protocol::log_entry_span entries) {
+  if (entries.empty()) {
+    return;
+  }
+  if (entries.front()->lid.index + entries.size() - 1 !=
+      entries.back()->lid.index) {
+    throw util::failed_precondition_error("log hole found");
+  }
+  set_range({entries.front()->lid.index, entries.back()->lid.index + 1});
+}
+
+future<> log_reader::apply_compaction(uint64_t index) {
+  // index == _marker.index is a no-op
+  if (index < _marker.index) {
+    throw util::compacted_error(index, first_index());
+  }
+  if (index > last_index()) {
+    throw util::unavailable_error(index, last_index());
+  }
+  auto term = co_await get_term(index);
+  auto i = index - _marker.index;
+  _length -= i;
+  _marker.index = index;
+  _marker.term = term;
 }
 
 }  // namespace rafter::core
