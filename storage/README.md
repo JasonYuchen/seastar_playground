@@ -92,6 +92,8 @@ rafter @ disk1
   |--...
 ```
 
+![storage](storage.drawio.png)
+
 ### Further Considerations
 
 Currently, we implement the **one WAL per shard**. The snapshot files are always isolated since snapshotting is far less
