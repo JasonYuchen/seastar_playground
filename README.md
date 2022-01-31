@@ -71,11 +71,11 @@ The [transport](transport/README.md) module based on the seastar's rpc framework
 clusters.
 
 1. ⚠️design doc
-2. ⚠️exchanger, for exchanging raft messages (lack snapshot support)
+2. ✔️exchanger, for exchanging raft messages
 3. ⚠️exchanger test
-4. ⚠️registry, for group discovery and peer addresses management
+4. ✔️registry, for group discovery and peer addresses management
 5. ⭕registry test
-6. ⚠️express, for sending replicated state machine's snapshot
+6. ⚠️express, for sending/receiving replicated state machine's snapshot
 7. ⭕express test
 
 ### Replicated State Machine

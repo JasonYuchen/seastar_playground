@@ -39,10 +39,11 @@ class express {
         protocol::snapshot_file_ptr file,
         uint64_t total_chunks,
         uint64_t& chunk_id,
-        seastar::rpc::sink<protocol::snapshot_chunk_ptr>& sink);
+        seastar::rpc::sink<protocol::snapshot_chunk_ptr>& sink) const;
 
     exchanger& _exchanger;
     pair _pair;
+    bool _close = false;
     std::optional<seastar::future<>> _task;
   };
   using sender_ptr = seastar::lw_shared_ptr<sender>;
@@ -54,6 +55,7 @@ class express {
 
     exchanger& _exchanger;
     pair _pair;
+    bool _close = false;
     std::optional<seastar::future<>> _task;
   };
   using receiver_ptr = seastar::lw_shared_ptr<receiver>;

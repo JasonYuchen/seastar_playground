@@ -20,11 +20,13 @@ using namespace protocol;
 future<> express::stop() {
   auto s = _senders.begin();
   while (s != _senders.end()) {
+    s->second->_close = true;
     co_await s->second->stop();
     s = _senders.begin();
   }
   auto r = _receivers.begin();
   while (r != _receivers.end()) {
+    s->second->_close = true;
     co_await r->second->stop();
     r = _receivers.begin();
   }
@@ -43,9 +45,8 @@ future<> express::send(message_ptr message) {
   }
   auto s = make_lw_shared<sender>(_exchanger, key);
   _senders.emplace(key, s);
-  s->_task = s->start(message->snapshot).finally([this, key]() {
-    _senders.erase(key);
-  });
+  s->_task =
+      s->start(message->snapshot).finally([this, key] { _senders.erase(key); });
   co_return;
 }
 
@@ -60,7 +61,9 @@ future<> express::receive(pair key, rpc::source<snapshot_chunk_ptr> source) {
   }
   auto s = make_lw_shared<receiver>(_exchanger, key);
   _receivers.emplace(key, s);
-  s->_task = s->start(std::move(source));
+  s->_task = s->start(std::move(source)).finally([this, key] {
+    _receivers.erase(key);
+  });
   co_return;
 }
 
@@ -86,6 +89,8 @@ future<> express::sender::start(snapshot_ptr snapshot) {
         .discard_result();
   } catch (util::logic_error& e) {
     l.error("express::sender::start: {}", e.what());
+  } catch (util::closed_error& e) {
+    l.info("express::sender::start: closed {}", e.what());
   } catch (...) {
     l.error("express::sender::start: {}", std::current_exception());
     (void)_exchanger.notify_unreachable({_pair.cluster, _pair.to})
@@ -106,7 +111,7 @@ future<> express::sender::split_and_send(
     protocol::snapshot_file_ptr file,
     uint64_t total_chunks,
     uint64_t& chunk_id,
-    seastar::rpc::sink<protocol::snapshot_chunk_ptr>& sink) {
+    seastar::rpc::sink<protocol::snapshot_chunk_ptr>& sink) const {
   const auto& file_path = file ? file->file_path : snapshot->file_path;
   auto file_size = file ? file->file_size : snapshot->file_size;
   auto f = co_await open_file_dma(file_path, open_flags::ro);
@@ -125,6 +130,9 @@ future<> express::sender::split_and_send(
   uint64_t snapshot_chunk_size = _exchanger.config().snapshot_chunk_size;
   uint64_t file_chunk_count = (file_size - 1) / snapshot_chunk_size + 1;
   for (uint64_t i = 0; i < file_chunk_count; ++i) {
+    if (_close) {
+      throw util::closed_error();
+    }
     auto c = make_lw_shared<protocol::snapshot_chunk>();
     c->group_id = snapshot->group_id;
     c->log_id = snapshot->log_id;
@@ -149,7 +157,11 @@ future<> express::sender::split_and_send(
 }
 
 future<> express::receiver::start(rpc::source<snapshot_chunk_ptr> source) {
-  // TODO(jyc)
+  // TODO(jyc):
+  //  1. create temp dir to hold data
+  //  2. receive and re-construct snapshot and relating files
+  //  3. move(rename) files to final locations
+  //  4. done and cleanup
   co_return;
 }
 
