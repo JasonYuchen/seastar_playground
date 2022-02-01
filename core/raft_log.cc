@@ -14,7 +14,8 @@ using namespace seastar;
 in_memory_log::in_memory_log(uint64_t last_index)
   : _marker(last_index + 1), _saved(last_index) {}
 
-protocol::log_entry_span in_memory_log::query(protocol::hint range) const {
+void in_memory_log::query(
+    protocol::hint range, protocol::log_entry_vector& entries) const {
   auto upper = _marker + _entries.size();
   if (range.low > range.high || range.low < _marker || range.high > upper) {
     throw util::out_of_range_error(fmt::format(
@@ -24,10 +25,10 @@ protocol::log_entry_span in_memory_log::query(protocol::hint range) const {
   std::advance(start, range.low - _marker);
   auto end = _entries.begin();
   std::advance(end, range.high - _marker);
-  return {start, end};
+  entries.insert(entries.end(), start, end);
 }
 
-protocol::log_entry_span in_memory_log::get_entries_to_save() const {
+protocol::log_entry_span in_memory_log::get_entries_to_save() const noexcept {
   if (_saved + 1 - _marker > _entries.size()) {
     return {};
   }
@@ -36,21 +37,25 @@ protocol::log_entry_span in_memory_log::get_entries_to_save() const {
   return {start, _entries.end()};
 }
 
-std::optional<uint64_t> in_memory_log::get_snapshot_index() const {
+protocol::snapshot_ptr in_memory_log::get_snapshot() const noexcept {
+  return _snapshot;
+}
+
+std::optional<uint64_t> in_memory_log::get_snapshot_index() const noexcept {
   if (_snapshot) {
     return _snapshot->log_id.index;
   }
   return std::optional<uint64_t>{};
 }
 
-std::optional<uint64_t> in_memory_log::get_last_index() const {
+std::optional<uint64_t> in_memory_log::get_last_index() const noexcept {
   if (!_entries.empty()) {
     return _entries.back()->lid.index;
   }
   return get_snapshot_index();
 }
 
-std::optional<uint64_t> in_memory_log::get_term(uint64_t index) const {
+std::optional<uint64_t> in_memory_log::get_term(uint64_t index) const noexcept {
   if (index > 0 && index == _applied.index) {
     return _applied.term;
   }
@@ -67,7 +72,7 @@ std::optional<uint64_t> in_memory_log::get_term(uint64_t index) const {
 }
 
 void in_memory_log::advance(
-    protocol::log_id stable_log, uint64_t stable_snapshot_index) {
+    protocol::log_id stable_log, uint64_t stable_snapshot_index) noexcept {
   if (stable_log.index != protocol::log_id::INVALID_INDEX) {
     advance_saved_log(stable_log);
   }
@@ -76,7 +81,7 @@ void in_memory_log::advance(
   }
 }
 
-void in_memory_log::advance_saved_log(protocol::log_id saved_log) {
+void in_memory_log::advance_saved_log(protocol::log_id saved_log) noexcept {
   if (saved_log.index < _marker) {
     return;
   }
@@ -115,7 +120,8 @@ void in_memory_log::advance_applied_log(uint64_t applied_index) {
   // TODO(jyc): rate limiter
 }
 
-void in_memory_log::advance_saved_snapshot(uint64_t saved_snapshot_index) {
+void in_memory_log::advance_saved_snapshot(
+    uint64_t saved_snapshot_index) noexcept {
   auto index = get_snapshot_index();
   if (!index) {
     return;
@@ -163,7 +169,7 @@ void in_memory_log::merge(protocol::log_entry_span entries) {
   assert_marker();
 }
 
-void in_memory_log::restore(protocol::snapshot_ptr snapshot) {
+void in_memory_log::restore(protocol::snapshot_ptr snapshot) noexcept {
   _snapshot = std::move(snapshot);
   _marker = _snapshot->log_id.index + 1;
   _applied = _snapshot->log_id;
@@ -186,7 +192,9 @@ log_reader::log_reader(protocol::group_id gid, storage::segment_manager& log)
   : _gid(gid), _log(log), _snapshot(make_lw_shared<protocol::snapshot>()) {}
 
 protocol::hard_state log_reader::get_state() const noexcept { return _state; }
-void log_reader::set_state(protocol::hard_state state) { _state = state; }
+void log_reader::set_state(protocol::hard_state state) noexcept {
+  _state = state;
+}
 
 protocol::membership_ptr log_reader::get_membership() const noexcept {
   return _snapshot->membership;
@@ -296,6 +304,69 @@ future<> log_reader::apply_compaction(uint64_t index) {
   _length -= i;
   _marker.index = index;
   _marker.term = term;
+}
+
+raft_log::raft_log(protocol::group_id gid, log_reader& log, uint64_t last_index)
+  : _gid(gid), _in_memory(last_index), _logdb(log) {}
+
+uint64_t raft_log::first_index() const noexcept {
+  auto index = _in_memory.get_snapshot_index();
+  if (index) {
+    return *index;
+  }
+  auto [first, _] = _logdb.get_range();
+  return first;
+}
+
+uint64_t raft_log::last_index() const noexcept {
+  auto index = _in_memory.get_last_index();
+  if (index) {
+    return *index;
+  }
+  auto [_, last] = _logdb.get_range();
+  return last;
+}
+
+seastar::future<uint64_t> raft_log::term(uint64_t index) const noexcept {
+  auto [first, last] = term_entry_range();
+  if (index < first || index > last) {
+    co_return protocol::log_id::INVALID_TERM;
+  }
+  auto t = _in_memory.get_term(index);
+  if (t) {
+    co_return *t;
+  }
+  co_return co_await _logdb.get_term(index);
+}
+
+future<uint64_t> raft_log::last_term() const noexcept {
+  return term(last_index());
+}
+
+future<bool> raft_log::term_index_match(protocol::log_id lid) {
+  auto t = co_await term(lid.index);
+  co_return lid.term == t;
+}
+
+protocol::hint raft_log::term_entry_range() const noexcept {
+  return {first_index() - 1, last_index()};
+}
+
+protocol::hint raft_log::entry_range() const noexcept {
+  if (_in_memory.get_snapshot() && _in_memory.get_entries_size() == 0) {
+    return {};
+  }
+  return {first_index(), last_index()};
+}
+
+protocol::log_entry_vector raft_log::get_uncommitted_entries() const noexcept {
+  protocol::log_entry_vector entries;
+  _in_memory.query({_committed + 1, _in_memory.get_last_index() + 1}, entries);
+  return entries;
+}
+
+protocol::log_entry_span raft_log::get_entries_to_save() const noexcept {
+  return _in_memory.get_entries_to_save();
 }
 
 }  // namespace rafter::core
