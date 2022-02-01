@@ -182,6 +182,8 @@ uint64_t message::bytes() const noexcept { return sizer(*this); }
 
 uint64_t config_change::bytes() const noexcept { return sizer(*this); }
 
+uint64_t snapshot_chunk::bytes() const noexcept { return sizer(*this); }
+
 void update::fill_meta() noexcept {
   if (!entries_to_save.empty()) {
     first_index = entries_to_save.front()->lid.index;

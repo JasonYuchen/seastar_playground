@@ -11,7 +11,7 @@
 
 namespace rafter::protocol {
 
-enum raft_role : uint8_t {
+enum class raft_role : uint8_t {
   follower,
   pre_candidate,
   candidate,
@@ -22,6 +22,10 @@ enum raft_role : uint8_t {
 };
 
 const char *name(enum raft_role role);
+inline std::ostream &operator<<(std::ostream &os, raft_role role) {
+  os << name(role);
+  return os;
+}
 
 struct group_id {
   inline static constexpr uint64_t INVALID_CLUSTER = 0;
@@ -78,10 +82,15 @@ enum class message_type : uint8_t {
   unreachable,
   quiesce,
   check_quorum,
+  rate_limit,
   num_of_type,
 };
 
 const char *name(enum message_type type);
+inline std::ostream &operator<<(std::ostream &os, message_type type) {
+  os << name(type);
+  return os;
+}
 
 enum class entry_type : uint8_t {
   application,
@@ -92,6 +101,10 @@ enum class entry_type : uint8_t {
 };
 
 const char *name(enum entry_type type);
+inline std::ostream &operator<<(std::ostream &os, entry_type type) {
+  os << name(type);
+  return os;
+}
 
 enum class config_change_type : uint8_t {
   add_node,
@@ -102,6 +115,10 @@ enum class config_change_type : uint8_t {
 };
 
 const char *name(enum config_change_type type);
+inline std::ostream &operator<<(std::ostream &os, config_change_type type) {
+  os << name(type);
+  return os;
+}
 
 enum class state_machine_type : uint8_t {
   regular,
@@ -109,6 +126,10 @@ enum class state_machine_type : uint8_t {
 };
 
 const char *name(enum state_machine_type type);
+inline std::ostream &operator<<(std::ostream &os, state_machine_type type) {
+  os << name(type);
+  return os;
+}
 
 enum class compression_type : uint8_t {
   no_compression,
@@ -118,6 +139,10 @@ enum class compression_type : uint8_t {
 };
 
 const char *name(enum compression_type type);
+inline std::ostream &operator<<(std::ostream &os, compression_type type) {
+  os << name(type);
+  return os;
+}
 
 enum class checksum_type : uint8_t {
   no_checksum,
@@ -127,6 +152,10 @@ enum class checksum_type : uint8_t {
 };
 
 const char *name(enum checksum_type type);
+inline std::ostream &operator<<(std::ostream &os, checksum_type type) {
+  os << name(type);
+  return os;
+}
 
 struct bootstrap {
   std::unordered_map<uint64_t, std::string> addresses;
@@ -261,7 +290,7 @@ struct message {
 };
 
 using message_ptr = seastar::lw_shared_ptr<message>;
-using message_vector = std::vector<message_ptr>;
+using message_vector = std::vector<message>;
 
 struct message_batch {
   uint64_t deployment_id = 0;
