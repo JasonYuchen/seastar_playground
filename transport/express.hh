@@ -25,7 +25,7 @@ class express {
   explicit express(exchanger& exc) : _exchanger(exc) {}
   seastar::future<> stop();
 
-  seastar::future<> send(protocol::message_ptr message);
+  seastar::future<> send(protocol::message message);
   seastar::future<> receive(
       pair key, seastar::rpc::source<protocol::snapshot_chunk_ptr> source);
 

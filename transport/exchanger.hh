@@ -65,9 +65,9 @@ class exchanger
     return seastar::make_ready_future<>();
   }
 
-  void register_message(std::function<seastar::rpc::no_wait_type(
-                            const seastar::rpc::client_info& info,
-                            protocol::message_ptr message)>&& func) {
+  void register_message(
+      std::function<seastar::rpc::no_wait_type(
+          const seastar::rpc::client_info& info, protocol::message m)>&& func) {
     _rpc->register_handler(messaging_verb::message, std::move(func));
   }
 
@@ -75,8 +75,8 @@ class exchanger
     return _rpc->unregister_handler(messaging_verb::message);
   }
 
-  seastar::future<> send_message(protocol::message_ptr message);
-  seastar::future<> send_snapshot(protocol::message_ptr message);
+  seastar::future<> send_message(protocol::message m);
+  seastar::future<> send_snapshot(protocol::message m);
 
   void register_snapshot_chunk(
       std::function<seastar::future<>(

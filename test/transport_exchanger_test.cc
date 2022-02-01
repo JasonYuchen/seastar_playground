@@ -62,18 +62,18 @@ class exchanger_test : public ::testing::Test {
 RAFTER_TEST_F(exchanger_test, connect) {
   protocol::message_type type = protocol::message_type::noop;
   co_await _exchanger->invoke_on_all([&type](exchanger& exc) -> future<> {
-    exc.register_message([&type](auto&, protocol::message_ptr msg) {
-      type = msg->type;
-      EXPECT_EQ(msg->type, protocol::message_type::election);
+    exc.register_message([&type](auto&, protocol::message m) {
+      type = m.type;
+      EXPECT_EQ(m.type, protocol::message_type::election);
       return rpc::no_wait;
     });
     return make_ready_future<>();
   });
-  auto msg = make_lw_shared<protocol::message>();
-  msg->cluster = 1;
-  msg->to = 1;
-  msg->type = protocol::message_type::election;
-  co_await _exchanger->invoke_on(0, &exchanger::send_message, msg);
+  protocol::message m;
+  m.cluster = 1;
+  m.to = 1;
+  m.type = protocol::message_type::election;
+  co_await _exchanger->invoke_on(0, &exchanger::send_message, std::move(m));
   co_await sleep(std::chrono::milliseconds(500));
   EXPECT_EQ(type, protocol::message_type::election);
   co_return;

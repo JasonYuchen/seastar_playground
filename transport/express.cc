@@ -33,8 +33,8 @@ future<> express::stop() {
   co_return;
 }
 
-future<> express::send(message_ptr message) {
-  auto key = pair{message->cluster, message->from, message->to};
+future<> express::send(protocol::message m) {
+  auto key = pair{m.cluster, m.from, m.to};
   if (_senders.contains(key)) {
     l.warn(
         "express::send: ongoing at cluster:{}, from:{}, to:{}",
@@ -45,8 +45,7 @@ future<> express::send(message_ptr message) {
   }
   auto s = make_lw_shared<sender>(_exchanger, key);
   _senders.emplace(key, s);
-  s->_task =
-      s->start(message->snapshot).finally([this, key] { _senders.erase(key); });
+  s->_task = s->start(m.snapshot).finally([this, key] { _senders.erase(key); });
   co_return;
 }
 

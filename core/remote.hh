@@ -95,9 +95,9 @@ class remote {
 
   std::string debug_string() const;
 
-  uint8_t match = 0;
-  uint8_t next = 0;
-  uint8_t snapshot_index = 0;
+  uint64_t match = 0;
+  uint64_t next = 0;
+  uint64_t snapshot_index = 0;
   bool active = false;
   enum state state = state::retry;
 };

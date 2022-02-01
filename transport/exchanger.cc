@@ -57,8 +57,8 @@ future<> exchanger::shutdown() {
   l.info("exchanger::shutdown: done");
 }
 
-future<> exchanger::send_message(message_ptr msg) {
-  auto gid = group_id{.cluster = msg->cluster, .node = msg->to};
+future<> exchanger::send_message(message m) {
+  auto gid = group_id{.cluster = m.cluster, .node = m.to};
   auto address = _registry.resolve(gid);
   if (!address) {
     // TODO(jyc): just drop the message should be fine but remember to notify
@@ -67,14 +67,14 @@ future<> exchanger::send_message(message_ptr msg) {
     throw util::peer_not_found_error(gid);
   }
   return send<rpc::no_wait_type>(
-      messaging_verb::message, *address, std::move(msg));
+      messaging_verb::message, *address, std::move(m));
 }
 
-future<> exchanger::send_snapshot(protocol::message_ptr message) {
-  if (!message->snapshot) {
+future<> exchanger::send_snapshot(protocol::message m) {
+  if (!m.snapshot) {
     throw util::invalid_argument("snapshot", "empty snapshot in message");
   }
-  return _express.send(message);
+  return _express.send(std::move(m));
 }
 
 future<rpc::sink<snapshot_chunk_ptr>> exchanger::make_sink_for_snapshot_chunk(
