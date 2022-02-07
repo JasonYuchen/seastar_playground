@@ -255,6 +255,7 @@ using snapshot_ptr = seastar::lw_shared_ptr<snapshot>;
 struct hint {
   uint64_t low = 0;   // inclusive
   uint64_t high = 0;  // exclusive
+  uint64_t count() const noexcept { return high - low; }
 
   static constexpr uint64_t bytes() noexcept { return 16; }
 

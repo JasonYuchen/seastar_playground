@@ -24,17 +24,17 @@ add_subdirectory(test)
 set(SOURCES
     core/logger.cc
     core/logger.hh
-#    core/peer.cc
-#    core/peer.hh
-#    core/raft.cc
-#    core/raft.hh
-#    core/raft_log.cc
-#    core/raft_log.hh
-#    core/read_index.cc
-#    core/read_index.hh
+    #    core/peer.cc
+    #    core/peer.hh
+    #    core/raft.cc
+    #    core/raft.hh
+    core/raft_log.cc
+    core/raft_log.hh
+    #    core/read_index.cc
+    #    core/read_index.hh
     core/remote.cc
     core/remote.hh
-#    protocol/client.hh
+    #    protocol/client.hh
     protocol/raft.cc
     protocol/raft.hh
     protocol/serializer.cc
@@ -85,7 +85,8 @@ set(SOURCES
 add_library(${PROJECT_NAME} ${SOURCES})
 
 target_link_libraries(${PROJECT_NAME}
-    PUBLIC Seastar::seastar)
+    PUBLIC Seastar::seastar
+    PUBLIC simdjson)
 
 #add_executable(${PROJECT_NAME} ${SOURCES})
 #

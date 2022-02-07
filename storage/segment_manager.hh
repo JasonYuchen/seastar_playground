@@ -36,7 +36,7 @@ class segment_manager {
   seastar::future<protocol::snapshot_ptr> query_snapshot(protocol::group_id id);
   seastar::future<raft_state> query_raft_state(
       protocol::group_id id, uint64_t last_index);
-  seastar::future<> query_entries(
+  seastar::future<size_t> query_entries(
       protocol::group_id id,
       protocol::hint range,
       protocol::log_entry_vector& entries,

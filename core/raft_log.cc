@@ -14,18 +14,39 @@ using namespace seastar;
 in_memory_log::in_memory_log(uint64_t last_index)
   : _marker(last_index + 1), _saved(last_index) {}
 
-void in_memory_log::query(
-    protocol::hint range, protocol::log_entry_vector& entries) const {
+size_t in_memory_log::query(
+    protocol::hint range,
+    protocol::log_entry_vector& entries,
+    size_t max_bytes) const {
   auto upper = _marker + _entries.size();
   if (range.low > range.high || range.low < _marker || range.high > upper) {
     throw util::out_of_range_error(fmt::format(
         "invalid range:{}, marker:{}, upper:{}", range, _marker, upper));
   }
-  auto start = _entries.begin();
-  std::advance(start, range.low - _marker);
-  auto end = _entries.begin();
-  std::advance(end, range.high - _marker);
-  entries.insert(entries.end(), start, end);
+  auto it = _entries.begin();
+  std::advance(it, range.low - _marker);
+  while (true) {
+    if (it == _entries.end()) {
+      break;
+    }
+    if ((*it)->lid.index >= range.high) {
+      break;
+    }
+    auto bytes = (*it)->bytes();
+    if (bytes > max_bytes) {
+      max_bytes = 0;
+      break;
+    }
+    if (!entries.empty() && entries.back()->lid.index + 1 != (*it)->lid.index) {
+      throw util::failed_precondition_error(fmt::format(
+          "gap found, left:{}, right:{}",
+          entries.back()->lid.index,
+          (*it)->lid.index));
+    }
+    entries.emplace_back(*it);
+    max_bytes -= bytes;
+  }
+  return max_bytes;
 }
 
 protocol::log_entry_span in_memory_log::get_entries_to_save() const noexcept {
@@ -200,36 +221,40 @@ protocol::membership_ptr log_reader::get_membership() const noexcept {
   return _snapshot->membership;
 }
 
-future<> log_reader::query(
+future<size_t> log_reader::query(
     protocol::hint range,
     protocol::log_entry_vector& entries,
-    size_t max_size) {
+    size_t max_bytes) {
   if (range.low < first_index()) [[unlikely]] {
-    throw util::compacted_error(range.low, first_index());
+    co_return coroutine::make_exception(
+        util::compacted_error(range.low, first_index()));
   }
 
   if (range.high > last_index() + 1) [[unlikely]] {
-    throw util::unavailable_error(range.high, last_index() + 1);
+    co_return coroutine::make_exception(
+        util::unavailable_error(range.high, last_index() + 1));
   }
-  co_await _log.query_entries(_gid, range, entries, max_size);
+  max_bytes = co_await _log.query_entries(_gid, range, entries, max_bytes);
   if (entries.size() == range.high - range.low) {
-    co_return;
+    co_return max_bytes;
   }
   if (!entries.empty()) {
     if (range.low < entries.front()->lid.index) {
-      throw util::compacted_error(range.low, entries.front()->lid.index);
+      co_return coroutine::make_exception(
+          util::compacted_error(range.low, entries.front()->lid.index));
     }
     if (last_index() < entries.back()->lid.index) {
-      throw util::unavailable_error(
-          entries.back()->lid.index, last_index() + 1);
+      co_return coroutine::make_exception(
+          util::unavailable_error(entries.back()->lid.index, last_index() + 1));
     }
-    throw util::failed_precondition_error(fmt::format(
-        "log hole found in [{}:{}) at {}",
-        range.low,
-        range.high,
-        entries.back()->lid.index + 1));
+    co_return coroutine::make_exception(
+        util::failed_precondition_error(fmt::format(
+            "log hole found in [{}:{}) at {}",
+            range.low,
+            range.high,
+            entries.back()->lid.index + 1)));
   }
-  throw util::unavailable_error(range.low, 0);
+  co_return coroutine::make_exception(util::unavailable_error(range.low, 0));
 }
 
 future<uint64_t> log_reader::get_term(uint64_t index) {
@@ -306,8 +331,12 @@ future<> log_reader::apply_compaction(uint64_t index) {
   _marker.term = term;
 }
 
-raft_log::raft_log(protocol::group_id gid, log_reader& log, uint64_t last_index)
-  : _gid(gid), _in_memory(last_index), _logdb(log) {}
+raft_log::raft_log(protocol::group_id gid, log_reader& log)
+  : _gid(gid), _in_memory(log.get_range().high), _logdb(log) {
+  auto [first, _] = log.get_range();
+  _committed = first - 1;
+  _processed = first - 1;
+}
 
 uint64_t raft_log::first_index() const noexcept {
   auto index = _in_memory.get_snapshot_index();
@@ -327,7 +356,7 @@ uint64_t raft_log::last_index() const noexcept {
   return last;
 }
 
-seastar::future<uint64_t> raft_log::term(uint64_t index) const noexcept {
+seastar::future<uint64_t> raft_log::term(uint64_t index) const {
   auto [first, last] = term_entry_range();
   if (index < first || index > last) {
     co_return protocol::log_id::INVALID_TERM;
@@ -339,11 +368,9 @@ seastar::future<uint64_t> raft_log::term(uint64_t index) const noexcept {
   co_return co_await _logdb.get_term(index);
 }
 
-future<uint64_t> raft_log::last_term() const noexcept {
-  return term(last_index());
-}
+future<uint64_t> raft_log::last_term() const { return term(last_index()); }
 
-future<bool> raft_log::term_index_match(protocol::log_id lid) {
+future<bool> raft_log::term_index_match(protocol::log_id lid) const {
   auto t = co_await term(lid.index);
   co_return lid.term == t;
 }
@@ -359,14 +386,185 @@ protocol::hint raft_log::entry_range() const noexcept {
   return {first_index(), last_index()};
 }
 
-protocol::log_entry_vector raft_log::get_uncommitted_entries() const noexcept {
-  protocol::log_entry_vector entries;
-  _in_memory.query({_committed + 1, _in_memory.get_last_index() + 1}, entries);
-  return entries;
+uint64_t raft_log::first_not_applied_index() const noexcept {
+  return std::max(_processed + 1, first_index());
 }
 
-protocol::log_entry_span raft_log::get_entries_to_save() const noexcept {
-  return _in_memory.get_entries_to_save();
+uint64_t raft_log::apply_index_limit() const noexcept { return _committed + 1; }
+
+bool raft_log::has_entries_to_apply() const noexcept {
+  return apply_index_limit() > first_not_applied_index();
+}
+
+bool raft_log::has_more_entries_to_apply(uint64_t applied_to) const noexcept {
+  return _committed > applied_to;
+}
+
+future<> raft_log::get_entries_to_save(protocol::log_entry_vector& entries) {
+  auto ents = _in_memory.get_entries_to_save();
+  entries.insert(entries.end(), ents.begin(), ents.end());
+  co_return;
+}
+
+future<> raft_log::get_entries_to_apply(protocol::log_entry_vector& entries) {
+  if (has_entries_to_apply()) {
+    // TODO(jyc): configurable max_bytes for entries to apply
+    co_await query(
+        {first_not_applied_index(), apply_index_limit()}, entries, UINT64_MAX);
+  }
+  co_return;
+}
+
+future<size_t> raft_log::query(
+    protocol::hint range,
+    protocol::log_entry_vector& entries,
+    size_t max_bytes) const noexcept {
+  check_range(range);
+  if (range.low == range.high) {
+    co_return max_bytes;
+  }
+  max_bytes = co_await query_logdb(range, entries, max_bytes);
+  if (max_bytes > 0) {
+    max_bytes = co_await query_memory(range, entries, max_bytes);
+  }
+  co_return max_bytes;
+}
+
+future<size_t> raft_log::query_logdb(
+    protocol::hint range,
+    protocol::log_entry_vector& entries,
+    size_t max_bytes) const noexcept {
+  if (range.low >= _in_memory._marker) {
+    // all logs in question are in memory, directly return
+    co_return max_bytes;
+  }
+  auto before_query = entries.size();
+  auto high = std::min(range.high, _in_memory._marker);
+  max_bytes = co_await _logdb.query({range.low, high}, entries, max_bytes);
+  if (entries.size() - before_query == high - range.low) {
+    // we have enough logs, avoid redundant searching in memory
+    max_bytes = 0;
+  }
+  co_return max_bytes;
+}
+
+future<size_t> raft_log::query_memory(
+    protocol::hint range,
+    protocol::log_entry_vector& entries,
+    size_t max_bytes) const noexcept {
+  if (range.high <= _in_memory._marker) {
+    co_return max_bytes;
+  }
+  auto low = std::max(range.low, _in_memory._marker);
+  co_return _in_memory.query({low, range.high}, entries, max_bytes);
+}
+
+protocol::snapshot_ptr raft_log::get_snapshot() const noexcept {
+  if (_in_memory.get_snapshot()) {
+    return _in_memory.get_snapshot();
+  }
+  return _logdb.get_snapshot();
+}
+
+future<uint64_t> raft_log::get_conflict_index(
+    protocol::log_entry_span entries) const {
+  for (const auto& ent : entries) {
+    if (!co_await term_index_match(ent->lid)) {
+      co_return ent->lid.index;
+    }
+  }
+  co_return protocol::log_id::INVALID_INDEX;
+}
+
+future<bool> raft_log::try_append(
+    uint64_t index, protocol::log_entry_span entries) {
+  auto conflict_index = co_await get_conflict_index(entries);
+  if (conflict_index != protocol::log_id::INVALID_INDEX) {
+    if (conflict_index <= _committed) {
+      co_return coroutine::make_exception(
+          util::failed_precondition_error(fmt::format(
+              "conflict {} <= committed {}", conflict_index, _committed)));
+    }
+    append(entries.subspan(conflict_index - index - 1));
+    co_return true;
+  }
+  co_return false;
+}
+
+void raft_log::append(protocol::log_entry_span entries) {
+  if (entries.empty()) {
+    return;
+  }
+  if (entries.front()->lid.index <= _committed) {
+    throw util::failed_precondition_error(fmt::format(
+        "append first {} <= committed {}",
+        entries.front()->lid.index,
+        _committed));
+  }
+  _in_memory.merge(entries);
+}
+
+future<bool> raft_log::try_commit(protocol::log_id lid) {
+  if (lid.index <= _committed) {
+    co_return false;
+  }
+  auto t = protocol::log_id::INVALID_TERM;
+  try {
+    t = co_await term(lid.index);
+  } catch (util::compacted_error& e) {
+  }
+  if (lid.index > _committed && lid.term == t) {
+    commit(lid.index);
+    co_return true;
+  }
+  co_return false;
+}
+
+void raft_log::commit(uint64_t index) {
+  if (index == _committed) {
+    return;
+  }
+  if (index < _committed) {
+    throw util::failed_precondition_error(
+        fmt::format("commit index {} < committed {}", index, _committed));
+  }
+  if (index > last_index()) {
+    throw util::failed_precondition_error(
+        fmt::format("commit index {} > last index {}", index, last_index()));
+  }
+  _committed = index;
+}
+
+future<bool> raft_log::up_to_date(protocol::log_id lid) {
+  auto li = last_index();
+  auto lt = co_await term(li);
+  co_return lid >= protocol::log_id{.term = lt, .index = li};
+}
+
+void raft_log::restore(protocol::snapshot_ptr snapshot) {
+  _in_memory.restore(snapshot);
+  if (snapshot->log_id.index < _committed) {
+    throw util::failed_precondition_error(fmt::format(
+        "restore snapshot index {} < committed {}",
+        snapshot->log_id.index,
+        _committed));
+  }
+  _committed = snapshot->log_id.index;
+  _processed = snapshot->log_id.index;
+}
+
+void raft_log::check_range(protocol::hint range) const {
+  if (range.low > range.high) {
+    throw util::failed_precondition_error(
+        fmt::format("invalid range [{},{})", range.low, range.high));
+  }
+  auto r = entry_range();
+  if (r == protocol::hint{} || range.low < r.low) {
+    throw util::compacted_error(range.low, r.low);
+  }
+  if (range.high > r.high + 1) {
+    throw util::unavailable_error(range.high, r.high + 1);
+  }
 }
 
 }  // namespace rafter::core

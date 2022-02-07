@@ -154,6 +154,7 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
       size += test::util::extract_entries(up, expected);
     }
   }
+  entries.clear();
   co_await _manager->query_entries(
       gid,
       {.low = expected.front()->lid.index,

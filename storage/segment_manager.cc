@@ -35,7 +35,8 @@ future<> segment_manager::start() {
   co_await rolling();
   co_await dir.close();
   co_await recovery_compaction();
-  // TODO: run obsolete segments deleter on shard 0 only, shard X passes the
+  // TODO(jyc): run obsolete segments deleter on shard 0 only, shard X passes
+  // the
   //  path to shard 0's deleter
   _gc_worker.start(
       [this](auto& t, bool& open) { return this->gc_service(t, open); });
@@ -54,7 +55,7 @@ future<bool> segment_manager::append(const update& up) {
   }
   _stats._append++;
   _stats._append_entry += up.entries_to_save.size();
-  _stats._append_state += !up.state.empty();
+  _stats._append_state += up.state.empty() ? 0 : 1;
   _stats._append_snap += up.snapshot.operator bool();
 
   auto prev_state = _index_group.get_hard_state(up.gid);
@@ -120,7 +121,7 @@ future<raft_state> segment_manager::query_raft_state(
     group_id id, uint64_t last_index) {
   _stats._query_state++;
 
-  // TODO: read from segment or read from _index_group?
+  // TODO(jyc): read from segment or read from _index_group?
   auto st = _index_group.get_hard_state(id);
   if (st.empty()) {
     l.error("{} segment_manager::query_raft_state: no data", id);
@@ -147,20 +148,20 @@ future<raft_state> segment_manager::query_raft_state(
   co_return r;
 }
 
-future<> segment_manager::query_entries(
+future<size_t> segment_manager::query_entries(
     group_id id, hint range, log_entry_vector& entries, uint64_t max_bytes) {
   _stats._query_entry++;
   if (max_bytes == 0) {
-    co_return;
+    co_return max_bytes;
   }
   auto ni = _index_group.get_node_index(id);
   auto compacted_to = ni->compacted_to();
   if (range.low <= compacted_to) {
-    co_return;
+    co_return max_bytes;
   }
   auto indexes = ni->query(range);
   if (indexes.empty()) {
-    co_return;
+    co_return max_bytes;
   }
   size_t start = 0;
   size_t count = 1;
@@ -184,6 +185,7 @@ future<> segment_manager::query_entries(
     co_await _segments[prev_filename]->query(
         indexes.subspan(start, count), entries, max_bytes);
   }
+  co_return max_bytes;
 }
 
 future<> segment_manager::sync() {
