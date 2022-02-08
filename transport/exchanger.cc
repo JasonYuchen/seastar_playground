@@ -94,7 +94,7 @@ future<rpc::sink<snapshot_chunk_ptr>> exchanger::make_sink_for_snapshot_chunk(
       uint64_t, uint64_t, uint64_t, rpc::sink<snapshot_chunk_ptr>)>(
       messaging_verb::snapshot);
   co_await rpc_handler(*client, cluster_id, from, to, sink);
-  co_return sink;
+  co_return std::move(sink);
 }
 
 future<> exchanger::notify_unreachable(protocol::group_id target) {
@@ -147,12 +147,9 @@ bool exchanger::remove_rpc_client(peer_address address) {
   }
   auto client = std::move(it->second.rpc_client);
   _clients.erase(it);
-  (void)client->stop()
-      .finally([address, client, exc = shared_from_this()] {
-        l.debug(
-            "exchanger::remove_rpc_client: dropped connection to {}", address);
-      })
-      .discard_result();
+  (void)client->stop().finally([address, client, exc = shared_from_this()] {
+    l.debug("exchanger::remove_rpc_client: dropped connection to {}", address);
+  });
   return true;
 }
 

@@ -416,13 +416,25 @@ future<> raft_log::get_entries_to_apply(protocol::log_entry_vector& entries) {
 }
 
 future<size_t> raft_log::query(
+    uint64_t start,
+    protocol::log_entry_vector& entries,
+    size_t max_bytes) const {
+  if (start > last_index()) {
+    co_return max_bytes;
+  }
+  co_return co_await query(
+      {.low = start, .high = last_index()}, entries, max_bytes);
+}
+
+future<size_t> raft_log::query(
     protocol::hint range,
     protocol::log_entry_vector& entries,
-    size_t max_bytes) const noexcept {
+    size_t max_bytes) const {
   check_range(range);
   if (range.low == range.high) {
     co_return max_bytes;
   }
+  entries.reserve(range.count());
   max_bytes = co_await query_logdb(range, entries, max_bytes);
   if (max_bytes > 0) {
     max_bytes = co_await query_memory(range, entries, max_bytes);

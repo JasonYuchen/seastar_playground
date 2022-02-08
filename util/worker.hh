@@ -7,6 +7,7 @@
 #include <list>
 #include <optional>
 #include <seastar/core/future.hh>
+#include <seastar/util/log.hh>
 #include <vector>
 
 #include "util/error.hh"
@@ -16,8 +17,8 @@ namespace rafter::util {
 template <typename T>
 class worker {
  public:
-  explicit worker(std::string name, size_t capacity)
-    : _name(std::move(name)), _capacity(capacity) {
+  explicit worker(std::string name, size_t capacity, seastar::logger& l)
+    : _name(std::move(name)), _capacity(capacity), _l(l) {
     _q[0].reserve(_capacity);
     _q[1].reserve(_capacity);
   }
@@ -39,7 +40,9 @@ class worker {
     notify_not_empty();
     try_release_waiter();
     if (_service) {
-      co_await _service->discard_result();
+      co_await _service->handle_exception([this](std::exception_ptr e) {
+        _l.warn("worker::close: exception in {}: {}", _name, e);
+      });
       _service.reset();
     }
     co_return;
@@ -140,6 +143,7 @@ class worker {
   std::list<entry> _waiter;
   std::optional<seastar::future<>> _service;
   std::exception_ptr _ex = nullptr;
+  seastar::logger& _l;
 };
 
 }  // namespace rafter::util

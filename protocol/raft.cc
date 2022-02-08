@@ -232,4 +232,15 @@ void utils::assert_continuous(log_entry_span left, log_entry_span right) {
   }
 }
 
+void utils::fill_metadata_entries(log_entry_vector& entries) {
+  for (auto& entry : entries) {
+    if (entry->type != entry_type::config_change) {
+      log_id lid = entry->lid;
+      entry = seastar::make_lw_shared<log_entry>();
+      entry->type = entry_type::metadata;
+      entry->lid = lid;
+    }
+  }
+}
+
 }  // namespace rafter::protocol

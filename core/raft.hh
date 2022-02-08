@@ -25,13 +25,14 @@ class raft {
   };
 
   raft(const config& config, log_reader& reader)
-    : _config(config), _log(_gid, reader, 0) {}
+    : _config(config), _log(_gid, reader) {}
 
   seastar::future<> handle(protocol::message& m);
-  seastar::future<> handle(protocol::message&& m);
+  seastar::future<> handle(protocol::message&& m) { return handle(m); }
 
  private:
   friend class peer;
+  friend std::ostream& operator<<(std::ostream& os, const raft& r);
   using role = protocol::raft_role;
 
   // misc
@@ -44,15 +45,18 @@ class raft {
   bool is_witness() const noexcept { return _role == role::witness; }
   void must_be(protocol::raft_role role) const;
   void must_not_be(protocol::raft_role role) const;
-  void report_dropped_config_change();
-  void report_dropped_proposal();
-  void report_dropped_read_index();
+  void report_dropped_config_change(protocol::log_entry_ptr e);
+  void report_dropped_proposal(protocol::message& m);
+  void report_dropped_read_index(protocol::message& m);
+  void finalize_message(protocol::message& m);
+  seastar::future<protocol::message> make_replicate(
+      uint64_t to, uint64_t next, uint64_t max_bytes);
 
   // send
-  void send(protocol::message& m);
+  void send(protocol::message&& m);
   void send_timeout_now(uint64_t to);
   void send_heartbeat(uint64_t to, protocol::hint ctx, uint64_t match_index);
-  void send_replicate(uint64_t to, remote& r);
+  seastar::future<> send_replicate(uint64_t to, remote& r);
   void broadcast_heartbeat();
   void broadcast_replicate();
 
@@ -222,5 +226,7 @@ class raft {
       static_cast<uint8_t>(protocol::message_type::num_of_type);
   message_handler _handlers[NUM_OF_STATE][NUM_OF_TYPE];
 };
+
+std::ostream& operator<<(std::ostream& os, const raft& r);
 
 }  // namespace rafter::core

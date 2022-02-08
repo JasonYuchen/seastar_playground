@@ -71,7 +71,7 @@ future<> express::sender::start(snapshot_ptr snapshot) {
   try {
     auto sink = co_await _exchanger.make_sink_for_snapshot_chunk(
         _pair.cluster, _pair.from, _pair.to);
-    auto deferred = defer([&sink] { (void)sink.close().discard_result(); });
+    auto deferred = defer([&sink] { (void)sink.close(); });
     uint64_t chunk_id = 0;
     uint64_t total_chunks = 0;
     uint64_t snapshot_chunk_size = _exchanger.config().snapshot_chunk_size;
@@ -84,23 +84,23 @@ future<> express::sender::start(snapshot_ptr snapshot) {
       co_await split_and_send(snapshot, file, total_chunks, chunk_id, sink);
     }
     co_await sink.flush();
-    (void)_exchanger.notify_successful({_pair.cluster, _pair.to})
-        .discard_result();
+    (void)_exchanger.notify_successful({_pair.cluster, _pair.to});
   } catch (util::logic_error& e) {
     l.error("express::sender::start: {}", e.what());
   } catch (util::closed_error& e) {
     l.info("express::sender::start: closed {}", e.what());
   } catch (...) {
     l.error("express::sender::start: {}", std::current_exception());
-    (void)_exchanger.notify_unreachable({_pair.cluster, _pair.to})
-        .discard_result();
+    (void)_exchanger.notify_unreachable({_pair.cluster, _pair.to});
   }
   co_return;
 }
 
 future<> express::sender::stop() {
   if (_task) {
-    return _task->discard_result();
+    return _task->handle_exception([](std::exception_ptr e) {
+      l.warn("express::sender::stop: exception:{}", e);
+    });
   }
   return make_ready_future<>();
 }
@@ -114,7 +114,7 @@ future<> express::sender::split_and_send(
   const auto& file_path = file ? file->file_path : snapshot->file_path;
   auto file_size = file ? file->file_size : snapshot->file_size;
   auto f = co_await open_file_dma(file_path, open_flags::ro);
-  auto defer_close = seastar::defer([&f] { (void)f.close().discard_result(); });
+  auto defer_close = seastar::defer([&f] { (void)f.close(); });
   uint64_t actual_file_size = co_await f.size();
   if (file_size != actual_file_size) {
     throw util::failed_precondition_error(fmt::format(
@@ -166,7 +166,9 @@ future<> express::receiver::start(rpc::source<snapshot_chunk_ptr> source) {
 
 future<> express::receiver::stop() {
   if (_task) {
-    return _task->discard_result();
+    return _task->handle_exception([](std::exception_ptr e) {
+      l.warn("express::receiver::stop: exception:{}", e);
+    });
   }
   return make_ready_future<>();
 }

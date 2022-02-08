@@ -25,7 +25,7 @@ const char* status_string(enum code e) {
       "failed_precondition",
       "failed_postcondition",
       "invalid_argument",
-      "invalid_raft_role",
+      "invalid_raft_state",
       "no_data",
       "unknown"};
   static_assert(

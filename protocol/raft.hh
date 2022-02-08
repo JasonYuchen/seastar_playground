@@ -23,8 +23,7 @@ enum class raft_role : uint8_t {
 
 const char *name(enum raft_role role);
 inline std::ostream &operator<<(std::ostream &os, raft_role role) {
-  os << name(role);
-  return os;
+  return os << name(role);
 }
 
 struct group_id {
@@ -86,10 +85,25 @@ enum class message_type : uint8_t {
   num_of_type,
 };
 
+inline bool is_request_vote(message_type type) {
+  using enum message_type;
+  return type == request_vote || type == request_prevote;
+}
+
+inline bool is_request(message_type type) {
+  using enum message_type;
+  return type == propose || type == read_index || type == leader_transfer;
+}
+
+inline bool is_leader(message_type type) {
+  using enum message_type;
+  return type == replicate || type == install_snapshot || type == heartbeat ||
+         type == timeout_now || type == read_index_resp;
+}
+
 const char *name(enum message_type type);
 inline std::ostream &operator<<(std::ostream &os, message_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 enum class entry_type : uint8_t {
@@ -102,8 +116,7 @@ enum class entry_type : uint8_t {
 
 const char *name(enum entry_type type);
 inline std::ostream &operator<<(std::ostream &os, entry_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 enum class config_change_type : uint8_t {
@@ -116,8 +129,7 @@ enum class config_change_type : uint8_t {
 
 const char *name(enum config_change_type type);
 inline std::ostream &operator<<(std::ostream &os, config_change_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 enum class state_machine_type : uint8_t {
@@ -127,8 +139,7 @@ enum class state_machine_type : uint8_t {
 
 const char *name(enum state_machine_type type);
 inline std::ostream &operator<<(std::ostream &os, state_machine_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 enum class compression_type : uint8_t {
@@ -140,8 +151,7 @@ enum class compression_type : uint8_t {
 
 const char *name(enum compression_type type);
 inline std::ostream &operator<<(std::ostream &os, compression_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 enum class checksum_type : uint8_t {
@@ -153,8 +163,7 @@ enum class checksum_type : uint8_t {
 
 const char *name(enum checksum_type type);
 inline std::ostream &operator<<(std::ostream &os, checksum_type type) {
-  os << name(type);
-  return os;
+  return os << name(type);
 }
 
 struct bootstrap {
@@ -426,6 +435,7 @@ using update_ptr = seastar::lw_shared_ptr<update>;
 class utils {
  public:
   static void assert_continuous(log_entry_span left, log_entry_span right);
+  static void fill_metadata_entries(log_entry_vector &entries);
 };
 
 }  // namespace rafter::protocol

@@ -19,7 +19,7 @@ class worker_test : public ::testing::Test {
  protected:
   void SetUp() override {
     base::submit([this]() -> future<> {
-      _worker = std::make_unique<worker<int>>("test_worker", 10);
+      _worker = std::make_unique<worker<int>>("test_worker", 10, l);
       co_return;
     });
   }

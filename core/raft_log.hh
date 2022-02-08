@@ -79,12 +79,16 @@ class log_reader {
 class raft_log {
  public:
   raft_log(protocol::group_id gid, log_reader& log);
+  uint64_t committed() const noexcept { return _committed; }
+  uint64_t processed() const noexcept { return _processed; }
   uint64_t first_index() const noexcept;
   uint64_t last_index() const noexcept;
   seastar::future<uint64_t> term(uint64_t index) const;
   seastar::future<uint64_t> last_term() const;
   seastar::future<bool> term_index_match(protocol::log_id lid) const;
+  // the available entries' term range + snapshot's term
   protocol::hint term_entry_range() const noexcept;
+  // the available entries' range
   protocol::hint entry_range() const noexcept;
   uint64_t first_not_applied_index() const noexcept;
   uint64_t apply_index_limit() const noexcept;
@@ -93,9 +97,13 @@ class raft_log {
   seastar::future<> get_entries_to_save(protocol::log_entry_vector& entries);
   seastar::future<> get_entries_to_apply(protocol::log_entry_vector& entries);
   seastar::future<size_t> query(
+      uint64_t start,
+      protocol::log_entry_vector& entries,
+      size_t max_bytes) const;
+  seastar::future<size_t> query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
-      size_t max_bytes) const noexcept;
+      size_t max_bytes) const;
   seastar::future<size_t> query_logdb(
       protocol::hint range,
       protocol::log_entry_vector& entries,
@@ -120,6 +128,8 @@ class raft_log {
 
   protocol::group_id _gid;
   uint64_t _committed;
+  // The last index known to be pushed to rsm for execution,
+  // not the last index confirmed to be executed by rsm
   uint64_t _processed;
   in_memory_log _in_memory;
   log_reader& _logdb;

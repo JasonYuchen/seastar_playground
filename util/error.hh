@@ -33,7 +33,7 @@ enum class code : uint8_t {
   failed_postcondition,
   unknown,
   invalid_argument,
-  invalid_raft_role,
+  invalid_raft_state,
   no_data,
   num_of_codes,
 };
@@ -186,16 +186,10 @@ class invalid_argument : public logic_error {
     : logic_error("{}: arg:{}, reason:{}", code::invalid_argument, arg, msg) {}
 };
 
-class invalid_raft_role : public logic_error {
+class invalid_raft_state : public logic_error {
  public:
   using logic_error::logic_error;
-  invalid_raft_role() : logic_error(code::invalid_raft_role) {}
-  invalid_raft_role(protocol::raft_role expect, protocol::raft_role actual)
-    : logic_error(
-          "{}: expect:{} actual:{}",
-          code::invalid_raft_role,
-          name(expect),
-          name(actual)) {}
+  invalid_raft_state() : logic_error(code::invalid_raft_state) {}
 };
 
 }  // namespace rafter::util
