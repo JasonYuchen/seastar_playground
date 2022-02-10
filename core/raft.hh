@@ -38,6 +38,7 @@ class raft {
   // misc
   void initialize_handlers();
   void assert_handlers();
+  bool is_self(uint64_t id) const noexcept { return _gid.node == id; }
   bool is_leader() const noexcept { return _role == role::leader; }
   bool is_candidate() const noexcept { return _role == role::candidate; }
   bool is_follower() const noexcept { return _role == role::follower; }
@@ -51,6 +52,7 @@ class raft {
   void finalize_message(protocol::message& m);
   seastar::future<protocol::message> make_replicate(
       uint64_t to, uint64_t next, uint64_t max_bytes);
+  protocol::message make_install_snapshot(uint64_t to);
 
   // send
   void send(protocol::message&& m);
@@ -58,18 +60,22 @@ class raft {
   void send_heartbeat(uint64_t to, protocol::hint ctx, uint64_t match_index);
   seastar::future<> send_replicate(uint64_t to, remote& r);
   void broadcast_heartbeat();
-  void broadcast_replicate();
+  seastar::future<> broadcast_replicate();
 
   // membership
   void add_node(uint64_t id);
   void add_observer(uint64_t id);
   void add_witness(uint64_t id);
-  void remove_node(uint64_t id);
+  seastar::future<> remove_node(uint64_t id);
   bool is_self_removed() const;
+  uint64_t quorum() const noexcept;
+  uint64_t voting_members_size() const noexcept;
 
   // state transition
   void set_leader(uint64_t leader_id);
-  void campaign();
+  seastar::future<> pre_campaign();
+  seastar::future<> campaign();
+  uint64_t handle_vote_resp(uint64_t from, bool rejected, bool prevote);
   bool can_grant_vote(uint64_t peer_id, uint64_t peer_term);
   void become_leader();
   void become_candidate();
@@ -77,7 +83,7 @@ class raft {
   void become_follower(uint64_t term, uint64_t leader_id);
   void become_observer(uint64_t term, uint64_t leader_id);
   void become_witness(uint64_t term, uint64_t leader_id);
-  bool is_leader_transferring() const;
+  bool is_leader_transferring() const noexcept;
   void abort_leader_transfer();
   void reset(uint64_t term, bool reset_election_timeout);
   void reset(std::unordered_map<uint64_t, remote>& remotes);
