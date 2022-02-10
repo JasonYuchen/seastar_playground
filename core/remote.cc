@@ -8,6 +8,8 @@
 
 namespace rafter::core {
 
+using enum remote::state;
+
 bool remote::is_paused() const noexcept {
   return state == wait || state == snapshot;
 }
@@ -114,14 +116,15 @@ void remote::responded_to() noexcept {
   }
 }
 
-std::string remote::debug_string() const {
-  return fmt::format(
-      "remote[match:{}, next:{}, state:{}, snapshot_index:{}, active:{}]",
-      match,
-      next,
-      uint8_t{state},
-      snapshot_index,
-      active);
+std::ostream& operator<<(std::ostream& os, enum remote::state s) {
+  static const char* states[] = {"retry", "wait", "replicate", "snapshot"};
+  return os << states[static_cast<uint8_t>(s)];
+}
+
+std::ostream& operator<<(std::ostream& os, const remote& r) {
+  return os << "remote["
+            << "mi:" << r.match << ",ni:" << r.next << ",st:" << r.state
+            << ",si:" << r.snapshot_index << ",a:" << r.active << "]";
 }
 
 }  // namespace rafter::core

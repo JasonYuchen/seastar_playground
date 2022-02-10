@@ -12,7 +12,7 @@ namespace rafter::core {
 
 class remote {
  public:
-  enum state : uint8_t {
+  enum class state : uint8_t {
     // Retry means leader could probe the remote after:
     // 1. The remote has been Wait and now leader receives a heartbeat response
     //    which means leader could probe the remote then, set remote as Retry.
@@ -93,13 +93,13 @@ class remote {
 
   void responded_to() noexcept;
 
-  std::string debug_string() const;
-
   uint64_t match = 0;
   uint64_t next = 0;
   uint64_t snapshot_index = 0;
   bool active = false;
   enum state state = state::retry;
 };
+
+std::ostream& operator<<(std::ostream& os, const remote& r);
 
 }  // namespace rafter::core
