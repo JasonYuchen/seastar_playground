@@ -262,6 +262,20 @@ void raft::send_timeout_now(uint64_t to) {
   send(message{.type = message_type::timeout_now, .to = to});
 }
 
+void raft::send_rate_limit() {
+  must_not_be(role::leader);
+  if (_leader_id == group_id::INVALID_NODE) {
+    l.info("{}: skip rate limit since no leader available", *this);
+    return;
+  }
+  if (_limiter.enabled()) {
+    return;
+  }
+  // TODO(jyc): prepare rate limit message
+  send(message{
+      .type = message_type::rate_limit, .to = _leader_id, .hint = {.low = 0}});
+}
+
 void raft::send_heartbeat(uint64_t to, hint ctx, uint64_t match_index) {
   send(message{
       .type = message_type::heartbeat,
@@ -339,7 +353,7 @@ void raft::add_node(uint64_t id) {
   if (auto oit = _observers.find(id); oit != _observers.end()) {
     _remotes.insert(_observers.extract(oit));
     if (is_self(id)) {
-      become_follower(_term, _leader_id);
+      become_follower(_term, _leader_id, true);
     }
   } else if (auto wit = _witnesses.find(id); wit != _witnesses.end()) {
     l.error("{}: cannot promote a witness:{}", *this, id);
@@ -379,13 +393,13 @@ seastar::future<> raft::remove_node(uint64_t id) {
   _witnesses.erase(id);
   _pending_config_change = false;
   if (is_self(id) && is_leader()) {
-    become_follower(_term, group_id::INVALID_NODE);
+    become_follower(_term, group_id::INVALID_NODE, true);
   }
   if (is_leader_transferring() && _leader_transfer_target == id) {
     abort_leader_transfer();
   }
   if (is_leader() && _remotes.size() + _witnesses.size() > 0) {
-    if (try_commit()) {
+    if (co_await try_commit()) {
       co_await broadcast_replicate();
     }
   }
@@ -405,6 +419,23 @@ uint64_t raft::quorum() const noexcept { return voting_members_size() / 2 + 1; }
 
 uint64_t raft::voting_members_size() const noexcept {
   return _remotes.size() + _witnesses.size();
+}
+
+bool raft::has_quorum() {
+  uint64_t cnt = 0;
+  for (auto& [id, r] : _remotes) {
+    if (id == _gid.node || r.active) {
+      cnt++;
+      r.active = false;
+    }
+  }
+  for (auto& [id, r] : _witnesses) {
+    if (id == _gid.node || r.active) {
+      cnt++;
+      r.active = false;
+    }
+  }
+  return cnt >= quorum();
 }
 
 void raft::set_leader(uint64_t leader_id) {
@@ -433,6 +464,349 @@ future<> raft::pre_campaign() {
   };
   std::for_each(_remotes.begin(), _remotes.end(), sender);
   std::for_each(_witnesses.begin(), _witnesses.end(), sender);
+}
+
+future<> raft::campaign() {
+  become_candidate();
+  handle_vote_resp(_gid.node, false, false);
+  if (quorum() == 1) {
+    become_leader();
+    co_return;
+  }
+  uint64_t hint = group_id::INVALID_NODE;
+  if (_is_leader_transfer_target) {
+    hint = _gid.node;
+    _is_leader_transfer_target = false;
+  }
+  auto li = _log.last_index();
+  auto lt = co_await _log.last_term();
+  auto sender = [this, li, lt, hint](auto& peer) {
+    if (is_self(peer.first)) {
+      return;
+    }
+    send(message{
+        .type = message_type::request_vote,
+        .to = peer.first,
+        .term = _term,
+        .lid = {.term = lt, .index = li},
+        .hint = {.low = hint}});
+    l.info("{}: sent request_vote to {}", *this, peer.first);
+  };
+  std::for_each(_remotes.begin(), _remotes.end(), sender);
+  std::for_each(_witnesses.begin(), _witnesses.end(), sender);
+}
+
+uint64_t raft::handle_vote_resp(uint64_t from, bool rejected, bool prevote) {
+  auto type = prevote ? "request_prevote" : "request_vote";
+  if (rejected) {
+    l.warn("{}: received {} rejection from {}", *this, type, from);
+  } else {
+    l.warn("{}: received {} from {}", *this, type, from);
+  }
+  if (!_votes.contains(from)) {
+    _votes[from] = !rejected;
+  }
+  return std::accumulate(
+      _votes.begin(), _votes.end(), uint64_t{0}, [](uint64_t votes, auto peer) {
+        return votes + peer.second;
+      });
+}
+
+bool raft::can_grant_vote(uint64_t peer_id, uint64_t peer_term) const noexcept {
+  return _vote == group_id::INVALID_NODE || _vote == peer_id ||
+         peer_term > _term;
+}
+
+future<> raft::become_leader() {
+  if (!is_leader() && !is_candidate()) {
+    l.error("{}: unexpected transitioning to leader", *this);
+    throw util::invalid_raft_state();
+  }
+  _role = role::leader;
+  reset(_term, true);
+  set_leader(_gid.node);
+  auto count = co_await _log.pending_config_change_count();
+  if (count > 1) {
+    l.error("{}: become leader with {} pending config change", *this, count);
+    throw util::invalid_raft_state();
+  }
+  if (count == 1) {
+    _pending_config_change = true;
+  }
+  l.info("{}: become leader with {} pending config change", *this, count);
+  append_noop_entry();
+}
+
+void raft::become_candidate() {
+  must_not_be(role::leader);
+  must_not_be(role::observer);
+  must_not_be(role::witness);
+  _role = role::candidate;
+  reset(_term + 1, true);
+  set_leader(group_id::INVALID_NODE);
+  _vote = _gid.node;
+  l.info("{}: become candidate", *this);
+}
+
+void raft::become_pre_candidate() {
+  must_not_be(role::leader);
+  must_not_be(role::observer);
+  must_not_be(role::witness);
+  _role = role::pre_candidate;
+  reset(_term, true);
+  set_leader(group_id::INVALID_NODE);
+  l.info("{}: become pre_candidate", *this);
+}
+
+void raft::become_follower(
+    uint64_t term, uint64_t leader_id, bool reset_election) {
+  must_not_be(role::witness);
+  _role = role::follower;
+  reset(term, reset_election);
+  set_leader(leader_id);
+  l.info("{}: become follower", *this);
+}
+
+void raft::become_observer(uint64_t term, uint64_t leader_id) {
+  must_be(role::observer);
+  reset(term, true);
+  set_leader(leader_id);
+  l.info("{}: become observer", *this);
+}
+
+void raft::become_witness(uint64_t term, uint64_t leader_id) {
+  must_be(role::witness);
+  reset(term, true);
+  set_leader(leader_id);
+}
+
+bool raft::is_leader_transferring() const noexcept {
+  return _leader_transfer_target != group_id::INVALID_NODE && is_leader();
+}
+
+void raft::abort_leader_transfer() {
+  _leader_transfer_target = group_id::INVALID_NODE;
+}
+
+void raft::reset(uint64_t term, bool reset_election_timeout) {
+  if (_term != term) {
+    _term = term;
+    _vote = group_id::INVALID_NODE;
+  }
+  if (_limiter.enabled()) {
+    _limiter.reset();
+  }
+  if (reset_election_timeout) {
+    _election_tick = 0;
+    set_randomized_eletion_timeout();
+  }
+  _votes.clear();
+  _heartbeat_tick = 0;
+  _read_index.clear();
+  _pending_config_change = false;
+  abort_leader_transfer();
+  reset_matched();
+  auto resetter = [this](auto& peer) {
+    peer.second = remote{.next = _log.last_index() + 1};
+    if (is_self(peer.first)) {
+      peer.second.match = _log.last_index();
+    }
+  };
+  std::for_each(_remotes.begin(), _remotes.end(), resetter);
+  std::for_each(_observers.begin(), _observers.end(), resetter);
+  std::for_each(_witnesses.begin(), _witnesses.end(), resetter);
+}
+
+void raft::reset_matched() {
+  _matched.resize(voting_members_size());
+  std::fill(_matched.begin(), _matched.end(), 0);
+}
+
+future<bool> raft::restore(snapshot_ptr ss) {
+  if (ss->log_id.index <= _log.committed()) {
+    l.warn(
+        "{}: snapshot ignored, index:{} <= committed:{}",
+        *this,
+        ss->log_id.index,
+        _log.committed());
+    co_return false;
+  }
+  if (!is_observer()) {
+    if (ss->membership->observers.contains(_gid.node)) {
+      l.error(
+          "{}: converting to observer, index:{}, committed:{}",
+          *this,
+          ss->log_id.index,
+          _log.committed());
+      co_return coroutine::make_exception(util::invalid_raft_state());
+    }
+  }
+  if (!is_witness()) {
+    if (ss->membership->witnesses.contains(_gid.node)) {
+      l.error(
+          "{}: converting to witness, index:{}, committed:{}",
+          *this,
+          ss->log_id.index,
+          _log.committed());
+      co_return coroutine::make_exception(util::invalid_raft_state());
+    }
+  }
+  auto match = co_await _log.term_index_match(ss->log_id);
+  if (match) {
+    _log.commit(ss->log_id.index);
+    co_return false;
+  }
+  l.info("{}: start to restore snapshot, {}", *this, ss->log_id);
+  _log.restore(std::move(ss));
+  co_return true;
+}
+
+future<bool> raft::try_commit() {
+  must_be(role::leader);
+  if (_matched.size() != voting_members_size()) {
+    reset_matched();
+  }
+  size_t idx = 0;
+  for (const auto& [_, r] : _remotes) {
+    _matched[idx++] = r.match;
+  }
+  for (const auto& [_, r] : _witnesses) {
+    _matched[idx++] = r.match;
+  }
+  std::sort(_matched.begin(), _matched.end());
+  auto m = _matched[voting_members_size() - quorum()];
+  return _log.try_commit({.term = _term, .index = m});
+}
+
+future<> raft::append_entries(log_entry_vector& entries) {
+  auto li = _log.last_index();
+  for (size_t i = 0; i < entries.size(); ++i) {
+    entries[i]->lid = {.term = _term, .index = li + i + 1};
+  }
+  _log.append(entries);
+  _remotes[_gid.node].try_update(_log.last_index());
+  if (quorum() == 1) {
+    co_await try_commit();
+  }
+  co_return;
+}
+
+future<> raft::append_noop_entry() {
+  auto noop = make_lw_shared<log_entry>();
+  noop->type = entry_type::application;
+  noop->lid = {.term = _term, .index = _log.last_index() + 1};
+  _log.append({&noop, 1});
+  _remotes[_gid.node].try_update(_log.last_index());
+  if (quorum() == 1) {
+    co_await try_commit();
+  }
+  co_return;
+}
+
+future<bool> raft::has_committed_entry() {
+  if (_term == log_id::INVALID_TERM) {
+    co_return coroutine::make_exception(util::invalid_raft_state());
+  }
+  try {
+    co_return _term == co_await _log.term(_log.committed());
+  } catch (util::compacted_error& e) {
+    l.warn("{}: log compacted", *this);
+  }
+  co_return false;
+}
+
+future<> raft::tick() {
+  _quiesce = false;
+  _tick++;
+  // TODO(jyc): in memory gc
+  if (is_leader()) {
+    return leader_tick();
+  }
+  return nonleader_tick();
+}
+
+future<> raft::leader_tick() {
+  must_be(role::leader);
+  _election_tick++;
+  if (time_to_check_rate_limit()) {
+    if (_limiter.enabled()) {
+      _limiter.tick();
+    }
+  }
+  auto abort = time_to_abort_leader_transfer();
+  if (time_to_check_quorum()) {
+    _election_tick = 0;
+    if (_check_quorum) {
+      co_await handle(
+          message{.type = message_type::check_quorum, .from = _gid.node});
+    }
+  }
+  if (abort) {
+    abort_leader_transfer();
+  }
+  _heartbeat_tick++;
+  if (time_to_heartbeat()) {
+    _heartbeat_tick = 0;
+    co_await handle(
+        message{.type = message_type::leader_heartbeat, .from = _gid.node});
+  }
+  // TODO(jyc): check pending snapshot ack
+  co_return;
+}
+
+future<> raft::nonleader_tick() {
+  must_not_be(role::leader);
+  _election_tick++;
+  if (time_to_check_rate_limit()) {
+    if (_limiter.enabled()) {
+      _limiter.tick();
+      send_rate_limit();
+    }
+  }
+  if (is_observer() || is_witness()) {
+    co_return;
+  }
+  if (!is_self_removed() && time_to_elect()) {
+    _election_tick = 0;
+    co_await handle(message{.type = message_type::election, .from = _gid.node});
+  }
+  co_return;
+}
+
+void raft::quiesced_tick() {
+  if (!_quiesce) {
+    _quiesce = true;
+    // resize in memory log
+  }
+  _election_tick++;
+}
+
+bool raft::time_to_elect() const noexcept {
+  return _election_tick >= _randomized_election_timeout;
+}
+
+bool raft::time_to_heartbeat() const noexcept {
+  return _heartbeat_tick >= _heartbeat_timeout;
+}
+
+bool raft::time_to_check_quorum() const noexcept {
+  return _election_tick >= _election_timeout;
+}
+
+bool raft::time_to_abort_leader_transfer() const noexcept {
+  return is_leader_transferring() && _election_tick >= _election_timeout;
+}
+bool raft::time_to_gc() const noexcept {
+  return _tick % _config.in_memory_gc_timeout == 0;
+}
+
+bool raft::time_to_check_rate_limit() const noexcept {
+  return _tick % _election_timeout == 0;
+}
+
+void raft::set_randomized_election_timeout() {
+  _randomized_election_timeout =
+      _election_timeout + _random_engine() % _election_timeout;
 }
 
 }  // namespace rafter::core

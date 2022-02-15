@@ -7,6 +7,7 @@
 #include <random>
 
 #include "core/raft_log.hh"
+#include "core/rate_limiter.hh"
 #include "core/read_index.hh"
 #include "core/remote.hh"
 #include "protocol/raft.hh"
@@ -25,7 +26,9 @@ class raft {
   };
 
   raft(const config& config, log_reader& reader)
-    : _config(config), _log(_gid, reader) {}
+    : _config(config)
+    , _log(_gid, reader)
+    , _limiter(config.max_in_memory_log_bytes) {}
 
   seastar::future<> handle(protocol::message& m);
   seastar::future<> handle(protocol::message&& m) { return handle(m); }
@@ -57,6 +60,7 @@ class raft {
   // send
   void send(protocol::message&& m);
   void send_timeout_now(uint64_t to);
+  void send_rate_limit();
   void send_heartbeat(uint64_t to, protocol::hint ctx, uint64_t match_index);
   seastar::future<> send_replicate(uint64_t to, remote& r);
   void broadcast_heartbeat();
@@ -70,28 +74,44 @@ class raft {
   bool is_self_removed() const;
   uint64_t quorum() const noexcept;
   uint64_t voting_members_size() const noexcept;
+  bool has_quorum();
 
   // state transition
   void set_leader(uint64_t leader_id);
   seastar::future<> pre_campaign();
   seastar::future<> campaign();
   uint64_t handle_vote_resp(uint64_t from, bool rejected, bool prevote);
-  bool can_grant_vote(uint64_t peer_id, uint64_t peer_term);
-  void become_leader();
+  bool can_grant_vote(uint64_t peer_id, uint64_t peer_term) const noexcept;
+  seastar::future<> become_leader();
   void become_candidate();
   void become_pre_candidate();
-  void become_follower(uint64_t term, uint64_t leader_id);
+  void become_follower(uint64_t term, uint64_t leader_id, bool reset_election);
   void become_observer(uint64_t term, uint64_t leader_id);
   void become_witness(uint64_t term, uint64_t leader_id);
   bool is_leader_transferring() const noexcept;
   void abort_leader_transfer();
   void reset(uint64_t term, bool reset_election_timeout);
-  void reset(std::unordered_map<uint64_t, remote>& remotes);
   void reset_matched();
+  seastar::future<bool> restore(protocol::snapshot_ptr ss);
 
   // log
-  bool try_commit();
-  void append_entries(protocol::log_entry_span entries);
+  seastar::future<bool> try_commit();
+  seastar::future<> append_entries(protocol::log_entry_vector& entries);
+  seastar::future<> append_noop_entry();
+  seastar::future<bool> has_committed_entry();
+
+  // clock
+  seastar::future<> tick();
+  seastar::future<> leader_tick();
+  seastar::future<> nonleader_tick();
+  void quiesced_tick();
+  bool time_to_elect() const noexcept;
+  bool time_to_heartbeat() const noexcept;
+  bool time_to_check_quorum() const noexcept;
+  bool time_to_abort_leader_transfer() const noexcept;
+  bool time_to_gc() const noexcept;
+  bool time_to_check_rate_limit() const noexcept;
+  void set_randomized_election_timeout();
 
   // common
   seastar::future<> node_election(protocol::message& m);
@@ -202,9 +222,9 @@ class raft {
   bool _pending_config_change;
   bool _quiesce;
   bool _check_quorum;
-  bool _prevote;
   bool _snapshotting;
   raft_log _log;
+  rate_limiter _limiter;
 
   std::unordered_map<uint64_t, bool> _votes;
   std::unordered_map<uint64_t, remote> _remotes;
