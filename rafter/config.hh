@@ -33,6 +33,12 @@ struct config {
   // the snapshot chunk size
   uint64_t snapshot_chunk_size = 1UL * MB;
 
+  // the max bytes allowed for storing in memory logs
+  uint64_t max_in_memory_log_bytes = UINT64_MAX;
+
+  // the interval between gc in memory logs, defined as the number of ticks
+  uint64_t in_memory_gc_timeout = 10;
+
   void validate() const;
   // TODO(jyc): read from yaml?
 };

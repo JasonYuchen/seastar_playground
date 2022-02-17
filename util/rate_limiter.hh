@@ -24,6 +24,7 @@ class rate_limiter {
     }
     return _size > _max_size;
   }
+  uint64_t get_max() const noexcept { return _max_size; }
 
  private:
   uint64_t _size;
