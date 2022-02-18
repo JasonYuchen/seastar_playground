@@ -190,6 +190,8 @@ class invalid_raft_state : public logic_error {
  public:
   using logic_error::logic_error;
   invalid_raft_state() : logic_error(code::invalid_raft_state) {}
+  invalid_raft_state(std::string_view msg)
+    : logic_error("{}: {}", code::invalid_raft_state, msg) {}
 };
 
 }  // namespace rafter::util
