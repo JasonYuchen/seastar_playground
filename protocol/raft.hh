@@ -85,6 +85,11 @@ enum class message_type : uint8_t {
   num_of_type,
 };
 
+inline bool is_prevote(message_type type) {
+  using enum message_type;
+  return type == request_prevote || type == request_prevote_resp;
+}
+
 inline bool is_request_vote(message_type type) {
   using enum message_type;
   return type == request_vote || type == request_prevote;

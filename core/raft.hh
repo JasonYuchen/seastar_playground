@@ -34,6 +34,8 @@ class raft {
   seastar::future<> handle(protocol::message&& m) { return handle(m); }
 
  private:
+  DISALLOW_COPY_MOVE_AND_ASSIGN(raft);
+
   friend class peer;
   friend std::ostream& operator<<(std::ostream& os, const raft& r);
   using role = protocol::raft_role;
@@ -56,6 +58,8 @@ class raft {
   seastar::future<protocol::message> make_replicate(
       uint64_t to, uint64_t next, uint64_t max_bytes);
   protocol::message make_install_snapshot(uint64_t to);
+  bool term_not_matched(protocol::message& m);
+  bool drop_request_vote(protocol::message& m);
 
   // send
   void send(protocol::message&& m);

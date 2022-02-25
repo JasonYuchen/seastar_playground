@@ -115,6 +115,7 @@ class raft_log {
   protocol::snapshot_ptr get_snapshot() const noexcept;
   seastar::future<uint64_t> get_conflict_index(
       protocol::log_entry_span entries) const;
+  seastar::future<uint64_t> pending_config_change_count();
   seastar::future<bool> try_append(
       uint64_t index, protocol::log_entry_span entries);
   void append(protocol::log_entry_span entries);

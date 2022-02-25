@@ -10,11 +10,19 @@
 
 #include <seastar/core/units.hh>
 
+#include "protocol/raft.hh"
+
 namespace rafter {
 
 using seastar::GB;
 using seastar::KB;
 using seastar::MB;
+
+struct raft_config {
+  protocol::group_id group_id;
+
+  void validate() const;
+};
 
 // config file is shared among all shards
 struct config {

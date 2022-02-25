@@ -13,12 +13,34 @@ using namespace seastar;
 
 // TODO(jyc): add raft event listener
 
+template <typename... Args>
+void throw_with_log(logger::format_info fmt, Args&&... args) {
+  l.error(fmt, std::forward<Args>(args)...);
+  throw util::invalid_raft_state();
+}
+
 std::ostream& operator<<(std::ostream& os, const raft& r) {
   return os << "raft[" << r._gid << ","
             << "r:" << r._role << ","
             << "fi:" << r._log.first_index() << ","
             << "li:" << r._log.last_index() << ","
             << "t:" << r._term << "]";
+}
+
+seastar::future<> raft::handle(protocol::message& m) {
+  if (!term_not_matched(m)) {
+    if (!is_prevote(m.type) && m.term != log_id::INVALID_TERM &&
+        m.term != _term) {
+      throw_with_log("{}: mismatched term", *this);
+    }
+    auto role = static_cast<uint8_t>(_role);
+    assert(role < static_cast<uint8_t>(role::num_of_role));
+    auto type = static_cast<uint8_t>(m.type);
+    assert(type < static_cast<uint8_t>(message_type::num_of_type));
+    return (this->*_handlers[role][type])(m);
+  }
+  l.info("{}: dropped {} with term:{} from:{}", *this, m.type, m.term, m.from);
+  return make_ready_future<>();
 }
 
 void raft::initialize_handlers() {
@@ -173,15 +195,13 @@ void raft::assert_handlers() {
 
 void raft::must_be(raft_role role) const {
   if (_role != role) [[unlikely]] {
-    l.error("{}: unexpected role {}, should be {}", *this, _role, role);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: unexpected role {}, should be {}", *this, _role, role);
   }
 }
 
 void raft::must_not_be(raft_role role) const {
   if (_role == role) [[unlikely]] {
-    l.error("{}: unexpected role {}");
-    throw util::invalid_raft_state();
+    throw_with_log("{}: unexpected role {}");
   }
 }
 
@@ -201,13 +221,12 @@ void raft::report_dropped_read_index(message& m) {
 void raft::finalize_message(message& m) {
   if (m.term == log_id::INVALID_TERM && m.type == message_type::request_vote)
       [[unlikely]] {
-    l.error("{}: sending request_vote with invalid term", *this);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: sending request_vote with invalid term", *this);
   }
   if (m.term != log_id::INVALID_TERM && !is_request_vote(m.type) &&
       m.type != message_type::request_prevote_resp) [[unlikely]] {
-    l.error("{}: term {} should not be set for {}", *this, m.term, m.type);
-    throw util::invalid_raft_state();
+    throw_with_log(
+        "{}: term {} should not be set for {}", *this, m.term, m.type);
   }
   if (!is_request(m.type) && !is_request_vote(m.type) &&
       m.type != message_type::request_prevote_resp) {
@@ -222,12 +241,11 @@ future<message> raft::make_replicate(
   co_await _log.query(next, m.entries, max_bytes);
   if (!m.entries.empty() &&
       m.entries.back()->lid.index != next - 1 + m.entries.size()) [[unlikely]] {
-    l.error(
+    throw_with_log(
         "{}: potential log hole in entries, expect:{}, actual:{}",
         *this,
         next - 1 + m.entries.size(),
         m.entries.back()->lid.index);
-    throw util::invalid_raft_state();
   }
   if (_witnesses.contains(to)) {
     utils::fill_metadata_entries(m.entries);
@@ -241,8 +259,7 @@ message raft::make_install_snapshot(uint64_t to) {
   message m{.type = message_type::install_snapshot, .to = to};
   auto ss = _log.get_snapshot();
   if (!ss || ss->log_id.index == log_id::INVALID_INDEX) {
-    l.error("{}: empty snapshot", *this);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: empty snapshot", *this);
   }
   if (_witnesses.contains(to)) {
     ss = make_lw_shared<snapshot>();
@@ -250,6 +267,85 @@ message raft::make_install_snapshot(uint64_t to) {
   }
   m.snapshot = std::move(ss);
   return m;
+}
+
+bool raft::term_not_matched(message& m) {
+  if (m.term == log_id::INVALID_TERM || m.term == _term) {
+    return false;
+  }
+  if (drop_request_vote(m)) {
+    l.warn(
+        "{}: dropped request vote at term:{} from:{}, leader:{} available",
+        *this,
+        _term,
+        m.from,
+        _leader_id);
+    return true;
+  }
+  if (m.term > _term) {
+    bool expected_prevote =
+        (m.type == message_type::request_prevote) ||
+        (m.type == message_type::request_prevote_resp && !m.reject);
+    if (!expected_prevote) {
+      l.warn(
+          "{}: received {} with higher term:{} from:{}",
+          *this,
+          m.type,
+          m.term,
+          m.from);
+      auto leader =
+          protocol::is_leader(m.type) ? m.from : group_id::INVALID_NODE;
+      if (is_observer()) {
+        become_observer(m.term, leader);
+      } else if (is_witness()) {
+        become_witness(m.term, leader);
+      } else {
+        become_follower(m.term, leader, m.type != message_type::request_vote);
+      }
+    }
+  } else {
+    // m.term < _term
+    if (m.type == message_type::request_prevote ||
+        protocol::is_leader(m.type)) {
+      send(message{.type = message_type::noop, .to = m.from});
+    } else {
+      l.info(
+          "{}: ignored {} with lower term:{} from:{}",
+          *this,
+          m.type,
+          m.term,
+          m.from);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool raft::drop_request_vote(message& m) {
+  if (!is_request_vote(m.type) || !_check_quorum || m.term <= _term) {
+    return false;
+  }
+  if (m.hint.low == m.from) {
+    l.info(
+        "{}: received {} with leader transfer hint:{} from:{}",
+        *this,
+        m.type,
+        m.hint.low,
+        m.from);
+    return false;
+  }
+  if (is_leader() && !_quiesce && _election_tick >= _election_timeout) {
+    throw_with_log(
+        "{}: leader has election tick:{} > timeout:{}",
+        *this,
+        _election_tick,
+        _election_timeout);
+  }
+  if (_leader_id != group_id::INVALID_NODE &&
+      _election_tick < _election_timeout) {
+    return true;
+  }
+  return false;
 }
 
 void raft::send(message&& m) {
@@ -344,8 +440,7 @@ future<> raft::broadcast_replicate() {
 void raft::add_node(uint64_t id) {
   _pending_config_change = false;
   if (is_self(id) && is_witness()) {
-    l.error("{}: self is a witness", *this);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: self is a witness", *this);
   }
   if (_remotes.contains(id)) {
     return;
@@ -356,8 +451,7 @@ void raft::add_node(uint64_t id) {
       become_follower(_term, _leader_id, true);
     }
   } else if (auto wit = _witnesses.find(id); wit != _witnesses.end()) {
-    l.error("{}: cannot promote a witness:{}", *this, id);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: cannot promote a witness:{}", *this, id);
   } else {
     _remotes[id] = remote{.match = 0, .next = _log.last_index() + 1};
   }
@@ -366,8 +460,7 @@ void raft::add_node(uint64_t id) {
 void raft::add_observer(uint64_t id) {
   _pending_config_change = false;
   if (is_self(id) && !is_observer()) {
-    l.error("{}: self is not an observer", *this);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: self is not an observer", *this);
   }
   if (_observers.contains(id)) {
     return;
@@ -378,8 +471,7 @@ void raft::add_observer(uint64_t id) {
 void raft::add_witness(uint64_t id) {
   _pending_config_change = false;
   if (is_self(id) && !is_witness()) {
-    l.error("{}: self is not a witness", *this);
-    throw util::invalid_raft_state();
+    throw_with_log("{}: self is not a witness", *this);
   }
   if (_witnesses.contains(id)) {
     return;
@@ -527,14 +619,14 @@ future<> raft::become_leader() {
   set_leader(_gid.node);
   auto count = co_await _log.pending_config_change_count();
   if (count > 1) {
-    l.error("{}: become leader with {} pending config change", *this, count);
-    throw util::invalid_raft_state();
+    throw_with_log(
+        "{}: become leader with {} pending config change", *this, count);
   }
   if (count == 1) {
     _pending_config_change = true;
   }
   l.info("{}: become leader with {} pending config change", *this, count);
-  append_noop_entry();
+  co_await append_noop_entry();
 }
 
 void raft::become_candidate() {
@@ -578,6 +670,7 @@ void raft::become_witness(uint64_t term, uint64_t leader_id) {
   must_be(role::witness);
   reset(term, true);
   set_leader(leader_id);
+  l.info("{}: become witness", *this);
 }
 
 bool raft::is_leader_transferring() const noexcept {
@@ -598,7 +691,7 @@ void raft::reset(uint64_t term, bool reset_election_timeout) {
   }
   if (reset_election_timeout) {
     _election_tick = 0;
-    set_randomized_eletion_timeout();
+    set_randomized_election_timeout();
   }
   _votes.clear();
   _heartbeat_tick = 0;
@@ -633,22 +726,20 @@ future<bool> raft::restore(snapshot_ptr ss) {
   }
   if (!is_observer()) {
     if (ss->membership->observers.contains(_gid.node)) {
-      l.error(
+      throw_with_log(
           "{}: converting to observer, index:{}, committed:{}",
           *this,
           ss->log_id.index,
           _log.committed());
-      co_return coroutine::make_exception(util::invalid_raft_state());
     }
   }
   if (!is_witness()) {
     if (ss->membership->witnesses.contains(_gid.node)) {
-      l.error(
+      throw_with_log(
           "{}: converting to witness, index:{}, committed:{}",
           *this,
           ss->log_id.index,
           _log.committed());
-      co_return coroutine::make_exception(util::invalid_raft_state());
     }
   }
   auto match = co_await _log.term_index_match(ss->log_id);
@@ -705,7 +796,7 @@ future<> raft::append_noop_entry() {
 
 future<bool> raft::has_committed_entry() {
   if (_term == log_id::INVALID_TERM) {
-    co_return coroutine::make_exception(util::invalid_raft_state());
+    throw_with_log("{}: invalid term", *this);
   }
   try {
     co_return _term == co_await _log.term(_log.committed());

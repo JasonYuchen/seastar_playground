@@ -423,7 +423,7 @@ future<size_t> raft_log::query(
     co_return max_bytes;
   }
   co_return co_await query(
-      {.low = start, .high = last_index()}, entries, max_bytes);
+      {.low = start, .high = last_index() + 1}, entries, max_bytes);
 }
 
 future<size_t> raft_log::query(
@@ -486,6 +486,28 @@ future<uint64_t> raft_log::get_conflict_index(
     }
   }
   co_return protocol::log_id::INVALID_INDEX;
+}
+
+future<uint64_t> raft_log::pending_config_change_count() {
+  uint64_t count = 0;
+  uint64_t start_index = _committed + 1;
+  protocol::log_entry_vector entries;
+  while (true) {
+    // TODO(jyc): refine max_bytes
+    entries.clear();
+    co_await query(start_index, entries, UINT64_MAX);
+    if (entries.empty()) {
+      co_return count;
+    }
+    count = std::accumulate(
+        entries.begin(),
+        entries.end(),
+        count,
+        [](uint64_t count, const auto& entry) {
+          return count + (entry->type == protocol::entry_type::config_change);
+        });
+    start_index = entries.back()->lid.index;
+  }
 }
 
 future<bool> raft_log::try_append(
