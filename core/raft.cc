@@ -562,8 +562,7 @@ future<> raft::campaign() {
   become_candidate();
   handle_vote_resp(_gid.node, false, false);
   if (quorum() == 1) {
-    become_leader();
-    co_return;
+    co_return co_await become_leader();
   }
   uint64_t hint = group_id::INVALID_NODE;
   if (_is_leader_transfer_target) {
@@ -898,6 +897,106 @@ bool raft::time_to_check_rate_limit() const noexcept {
 void raft::set_randomized_election_timeout() {
   _randomized_election_timeout =
       _election_timeout + _random_engine() % _election_timeout;
+}
+
+future<> raft::node_election(message& m) {
+  if (!is_leader()) {
+    // there can be multiple pending membership change entries committed but not
+    // applied on this node. say with a cluster of X, Y and Z, there are two
+    // such entries for adding node A and B are committed but not applied
+    // available on X. If X is allowed to start a new election, it can become a
+    // leader with a vote from any one of the node Y or Z. Further proposals
+    // made by the new leader X in the next term will require a quorum of 2
+    // which can have no overlap with the committed quorum of 3. this violates
+    // the safety requirement of raft. ignore the Election message when there is
+    // membership configure change committed but not applied
+    if (_log.has_config_change_to_apply()) {
+      l.warn("{}: election skipped due to not applied config change", *this);
+      co_return;
+    }
+    co_return co_await pre_campaign();
+  }
+  l.info("{}: leader ignored election", *this);
+  co_return;
+}
+
+future<> raft::node_request_vote(message& m) {
+  message resp{.type = message_type::request_vote_resp, .to = m.from};
+  bool can_grant = can_grant_vote(m.from, m.term);
+  bool up_to_date = co_await _log.up_to_date(m.lid);
+  if (can_grant && up_to_date) {
+    l.info(
+        "{}: cast vote from {} with term:{}, {}", *this, m.from, m.term, m.lid);
+    _election_tick = 0;
+    _vote = m.from;
+  } else {
+    l.warn(
+        "{}: rejected vote {} with term:{}, {}, can_grant:{}, up_to_date:{}",
+        *this,
+        m.from,
+        m.term,
+        m.lid,
+        can_grant,
+        up_to_date);
+    resp.reject = true;
+  }
+  send(std::move(resp));
+  co_return;
+}
+
+future<> raft::node_request_prevote(message& m) {
+  message resp{.type = message_type::request_prevote_resp, .to = m.from};
+  bool up_to_date = co_await _log.up_to_date(m.lid);
+  if (m.term < _term) {
+    throw_with_log("m.term < r.term");
+  }
+  if (m.term > _term && up_to_date) {
+    l.info(
+        "{}: cast prevote from {} with term:{}, {}",
+        *this,
+        m.from,
+        m.term,
+        m.lid);
+    resp.term = m.term;
+  } else {
+    l.warn(
+        "{}: rejected prevote {} with term:{}, {}, up_to_date:{}",
+        *this,
+        m.from,
+        m.term,
+        m.lid,
+        up_to_date);
+    resp.term = _term;
+    resp.reject = true;
+  }
+  send(std::move(resp));
+  co_return;
+}
+
+future<> raft::node_config_change(message& m) {
+  if (m.reject) {
+    _pending_config_change = false;
+    co_return;
+  }
+  auto type = static_cast<config_change_type>(m.hint.high);
+  auto id = m.hint.low;
+  switch (type) {
+    case config_change_type::add_node:
+      add_node(id);
+      break;
+    case config_change_type::remove_node:
+      co_await remove_node(id);
+      break;
+    case config_change_type::add_observer:
+      add_observer(id);
+      break;
+    case config_change_type::add_witness:
+      add_witness(id);
+      break;
+    default:
+      throw_with_log("unexpected config_change_type");
+  }
+  co_return;
 }
 
 }  // namespace rafter::core
