@@ -400,6 +400,20 @@ bool raft_log::has_more_entries_to_apply(uint64_t applied_to) const noexcept {
   return _committed > applied_to;
 }
 
+bool raft_log::has_config_change_to_apply() const noexcept {
+  // TODO(jyc): avoid entry vector
+  protocol::log_entry_vector entries;
+  _in_memory.query(
+      {.low = first_not_applied_index(), .high = UINT64_MAX},
+      entries,
+      UINT64_MAX);
+  for (const auto& ent : entries) {
+    if (ent->type == protocol::entry_type::config_change) {
+      return true;
+    }
+  }
+}
+
 future<> raft_log::get_entries_to_save(protocol::log_entry_vector& entries) {
   auto ents = _in_memory.get_entries_to_save();
   entries.insert(entries.end(), ents.begin(), ents.end());

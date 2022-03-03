@@ -197,12 +197,12 @@ class raft {
   //  config_change     -> common
   //  local_tick        -> common
   //  snapshot_received -> common
-  seastar::future<> observer_heartbeat(protocol::message& m);
-  seastar::future<> observer_propose(protocol::message& m);
-  seastar::future<> observer_read_index(protocol::message& m);
-  seastar::future<> observer_read_index_resp(protocol::message& m);
-  seastar::future<> observer_replicate(protocol::message& m);
-  seastar::future<> observer_install_snapshot(protocol::message& m);
+  //  heartbeat         -> follower
+  //  propose           -> follower
+  //  read_index        -> follower
+  //  read_index_resp   -> follower
+  //  replicate         -> follower
+  //  install_snapshot  -> follower
 
   // witness
   //  request_vote      -> common
@@ -210,9 +210,9 @@ class raft {
   //  config_change     -> common
   //  local_tick        -> common
   //  snapshot_received -> common
-  seastar::future<> witness_heartbeat(protocol::message& m);
-  seastar::future<> witness_replicate(protocol::message& m);
-  seastar::future<> witness_install_snapshot(protocol::message& m);
+  //  heartbeat         -> follower
+  //  replicate         -> follower
+  //  install_snapshot  -> follower
 
   const config& _config;
   protocol::group_id _gid;

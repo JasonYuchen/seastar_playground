@@ -118,12 +118,12 @@ void raft::initialize_handlers() {
   D_(observer, config_change, node_config_change);
   D_(observer, local_tick, node_local_tick);
   D_(observer, snapshot_received, node_restore_remote);
-  D_(observer, heartbeat, observer_heartbeat);
-  D_(observer, propose, observer_propose);
-  D_(observer, read_index, observer_read_index);
-  D_(observer, read_index_resp, observer_read_index_resp);
-  D_(observer, replicate, observer_replicate);
-  D_(observer, install_snapshot, observer_install_snapshot);
+  D_(observer, heartbeat, follower_heartbeat);
+  D_(observer, propose, follower_propose);
+  D_(observer, read_index, follower_read_index);
+  D_(observer, read_index_resp, follower_read_index_resp);
+  D_(observer, replicate, follower_replicate);
+  D_(observer, install_snapshot, follower_install_snapshot);
 
   D_(witness, election, node_election);
   D_(witness, request_vote, node_request_vote);
@@ -131,9 +131,9 @@ void raft::initialize_handlers() {
   D_(witness, config_change, node_config_change);
   D_(witness, local_tick, node_local_tick);
   D_(witness, snapshot_received, node_restore_remote);
-  D_(witness, heartbeat, witness_heartbeat);
-  D_(witness, replicate, witness_replicate);
-  D_(witness, install_snapshot, witness_install_snapshot);
+  D_(witness, heartbeat, follower_heartbeat);
+  D_(witness, replicate, follower_replicate);
+  D_(witness, install_snapshot, follower_install_snapshot);
 
 #undef D_
 
@@ -996,6 +996,104 @@ future<> raft::node_config_change(message& m) {
     default:
       throw_with_log("unexpected config_change_type");
   }
+  co_return;
+}
+
+future<> raft::node_local_tick(message& m) {
+  if (m.reject) {
+    quiesced_tick();
+    co_return;
+  }
+  co_await tick();
+}
+
+future<> raft::node_restore_remote(message& m) {
+  auto next = _log.last_index() + 1;
+  _remotes.clear();
+  for (const auto& [id, addr] : m.snapshot->membership->addresses) {
+    if (id == _gid.node && is_observer()) {
+      become_follower(_term, _leader_id, true);
+    }
+    if (_witnesses.contains(id)) {
+      throw_with_log("cannot promote a witness to a full member");
+    }
+    auto match = id == _gid.node ? next - 1 : 0;
+    _remotes[id] = remote{.match = match, .next = next};
+    l.debug(
+        "{}: restored remote {} to match:{}, next:{}", *this, id, match, next);
+  }
+  if (is_self_removed() && is_leader()) {
+    become_follower(_term, group_id::INVALID_NODE, true);
+  }
+  _observers.clear();
+  for (const auto& [id, addr] : m.snapshot->membership->observers) {
+    auto match = id == _gid.node ? next - 1 : 0;
+    _observers[id] = remote{.match = match, .next = next};
+    l.debug(
+        "{}: restored observer {} to match:{}, next:{}",
+        *this,
+        id,
+        match,
+        next);
+  }
+  _witnesses.clear();
+  for (const auto& [id, addr] : m.snapshot->membership->witnesses) {
+    auto match = id == _gid.node ? next - 1 : 0;
+    _witnesses[id] = remote{.match = match, .next = next};
+    l.debug(
+        "{}: restored witness {} to match:{}, next:{}", *this, id, match, next);
+  }
+  reset_matched();
+  co_return;
+}
+
+future<> raft::node_heartbeat(message& m) {
+  _log.commit(m.commit);
+  send(message{
+      .type = message_type::heartbeat_resp, .to = m.from, .hint = m.hint});
+  co_return;
+}
+
+future<> raft::node_replicate(message& m) {
+  auto resp = message{.type = message_type::replicate_resp, .to = m.from};
+  if (m.lid.index < _log.committed()) {
+    resp.lid.index = _log.committed();
+    send(std::move(resp));
+    co_return;
+  }
+  bool match = co_await _log.term_index_match(m.lid);
+  if (match) {
+    co_await _log.try_append(m.lid.index, m.entries);
+    auto last_index = m.lid.index + m.entries.size();
+    _log.commit(std::min(last_index, m.commit));
+    resp.lid.index = last_index;
+  } else {
+    l.debug(
+        "{}: rejected replicate from {} term:{} with {}",
+        *this,
+        m.from,
+        m.term,
+        m.lid);
+    resp.reject = true;
+    resp.lid.index = m.lid.index;
+    resp.hint.low = _log.last_index();
+  }
+  send(std::move(resp));
+  co_return;
+}
+
+future<> raft::node_install_snapshot(message& m) {
+  l.debug("{}: install snapshot from {}", *this, m.from);
+  auto resp = message{.type = message_type::replicate_resp, .to = m.from};
+  bool restored = co_await restore(m.snapshot);
+  if (restored) {
+    l.debug("{}: restored snapshot with {}", *this, m.snapshot->log_id);
+    resp.lid.index = _log.last_index();
+  } else {
+    l.debug("{}: rejected snapshot with {}", *this, m.snapshot->log_id);
+    resp.lid.index = _log.committed();
+  }
+  send(std::move(resp));
   co_return;
 }
 

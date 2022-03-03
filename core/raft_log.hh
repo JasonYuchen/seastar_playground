@@ -94,6 +94,7 @@ class raft_log {
   uint64_t apply_index_limit() const noexcept;
   bool has_entries_to_apply() const noexcept;
   bool has_more_entries_to_apply(uint64_t applied_to) const noexcept;
+  bool has_config_change_to_apply() const noexcept;
   seastar::future<> get_entries_to_save(protocol::log_entry_vector& entries);
   seastar::future<> get_entries_to_apply(protocol::log_entry_vector& entries);
   seastar::future<size_t> query(
