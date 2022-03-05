@@ -60,6 +60,8 @@ class raft {
   protocol::message make_install_snapshot(uint64_t to);
   bool term_not_matched(protocol::message& m);
   bool drop_request_vote(protocol::message& m);
+  void add_ready_to_read(uint64_t index, protocol::hint ctx);
+  remote* get_peer(uint64_t node_id) noexcept;
 
   // send
   void send(protocol::message&& m);

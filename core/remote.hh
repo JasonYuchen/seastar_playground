@@ -93,9 +93,17 @@ class remote {
 
   void responded_to() noexcept;
 
+  void set_snapshot_ack(uint64_t tick, bool rejected);
+
+  void clear_snapshot_ack();
+
+  bool snapshot_ack_tick();
+
   uint64_t match = 0;
   uint64_t next = 0;
   uint64_t snapshot_index = 0;
+  uint64_t snapshot_tick = 0;
+  bool snapshot_rejected = false;
   bool active = false;
   enum state state = state::retry;
 };

@@ -116,6 +116,29 @@ void remote::responded_to() noexcept {
   }
 }
 
+void remote::set_snapshot_ack(uint64_t tick, bool rejected) {
+  if (state == state::snapshot) {
+    snapshot_tick = tick;
+    snapshot_rejected = rejected;
+  } else {
+    throw util::failed_precondition_error(
+        "setting snapshot ack in non-snapshot state");
+  }
+}
+
+void remote::clear_snapshot_ack() {
+  snapshot_tick = 0;
+  snapshot_rejected = false;
+}
+
+bool remote::snapshot_ack_tick() {
+  if (snapshot_tick > 0) {
+    snapshot_tick--;
+    return snapshot_tick == 0;
+  }
+  return false;
+}
+
 std::ostream& operator<<(std::ostream& os, enum remote::state s) {
   static const char* states[] = {"retry", "wait", "replicate", "snapshot"};
   return os << states[static_cast<uint8_t>(s)];

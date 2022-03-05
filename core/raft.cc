@@ -348,6 +348,23 @@ bool raft::drop_request_vote(message& m) {
   return false;
 }
 
+void raft::add_ready_to_read(uint64_t index, hint ctx) {
+  _ready_to_reads.push_back(ready_to_read{index, ctx});
+}
+
+remote* raft::get_peer(uint64_t node_id) noexcept {
+  if (auto rit = _remotes.find(node_id); rit != _remotes.end()) {
+    return &rit->second;
+  } else if (auto oit = _observers.find(node_id); oit != _observers.end()) {
+    return &oit->second;
+  } else if (auto wit = _witnesses.find(node_id); wit != _witnesses.end()) {
+    return &wit->second;
+  } else {
+    l.warn("{}: failed to find peer {}", *this, node_id);
+    return nullptr;
+  }
+}
+
 void raft::send(message&& m) {
   m.from = _gid.node;
   finalize_message(m);
@@ -1094,6 +1111,178 @@ future<> raft::node_install_snapshot(message& m) {
     resp.lid.index = _log.committed();
   }
   send(std::move(resp));
+  co_return;
+}
+
+future<> raft::leader_heartbeat(message& m) {
+  broadcast_heartbeat();
+  co_return;
+}
+
+future<> raft::leader_heartbeat_resp(message& m) {
+  must_be(role::leader);
+  remote* r = get_peer(m.from);
+  if (r == nullptr) {
+    co_return;
+  }
+  r->active = true;
+  r->wait_to_retry();
+  if (r->match < _log.last_index()) {
+    co_await send_replicate(m.from, *r);
+  }
+  // heartbeat response contains leadership confirmation requested as part of
+  // the read index protocol.
+  if (m.hint.low != log_id::INVALID_INDEX) {
+    _read_index.confirm(
+        m.hint,
+        m.from,
+        quorum(),
+        [this, hint = m.hint](const read_index::status& s) {
+          if (s.from == group_id::INVALID_NODE || s.from == _gid.node) {
+            add_ready_to_read(s.index, s.ctx);
+          } else {
+            send(message{
+                .type = message_type::read_index_resp,
+                .to = s.from,
+                .lid = {.index = s.index},
+                .hint = hint});
+          }
+        });
+  }
+  co_return;
+}
+
+future<> raft::leader_check_quorum(message& m) {
+  must_be(role::leader);
+  if (!has_quorum()) {
+    l.warn("{}: lost quorum, step down", *this);
+    become_follower(_term, group_id::INVALID_NODE, true);
+  }
+  co_return;
+}
+
+future<> raft::leader_propose(message& m) {
+  must_be(role::leader);
+  if (is_leader_transferring()) {
+    l.warn("{}: proposal dropped due to leader transferring", *this);
+    report_dropped_proposal(m);
+    co_return;
+  }
+  for (const auto& e : m.entries) {
+    if (e->type == entry_type::config_change) {
+      if (_pending_config_change) {
+        l.warn("{}: config change dropped due to pending change", *this);
+        report_dropped_config_change(make_lw_shared(*e));
+        *e = log_entry{.type = entry_type::application};
+      }
+      _pending_config_change = true;
+    }
+  }
+  co_await append_entries(m.entries);
+  co_await broadcast_replicate();
+}
+
+future<> raft::leader_read_index(message& m) {
+  must_be(role::leader);
+  if (_witnesses.contains(m.from)) {
+    l.error("{}: witness dropped read index from {}", *this, m.from);
+    co_return;
+  }
+  if (quorum() == 1) {
+    add_ready_to_read(_log.committed(), m.hint);
+    if (m.from != _gid.node && _observers.contains(m.from)) {
+      // single node quorum leader received request from observers
+      send(message{
+          .type = message_type::read_index_resp,
+          .to = m.from,
+          .lid = {.index = _log.committed()},
+          .commit = m.commit,
+          .hint = m.hint});
+    }
+    co_return;
+  }
+  if (!co_await has_committed_entry()) {
+    // leader doesn't know the commit value of the cluster
+    // see raft thesis section 6.4, this is the first step of the read index
+    // protocol.
+    l.warn("{}: read index dropped due to leader not ready", *this);
+    report_dropped_read_index(m);
+    co_return;
+  }
+  _read_index.add_request(_log.committed(), m.hint, m.from);
+  broadcast_heartbeat();
+}
+
+future<> raft::leader_replicate_resp(message& m) {
+  must_be(role::leader);
+  remote* r = get_peer(m.from);
+  if (r == nullptr) {
+    co_return;
+  }
+  r->active = true;
+  if (m.reject) {
+    // the replication flow control code is derived from etcd raft, it resets
+    // next to match + 1. it is thus even more conservative than the raft
+    // thesis's approach of next = next - 1 mentioned on the p21 of
+    // the thesis.
+    if (r->try_decrease(m.lid.index, m.hint.low)) {
+      r->replicate_to_retry();
+      co_await send_replicate(m.from, *r);
+    }
+    co_return;
+  }
+  bool paused = r->is_paused();
+  if (r->try_update(m.lid.index)) {
+    r->responded_to();
+    if (co_await try_commit()) {
+      co_await broadcast_replicate();
+    } else if (paused) {
+      send_replicate(m.from, *r);
+    }
+    // according to the leadership transfer protocol listed on the p29 of the
+    // raft thesis
+    if (is_leader_transferring() && m.from == _leader_transfer_target &&
+        _log.last_index() == r->match) {
+      send_timeout_now(m.from);
+    }
+  }
+}
+
+future<> raft::leader_snapshot_status(message& m) {
+  must_be(role::leader);
+  remote* r = get_peer(m.from);
+  if (r == nullptr) {
+    co_return;
+  }
+  if (r->state != remote::state::snapshot) {
+    co_return;
+  }
+  if (m.hint.low != 0) {
+    r->set_snapshot_ack(m.hint.low, m.reject);
+    _snapshotting = true;
+    co_return;
+  }
+  if (m.reject) {
+    r->clear_pending_snapshot();
+    l.warn("{}: snapshot failed, peer {} in wait state", *this, m.from);
+  } else {
+    l.debug(
+        "{}: snapshot succeeded, peer {} in wait state, next:{}",
+        *this,
+        m.from,
+        r->next);
+  }
+  r->become_wait();
+}
+
+future<> raft::leader_unreachable(message& m) {
+  must_be(role::leader);
+  l.debug("{}: {} unreachable", *this, m.from);
+  remote* r = get_peer(m.from);
+  if (r == nullptr) {
+    co_return;
+  }
+  r->replicate_to_retry();
   co_return;
 }
 
