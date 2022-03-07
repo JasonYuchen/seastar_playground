@@ -520,6 +520,21 @@ T read(serializer, Input& i, util::type<T>) {
 }
 
 template <typename T>
+std::string write_to_string(const T& v) {
+  std::string data;
+  data.resize(v.bytes());
+  seastar::simple_memory_output_stream s(data.data(), data.size());
+  util::serialize(s, v);
+  return data;
+}
+
+template <typename T>
+T read_from_string(std::string_view data, util::type<T>) {
+  seastar::simple_memory_input_stream s(data.data(), data.size());
+  return util::deserialize(s, util::type<T>());
+}
+
+template <typename T>
 size_t sizer(const T& obj) {
   seastar::measuring_output_stream mo;
   write(serializer{}, mo, obj);

@@ -106,6 +106,20 @@ inline bool is_leader(message_type type) {
          type == timeout_now || type == read_index_resp;
 }
 
+inline bool is_local(message_type type) {
+  using enum message_type;
+  return type == election || type == leader_heartbeat || type == unreachable ||
+         type == snapshot_status || type == check_quorum || type == local_tick;
+}
+
+inline bool is_response(message_type type) {
+  using enum message_type;
+  return type == replicate_resp || type == request_vote_resp ||
+         type == request_prevote_resp || type == heartbeat_resp ||
+         type == read_index_resp || type == unreachable ||
+         type == snapshot_status || type == leader_transfer;
+}
+
 const char *name(enum message_type type);
 inline std::ostream &operator<<(std::ostream &os, message_type type) {
   return os << name(type);

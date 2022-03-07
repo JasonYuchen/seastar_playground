@@ -111,6 +111,7 @@ class raft {
   seastar::future<> leader_tick();
   seastar::future<> nonleader_tick();
   void quiesced_tick();
+  void leader_is_available(uint64_t leader_id) noexcept;
   bool time_to_elect() const noexcept;
   bool time_to_heartbeat() const noexcept;
   bool time_to_check_quorum() const noexcept;

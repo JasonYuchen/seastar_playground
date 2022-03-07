@@ -341,11 +341,8 @@ bool raft::drop_request_vote(message& m) {
         _election_tick,
         _election_timeout);
   }
-  if (_leader_id != group_id::INVALID_NODE &&
-      _election_tick < _election_timeout) {
-    return true;
-  }
-  return false;
+  return _leader_id != group_id::INVALID_NODE &&
+         _election_tick < _election_timeout;
 }
 
 void raft::add_ready_to_read(uint64_t index, hint ctx) {
@@ -355,14 +352,15 @@ void raft::add_ready_to_read(uint64_t index, hint ctx) {
 remote* raft::get_peer(uint64_t node_id) noexcept {
   if (auto rit = _remotes.find(node_id); rit != _remotes.end()) {
     return &rit->second;
-  } else if (auto oit = _observers.find(node_id); oit != _observers.end()) {
-    return &oit->second;
-  } else if (auto wit = _witnesses.find(node_id); wit != _witnesses.end()) {
-    return &wit->second;
-  } else {
-    l.warn("{}: failed to find peer {}", *this, node_id);
-    return nullptr;
   }
+  if (auto oit = _observers.find(node_id); oit != _observers.end()) {
+    return &oit->second;
+  }
+  if (auto wit = _witnesses.find(node_id); wit != _witnesses.end()) {
+    return &wit->second;
+  }
+  l.warn("{}: failed to find peer {}", *this, node_id);
+  return nullptr;
 }
 
 void raft::send(message&& m) {
@@ -605,7 +603,7 @@ future<> raft::campaign() {
 }
 
 uint64_t raft::handle_vote_resp(uint64_t from, bool rejected, bool prevote) {
-  auto type = prevote ? "request_prevote" : "request_vote";
+  const auto* type = prevote ? "request_prevote" : "request_vote";
   if (rejected) {
     l.warn("{}: received {} rejection from {}", *this, type, from);
   } else {
@@ -888,6 +886,11 @@ void raft::quiesced_tick() {
   _election_tick++;
 }
 
+void raft::leader_is_available(uint64_t leader_id) noexcept {
+  _election_tick = 0;
+  _leader_id = leader_id;
+}
+
 bool raft::time_to_elect() const noexcept {
   return _election_tick >= _randomized_election_timeout;
 }
@@ -1164,14 +1167,14 @@ future<> raft::leader_check_quorum(message& m) {
 future<> raft::leader_propose(message& m) {
   must_be(role::leader);
   if (is_leader_transferring()) {
-    l.warn("{}: proposal dropped due to leader transferring", *this);
+    l.warn("{}: dropped proposal due to leader transferring", *this);
     report_dropped_proposal(m);
     co_return;
   }
   for (const auto& e : m.entries) {
     if (e->type == entry_type::config_change) {
       if (_pending_config_change) {
-        l.warn("{}: config change dropped due to pending change", *this);
+        l.warn("{}: dropped config change due to pending change", *this);
         report_dropped_config_change(make_lw_shared(*e));
         *e = log_entry{.type = entry_type::application};
       }
@@ -1185,7 +1188,7 @@ future<> raft::leader_propose(message& m) {
 future<> raft::leader_read_index(message& m) {
   must_be(role::leader);
   if (_witnesses.contains(m.from)) {
-    l.error("{}: witness dropped read index from {}", *this, m.from);
+    l.error("{}: dropped witness read index from {}", *this, m.from);
     co_return;
   }
   if (quorum() == 1) {
@@ -1205,7 +1208,7 @@ future<> raft::leader_read_index(message& m) {
     // leader doesn't know the commit value of the cluster
     // see raft thesis section 6.4, this is the first step of the read index
     // protocol.
-    l.warn("{}: read index dropped due to leader not ready", *this);
+    l.warn("{}: dropped read index due to leader not ready", *this);
     report_dropped_read_index(m);
     co_return;
   }
@@ -1237,7 +1240,7 @@ future<> raft::leader_replicate_resp(message& m) {
     if (co_await try_commit()) {
       co_await broadcast_replicate();
     } else if (paused) {
-      send_replicate(m.from, *r);
+      co_await send_replicate(m.from, *r);
     }
     // according to the leadership transfer protocol listed on the p29 of the
     // raft thesis
@@ -1284,6 +1287,171 @@ future<> raft::leader_unreachable(message& m) {
   }
   r->replicate_to_retry();
   co_return;
+}
+
+future<> raft::leader_leader_transfer(message& m) {
+  must_be(role::leader);
+  auto target = m.hint.low;
+  if (target == group_id::INVALID_NODE) {
+    throw_with_log("leader transfer target not set");
+  }
+  if (is_leader_transferring()) {
+    l.warn("{}: ignored leader transfer due to an ongoing one", *this);
+    co_return;
+  }
+  if (target == _gid.node) {
+    l.warn("{}: ignored leader transfer due to transferring to self", *this);
+    co_return;
+  }
+  auto it = _remotes.find(target);
+  if (it == _remotes.end()) {
+    l.warn("{}: ignored leader transfer due to unknown target", *this);
+    co_return;
+  }
+  _leader_transfer_target = target;
+  _election_tick = 0;
+  // fast path below
+  // or wait for the target node to catch up, see p29 of the raft thesis
+  if (it->second.match == _log.last_index()) {
+    send_timeout_now(target);
+  }
+}
+
+future<> raft::leader_rate_limit(message& m) {
+  if (_limiter.enabled()) {
+    _limiter.set_peer(m.from, m.hint.low);
+  } else {
+    l.warn("{}: ignored rate limit due to disabled limiter", *this);
+  }
+  co_return;
+}
+
+future<> raft::candidate_heartbeat(message& m) {
+  become_follower(_term, m.from, true);
+  return node_heartbeat(m);
+}
+
+future<> raft::candidate_propose(message& m) {
+  l.warn("{}: dropped proposal due to no leader", *this);
+  report_dropped_proposal(m);
+  co_return;
+}
+
+future<> raft::candidate_read_index(message& m) {
+  l.warn("{}: dropped read index due to no leader", *this);
+  report_dropped_read_index(m);
+  co_return;
+}
+
+future<> raft::candidate_replicate(message& m) {
+  become_follower(_term, m.from, true);
+  return node_replicate(m);
+}
+
+future<> raft::candidate_install_snapshot(message& m) {
+  become_follower(_term, m.from, true);
+  return node_install_snapshot(m);
+}
+
+future<> raft::candidate_request_vote_resp(message& m) {
+  if (_observers.contains(m.from)) {
+    l.warn("{}: dropped request vote resp from observer {}", *this, m.from);
+    co_return;
+  }
+  auto count = handle_vote_resp(m.from, m.reject, false);
+  l.info(
+      "{}: received {} votes and {} rejections, quorum is {}",
+      *this,
+      count,
+      _votes.size() - count,
+      quorum());
+  if (count == quorum()) {
+    co_await become_leader();
+    co_await broadcast_replicate();
+  } else if (_votes.size() - count == quorum()) {
+    // if rejected by majority, directly become follower, etcd raft does this
+    become_follower(_term, group_id::INVALID_NODE, true);
+  }
+}
+
+future<> raft::pre_candidate_request_prevote_resp(message& m) {
+  if (_observers.contains(m.from)) {
+    l.warn("{}: dropped request prevote resp from observer {}", *this, m.from);
+    co_return;
+  }
+  auto count = handle_vote_resp(m.from, m.reject, true);
+  l.info(
+      "{}: received {} prevotes and {} rejections, quorum is {}",
+      *this,
+      count,
+      _votes.size() - count,
+      quorum());
+  if (count == quorum()) {
+    co_await campaign();
+  } else if (_votes.size() - count == quorum()) {
+    // if rejected by majority, directly become follower, etcd raft does this
+    become_follower(_term, group_id::INVALID_NODE, true);
+  }
+}
+
+future<> raft::follower_heartbeat(message& m) {
+  leader_is_available(m.from);
+  return node_heartbeat(m);
+}
+
+future<> raft::follower_propose(message& m) {
+  if (_leader_id == group_id::INVALID_NODE) {
+    l.warn("{}: dropped propose due to no leader", *this);
+    report_dropped_proposal(m);
+    co_return;
+  }
+  m.to = _leader_id;
+  send(std::move(m));
+}
+
+future<> raft::follower_read_index(message& m) {
+  if (_leader_id == group_id::INVALID_NODE) {
+    l.warn("{}: dropped read index due to no leader", *this);
+    report_dropped_read_index(m);
+    co_return;
+  }
+  m.to = _leader_id;
+  send(std::move(m));
+}
+
+future<> raft::follower_read_index_resp(message& m) {
+  leader_is_available(m.from);
+  add_ready_to_read(m.lid.index, m.hint);
+  co_return;
+}
+
+future<> raft::follower_replicate(message& m) {
+  leader_is_available(m.from);
+  return node_replicate(m);
+}
+
+future<> raft::follower_leader_transfer(message& m) {
+  if (_leader_id == group_id::INVALID_NODE) {
+    l.warn("{}: dropped leader transfer due to no leader", *this);
+    co_return;
+  }
+  m.to = _leader_id;
+  send(std::move(m));
+}
+
+future<> raft::follower_install_snapshot(message& m) {
+  leader_is_available(m.from);
+  return node_install_snapshot(m);
+}
+
+future<> raft::follower_timeout_now(message& m) {
+  // the last paragraph, p29 of the raft thesis mentions that this is nothing
+  // different from the clock moving forward quickly
+  l.info("{}: timeout now", *this);
+  _election_tick = _randomized_election_timeout;
+  _is_leader_transfer_target = true;
+  co_await tick();
+  _is_leader_transfer_target = false;
 }
 
 }  // namespace rafter::core
