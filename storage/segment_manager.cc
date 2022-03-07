@@ -16,7 +16,8 @@ using namespace seastar;
 using namespace std;
 
 segment_manager::segment_manager(const config& config)
-  : _config(config), _gc_worker("segment_gc", _config.wal_gc_queue_capacity) {}
+  : _config(config)
+  , _gc_worker("segment_gc", _config.wal_gc_queue_capacity, l) {}
 
 future<> segment_manager::start() {
   _log_dir = filesystem::path(_config.data_dir).append("wal");
@@ -49,104 +50,17 @@ future<> segment_manager::stop() {
 
 stats segment_manager::stats() const noexcept { return _stats; }
 
-future<bool> segment_manager::append(const update& up) {
-  if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
-    co_return false;
-  }
-  _stats._append++;
-  _stats._append_entry += up.entries_to_save.size();
-  _stats._append_state += up.state.empty() ? 0 : 1;
-  _stats._append_snap += up.snapshot.operator bool();
-
-  auto prev_state = _index_group.get_hard_state(up.gid);
-  bool need_sync = up.snapshot || !up.entries_to_save.empty() ||
-                   prev_state.term != up.state.term ||
-                   prev_state.vote != up.state.vote;
-  auto it = _segments.rbegin();
-  auto filename = it->first;
-  auto segment = it->second.get();
-  auto offset = segment->bytes();
-  auto new_offset = co_await segment->append(up);
-  index::entry e{
-      .filename = filename,
-      .offset = offset,
-      .length = new_offset - offset,
-  };
-  if (new_offset >= _config.wal_rolling_size) {
-    co_await rolling();
-    need_sync = false;
-  }
-  co_await update_index(up, e);
-  co_return need_sync;
+future<> save_bootstrap_info(protocol::bootstrap_ptr info) {
+  // TODO(jyc)
+  co_return;
 }
 
-future<> segment_manager::remove(group_id id, uint64_t index) {
-  _stats._remove++;
-  update comp{
-      .gid = id,
-      .state =
-          {
-              .commit = index,
-          },
-  };
-  co_await append(comp);
-  co_await compaction(id);
+future<protocol::bootstrap_ptr> load_bootstrap_info() {
+  // TODO(jyc)
+  co_return protocol::bootstrap_ptr{};
 }
 
-future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
-  _stats._query_snap++;
-
-  auto i = _index_group.query_snapshot(id);
-  if (i.empty()) {
-    co_return snapshot_ptr{};
-  }
-  auto it = _segments.find(i.filename);
-  if (it == _segments.end()) {
-    l.error(
-        "{} segment_manager::query_snapshot: segment:{} not found",
-        id,
-        i.filename);
-    co_return coroutine::make_exception(util::corruption_error());
-  }
-  auto segment = it->second.get();
-  auto up = co_await segment->query(i);
-  if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
-    l.error("{} segment_manager::query_snapshot: empty", id);
-    co_return coroutine::make_exception(util::corruption_error());
-  }
-  co_return std::move(up.snapshot);
-}
-
-future<raft_state> segment_manager::query_raft_state(
-    group_id id, uint64_t last_index) {
-  _stats._query_state++;
-
-  // TODO(jyc): read from segment or read from _index_group?
-  auto st = _index_group.get_hard_state(id);
-  if (st.empty()) {
-    l.error("{} segment_manager::query_raft_state: no data", id);
-    co_return coroutine::make_exception(util::failed_precondition_error());
-  }
-  raft_state r;
-  r.hard_state = st;
-  auto ie = _index_group.query(id, {.low = last_index + 1, .high = UINT64_MAX});
-  if (!ie.empty()) {
-    uint64_t prev_idx = ie.front().first_index - 1;
-    for (auto e : ie) {
-      if (prev_idx + 1 != e.first_index) {
-        l.error(
-            "{} segment_manager::query_raft_state: missing index:{}",
-            id,
-            prev_idx + 1);
-        co_return coroutine::make_exception(util::corruption_error());
-      }
-      prev_idx = e.last_index;
-    }
-    r.first_index = last_index + 1;
-    r.entry_count = ie.back().last_index - r.first_index;
-  }
-  co_return r;
-}
+future<> save(std::span<protocol::update> updates) { co_return; }
 
 future<size_t> segment_manager::query_entries(
     group_id id, hint range, log_entry_vector& entries, uint64_t max_bytes) {
@@ -186,6 +100,115 @@ future<size_t> segment_manager::query_entries(
         indexes.subspan(start, count), entries, max_bytes);
   }
   co_return max_bytes;
+}
+
+future<raft_state> segment_manager::query_raft_state(
+    group_id id, uint64_t last_index) {
+  _stats._query_state++;
+
+  // TODO(jyc): read from segment or read from _index_group?
+  auto st = _index_group.get_hard_state(id);
+  if (st.empty()) {
+    l.error("{} segment_manager::query_raft_state: no data", id);
+    co_return coroutine::make_exception(util::failed_precondition_error());
+  }
+  raft_state r;
+  r.hard_state = st;
+  auto ie = _index_group.query(id, {.low = last_index + 1, .high = UINT64_MAX});
+  if (!ie.empty()) {
+    uint64_t prev_idx = ie.front().first_index - 1;
+    for (auto e : ie) {
+      if (prev_idx + 1 != e.first_index) {
+        l.error(
+            "{} segment_manager::query_raft_state: missing index:{}",
+            id,
+            prev_idx + 1);
+        co_return coroutine::make_exception(util::corruption_error());
+      }
+      prev_idx = e.last_index;
+    }
+    r.first_index = last_index + 1;
+    r.entry_count = ie.back().last_index - r.first_index;
+  }
+  co_return r;
+}
+
+future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
+  _stats._query_snap++;
+
+  auto i = _index_group.query_snapshot(id);
+  if (i.empty()) {
+    co_return snapshot_ptr{};
+  }
+  auto it = _segments.find(i.filename);
+  if (it == _segments.end()) {
+    l.error(
+        "{} segment_manager::query_snapshot: segment:{} not found",
+        id,
+        i.filename);
+    co_return coroutine::make_exception(util::corruption_error());
+  }
+  auto segment = it->second.get();
+  auto up = co_await segment->query(i);
+  if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
+    l.error("{} segment_manager::query_snapshot: empty", id);
+    co_return coroutine::make_exception(util::corruption_error());
+  }
+  co_return std::move(up.snapshot);
+}
+
+future<> segment_manager::remove(group_id id, uint64_t index) {
+  _stats._remove++;
+  update comp{
+      .gid = id,
+      .state =
+          {
+              .commit = index,
+          },
+  };
+  co_await append(comp);
+  co_await compaction(id);
+}
+
+future<> remove_node(protocol::group_id id) {
+  // TODO(jyc)
+  co_return;
+}
+
+future<> import_snapshot(protocol::snapshot_ptr snapshot) {
+  // TODO(jyc)
+  co_return;
+}
+
+future<bool> segment_manager::append(const update& up) {
+  if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
+    co_return false;
+  }
+  _stats._append++;
+  _stats._append_entry += up.entries_to_save.size();
+  _stats._append_state += up.state.empty() ? 0 : 1;
+  _stats._append_snap += up.snapshot.operator bool();
+
+  auto prev_state = _index_group.get_hard_state(up.gid);
+  bool need_sync = up.snapshot || !up.entries_to_save.empty() ||
+                   prev_state.term != up.state.term ||
+                   prev_state.vote != up.state.vote;
+  auto it = _segments.rbegin();
+  auto filename = it->first;
+  auto segment = it->second.get();
+  auto offset = segment->bytes();
+  auto new_offset = co_await segment->append(up);
+  index::entry e{
+      .filename = filename,
+      .offset = offset,
+      .length = new_offset - offset,
+  };
+  if (new_offset >= _config.wal_rolling_size) {
+    co_await rolling();
+    need_sync = false;
+  }
+  co_await update_index(up, e);
+  co_return need_sync;
 }
 
 future<> segment_manager::sync() {

@@ -9,20 +9,15 @@
 
 #include "rafter/config.hh"
 #include "storage/index.hh"
+#include "storage/logdb.hh"
 #include "storage/segment.hh"
 #include "storage/stats.hh"
 #include "util/worker.hh"
 
 namespace rafter::storage {
 
-struct raft_state {
-  protocol::hard_state hard_state;
-  uint64_t first_index = protocol::log_id::INVALID_INDEX;
-  uint64_t entry_count = 0;
-};
-
 // sharded<segment_manager>
-class segment_manager {
+class segment_manager final : public logdb {
  public:
   // TODO(jyc): storage configuration class
   explicit segment_manager(const config& config);
@@ -31,16 +26,24 @@ class segment_manager {
   seastar::future<> stop();
   stats stats() const noexcept;
 
-  seastar::future<bool> append(const protocol::update& up);
-  seastar::future<> remove(protocol::group_id id, uint64_t index);
-  seastar::future<protocol::snapshot_ptr> query_snapshot(protocol::group_id id);
-  seastar::future<raft_state> query_raft_state(
-      protocol::group_id id, uint64_t last_index);
+  std::string name() const noexcept override { return "segment_manager"; }
+  seastar::future<> save_bootstrap_info(protocol::bootstrap_ptr info) override;
+  seastar::future<protocol::bootstrap_ptr> load_bootstrap_info() override;
+  seastar::future<> save(std::span<protocol::update> updates) override;
   seastar::future<size_t> query_entries(
       protocol::group_id id,
       protocol::hint range,
       protocol::log_entry_vector& entries,
-      uint64_t max_bytes);
+      uint64_t max_bytes) override;
+  seastar::future<raft_state> query_raft_state(
+      protocol::group_id id, uint64_t last_index) override;
+  seastar::future<protocol::snapshot_ptr> query_snapshot(
+      protocol::group_id id) override;
+  seastar::future<> remove(protocol::group_id id, uint64_t index) override;
+  seastar::future<> remove_node(protocol::group_id id) override;
+  seastar::future<> import_snapshot(protocol::snapshot_ptr snapshot) override;
+
+  seastar::future<bool> append(const protocol::update& up);
   seastar::future<> sync();
 
   std::string debug_string() const noexcept;

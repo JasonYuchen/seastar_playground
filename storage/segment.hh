@@ -26,8 +26,6 @@ namespace rafter::storage {
 
 class segment {
  public:
-  // TODO: use make_lw_shared and 2 phase construction
-  // TODO: use lock to protect append
   segment() = default;
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
@@ -66,7 +64,7 @@ class segment {
   std::string debug_string() const;
 
  private:
-  // TODO: scheduling group
+  // TODO(jyc): scheduling group
   uint64_t _filename = 0;
   std::string _filepath;
   seastar::file _file;

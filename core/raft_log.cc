@@ -412,6 +412,7 @@ bool raft_log::has_config_change_to_apply() const noexcept {
       return true;
     }
   }
+  return false;
 }
 
 future<> raft_log::get_entries_to_save(protocol::log_entry_vector& entries) {
