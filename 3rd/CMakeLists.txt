@@ -10,4 +10,6 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(googletest)
+# TODO(jyc): remove this for simdjson
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-ambiguous-reversed-operator")
 FetchContent_MakeAvailable(simdjson)
