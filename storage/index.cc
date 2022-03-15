@@ -362,6 +362,11 @@ void index_group::set_compacted_to(group_id id, uint64_t index) {
   get_node_index(id)->set_compacted_to(index);
 }
 
+void index_group::remove(group_id id) {
+  _indexes.erase(id);
+  _states.erase(id);
+}
+
 bool index_group::operator==(const index_group& rhs) const noexcept {
   if (_states != rhs._states) {
     return false;

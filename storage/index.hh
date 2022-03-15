@@ -118,6 +118,7 @@ class node_index {
   void set_compacted_to(uint64_t index) noexcept;
 
   std::vector<uint64_t> compaction();
+  const std::unordered_set<uint64_t>& files() const { return _filenames; }
 
   bool operator==(const node_index& rhs) const noexcept;
   bool operator!=(const node_index& rhs) const noexcept;
@@ -152,6 +153,8 @@ class index_group {
   uint64_t compacted_to(group_id id);
 
   void set_compacted_to(group_id id, uint64_t index);
+
+  void remove(group_id id);
 
   // for testing
   bool operator==(const index_group& rhs) const noexcept;
