@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include <seastar/core/future.hh>
 
 #include "protocol/raft.hh"
@@ -19,9 +21,10 @@ struct raft_state {
 class logdb {
  public:
   virtual std::string name() const noexcept = 0;
-  virtual seastar::future<> save_bootstrap_info(
-      protocol::bootstrap_ptr info) = 0;
-  virtual seastar::future<protocol::bootstrap_ptr> load_bootstrap_info() = 0;
+  virtual seastar::future<> save_bootstrap(
+      protocol::group_id id, const protocol::bootstrap& info) = 0;
+  virtual seastar::future<std::optional<protocol::bootstrap>> load_bootstrap(
+      protocol::group_id id) = 0;
   virtual seastar::future<> save(std::span<protocol::update> updates) = 0;
   virtual seastar::future<size_t> query_entries(
       protocol::group_id id,
