@@ -5,7 +5,9 @@
 #include "segment_manager.hh"
 
 #include <seastar/core/reactor.hh>
+#include <seastar/util/defer.hh>
 
+#include "protocol/serializer.hh"
 #include "storage/logger.hh"
 #include "util/error.hh"
 
@@ -50,17 +52,53 @@ future<> segment_manager::stop() {
 
 stats segment_manager::stats() const noexcept { return _stats; }
 
-future<> save_bootstrap_info(protocol::bootstrap_ptr info) {
-  // TODO(jyc)
+future<> segment_manager::save_bootstrap(group_id id, const bootstrap& info) {
+  std::string name = filesystem::path(_log_dir).append(
+      fmt::format("BOOT-{}-{}", id.cluster, id.node));
+  std::string tmp = name.append(".tmp");
+  using enum open_flags;
+  co_await with_file(
+      open_file_dma(tmp, create | wo | truncate | dsync),
+      [&info](file f) -> future<> {
+        auto fs = co_await make_file_output_stream(f);
+        auto data = write_to_string(info);
+        co_await fs.write(data);
+        co_await fs.flush();
+        co_await fs.close();
+        co_return;
+      });
+  co_await rename_file(tmp, name);
+  co_await sync_directory(_log_dir);
   co_return;
 }
 
-future<protocol::bootstrap_ptr> load_bootstrap_info() {
-  // TODO(jyc)
-  co_return protocol::bootstrap_ptr{};
+future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
+  std::string name = filesystem::path(_log_dir).append(
+      fmt::format("BOOT-{}-{}", id.cluster, id.node));
+  auto exist = co_await file_exists(name);
+  if (!exist) {
+    co_return std::optional<bootstrap>{};
+  }
+  co_return co_await with_file(
+      open_file_dma(name, open_flags::ro),
+      [](file f) -> future<std::optional<bootstrap>> {
+        auto fs = make_file_input_stream(f);
+        auto b = co_await fs.read_exactly(co_await f.size());
+        co_return read_from_string(
+            {b.get(), b.size()}, util::type<bootstrap>());
+      });
 }
 
-future<> save(std::span<protocol::update> updates) { co_return; }
+future<> segment_manager::save(std::span<protocol::update> updates) {
+  bool need_sync = false;
+  for (const auto& up : updates) {
+    need_sync = need_sync || co_await append(up);
+  }
+  if (need_sync) {
+    co_await sync();
+  }
+  co_return;
+}
 
 future<size_t> segment_manager::query_entries(
     group_id id, hint range, log_entry_vector& entries, uint64_t max_bytes) {
@@ -148,7 +186,7 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
         i.filename);
     co_return coroutine::make_exception(util::corruption_error());
   }
-  auto segment = it->second.get();
+  auto* segment = it->second.get();
   auto up = co_await segment->query(i);
   if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
     l.error("{} segment_manager::query_snapshot: empty", id);
@@ -170,14 +208,37 @@ future<> segment_manager::remove(group_id id, uint64_t index) {
   co_await compaction(id);
 }
 
-future<> remove_node(protocol::group_id id) {
-  // TODO(jyc)
-  co_return;
+future<> segment_manager::remove_node(protocol::group_id id) {
+  auto ni = _index_group.get_node_index(id);
+  auto files = ni->files();
+  _index_group.remove(id);
+  for (auto file : files) {
+    assert(_segments_ref_count.contains(file));
+    if (--_segments_ref_count[file] == 0) {
+      _segments_ref_count.erase(file);
+      co_await _gc_worker.push_eventually(std::move(file));
+    }
+  }
+  std::string name = filesystem::path(_log_dir).append(
+      fmt::format("BOOT-{}-{}", id.cluster, id.node));
+  co_await remove_file(name);
+  co_await sync_directory(_log_dir);
 }
 
-future<> import_snapshot(protocol::snapshot_ptr snapshot) {
-  // TODO(jyc)
-  co_return;
+future<> segment_manager::import_snapshot(protocol::snapshot_ptr snapshot) {
+  auto id = snapshot->group_id;
+  auto info = bootstrap{.join = true, .smtype = snapshot->smtype};
+  co_await remove_node(id);
+  co_await save_bootstrap(id, info);
+  auto up = update{
+      .gid = id,
+      .state =
+          {.term = snapshot->log_id.term, .commit = snapshot->log_id.index},
+      .snapshot = snapshot};
+  bool need_sync = co_await append(up);
+  if (need_sync) {
+    co_await sync();
+  }
 }
 
 future<bool> segment_manager::append(const update& up) {
@@ -195,7 +256,7 @@ future<bool> segment_manager::append(const update& up) {
                    prev_state.vote != up.state.vote;
   auto it = _segments.rbegin();
   auto filename = it->first;
-  auto segment = it->second.get();
+  auto* segment = it->second.get();
   auto offset = segment->bytes();
   auto new_offset = co_await segment->append(up);
   index::entry e{

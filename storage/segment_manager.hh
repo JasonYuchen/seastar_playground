@@ -27,8 +27,10 @@ class segment_manager final : public logdb {
   stats stats() const noexcept;
 
   std::string name() const noexcept override { return "segment_manager"; }
-  seastar::future<> save_bootstrap_info(protocol::bootstrap_ptr info) override;
-  seastar::future<protocol::bootstrap_ptr> load_bootstrap_info() override;
+  seastar::future<> save_bootstrap(
+      protocol::group_id id, const protocol::bootstrap& info) override;
+  seastar::future<std::optional<protocol::bootstrap>> load_bootstrap(
+      protocol::group_id id) override;
   seastar::future<> save(std::span<protocol::update> updates) override;
   seastar::future<size_t> query_entries(
       protocol::group_id id,
