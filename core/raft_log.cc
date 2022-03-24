@@ -415,10 +415,13 @@ bool raft_log::has_config_change_to_apply() const noexcept {
   return false;
 }
 
-future<> raft_log::get_entries_to_save(protocol::log_entry_vector& entries) {
+bool raft_log::has_entries_to_save() const noexcept {
+  return !_in_memory.get_entries_to_save().empty();
+}
+
+void raft_log::get_entries_to_save(protocol::log_entry_vector& entries) {
   auto ents = _in_memory.get_entries_to_save();
   entries.insert(entries.end(), ents.begin(), ents.end());
-  co_return;
 }
 
 future<> raft_log::get_entries_to_apply(protocol::log_entry_vector& entries) {
@@ -491,6 +494,10 @@ protocol::snapshot_ptr raft_log::get_snapshot() const noexcept {
     return _in_memory.get_snapshot();
   }
   return _logdb.get_snapshot();
+}
+
+protocol::snapshot_ptr raft_log::get_memory_snapshot() const noexcept {
+  return _in_memory.get_snapshot();
 }
 
 future<uint64_t> raft_log::get_conflict_index(
@@ -582,6 +589,31 @@ void raft_log::commit(uint64_t index) {
         fmt::format("commit index {} > last index {}", index, last_index()));
   }
   _committed = index;
+}
+
+void raft_log::commit_update(const protocol::update_commit& uc) {
+  _in_memory.advance(uc.stable_log_id, uc.stable_snapshot_to);
+  if (uc.processed > 0) {
+    if (uc.processed < _processed || uc.processed > _committed) {
+      throw util::failed_precondition_error(fmt::format(
+          "processed {} out of range [{},{}]",
+          uc.processed,
+          _processed,
+          _committed));
+    }
+    _processed = uc.processed;
+  }
+  if (uc.last_applied > 0) {
+    if (uc.last_applied > _committed) {
+      throw util::failed_precondition_error(fmt::format(
+          "last_applied {} > committed {}", uc.last_applied, _committed));
+    }
+    if (uc.last_applied > _processed) {
+      throw util::failed_precondition_error(fmt::format(
+          "last_applied {} > processed {}", uc.last_applied, _processed));
+    }
+    _in_memory.advance_applied_log(uc.last_applied);
+  }
 }
 
 future<bool> raft_log::up_to_date(protocol::log_id lid) {

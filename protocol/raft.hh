@@ -276,6 +276,7 @@ struct snapshot {
   uint64_t on_disk_index = 0;
 
   uint64_t bytes() const noexcept;
+  bool empty() const noexcept;
 };
 
 using snapshot_ptr = seastar::lw_shared_ptr<snapshot>;
@@ -427,7 +428,7 @@ struct update {
   // onto persistent storage.
   message_vector messages;
   // last_applied is the actual last applied index reported by the rsm.
-  uint64_t LastApplied = log_id::INVALID_INDEX;
+  uint64_t last_applied = log_id::INVALID_INDEX;
   // update_commit contains info on how the Update instance can be committed
   // to actually progress the state of Raft.
   struct update_commit update_commit;
@@ -442,8 +443,8 @@ struct update {
   uint64_t bytes() const noexcept;
   bool has_update() const noexcept;
   void validate() const;
-  void set_fast_apply() const noexcept;
-  void set_update_commit() const noexcept;
+  void set_fast_apply() noexcept;
+  void set_update_commit() noexcept;
 
   // total size + gid + state + fi + li + snapshot index
   static constexpr uint64_t meta_bytes() noexcept { return 72; }

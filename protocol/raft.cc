@@ -174,6 +174,10 @@ bool hard_state::empty() const noexcept {
          commit == log_id::INVALID_INDEX;
 }
 
+bool snapshot::empty() const noexcept {
+  return log_id.index == log_id::INVALID_INDEX;
+}
+
 uint64_t snapshot_file::bytes() const noexcept { return sizer(*this); }
 
 uint64_t snapshot::bytes() const noexcept { return sizer(*this); }
@@ -210,6 +214,54 @@ bool update::has_update() const noexcept {
   return snapshot || !state.empty() || !entries_to_save.empty() ||
          !committed_entries.empty() || !messages.empty() ||
          !ready_to_reads.empty() || !dropped_entries.empty();
+}
+
+void update::validate() const {
+  if (state.commit != log_id::INVALID_INDEX && !committed_entries.empty()) {
+    auto last = committed_entries.back()->lid.index;
+    if (last > state.commit) {
+      throw util::failed_precondition_error(/*FIXME*/);
+    }
+  }
+  if (!committed_entries.empty() && !entries_to_save.empty()) {
+    auto last_apply = committed_entries.back()->lid.index;
+    auto last_save = entries_to_save.back()->lid.index;
+    if (last_apply > last_save) {
+      throw util::failed_precondition_error(/*FIXME*/);
+    }
+  }
+}
+
+void update::set_fast_apply() noexcept {
+  fast_apply = true;
+  if (snapshot && !snapshot->empty()) {
+    fast_apply = false;
+  }
+  if (fast_apply) {
+    auto last_apply = committed_entries.back()->lid.index;
+    auto last_save = entries_to_save.back()->lid.index;
+    auto first_save = entries_to_save.front()->lid.index;
+    // we cannot fast apply if some entries are not persistent yet
+    if (last_apply >= first_save && last_apply <= last_save) {
+      fast_apply = false;
+    }
+  }
+}
+
+void update::set_update_commit() noexcept {
+  update_commit.ready_to_read = ready_to_reads.size();
+  update_commit.last_applied = last_applied;
+  if (!committed_entries.empty()) {
+    update_commit.processed = committed_entries.back()->lid.index;
+  }
+  if (!entries_to_save.empty()) {
+    update_commit.stable_log_id = entries_to_save.back()->lid;
+  }
+  if (snapshot && !snapshot->empty()) {
+    update_commit.stable_snapshot_to = snapshot->log_id.index;
+    update_commit.processed =
+        max(update_commit.processed, update_commit.stable_snapshot_to);
+  }
 }
 
 uint64_t update::bytes() const noexcept { return sizer(*this); }

@@ -80,6 +80,7 @@ class raft_log {
  public:
   raft_log(protocol::group_id gid, log_reader& log);
   uint64_t committed() const noexcept { return _committed; }
+  void set_committed(uint64_t index) noexcept { _committed = index; }
   uint64_t processed() const noexcept { return _processed; }
   uint64_t first_index() const noexcept;
   uint64_t last_index() const noexcept;
@@ -95,7 +96,8 @@ class raft_log {
   bool has_entries_to_apply() const noexcept;
   bool has_more_entries_to_apply(uint64_t applied_to) const noexcept;
   bool has_config_change_to_apply() const noexcept;
-  seastar::future<> get_entries_to_save(protocol::log_entry_vector& entries);
+  bool has_entries_to_save() const noexcept;
+  void get_entries_to_save(protocol::log_entry_vector& entries);
   seastar::future<> get_entries_to_apply(protocol::log_entry_vector& entries);
   seastar::future<size_t> query(
       uint64_t start,
@@ -114,6 +116,7 @@ class raft_log {
       protocol::log_entry_vector& entries,
       size_t max_bytes) const noexcept;
   protocol::snapshot_ptr get_snapshot() const noexcept;
+  protocol::snapshot_ptr get_memory_snapshot() const noexcept;
   seastar::future<uint64_t> get_conflict_index(
       protocol::log_entry_span entries) const;
   seastar::future<uint64_t> pending_config_change_count();
@@ -122,6 +125,7 @@ class raft_log {
   void append(protocol::log_entry_span entries);
   seastar::future<bool> try_commit(protocol::log_id lid);
   void commit(uint64_t index);
+  void commit_update(const protocol::update_commit& uc);
   seastar::future<bool> up_to_date(protocol::log_id lid);
   void restore(protocol::snapshot_ptr snapshot);
 
