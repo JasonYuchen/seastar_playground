@@ -7,6 +7,7 @@
 #include <chrono>
 #include <seastar/core/coroutine.hh>
 
+#include "rafter/config.hh"
 #include "transport/logger.hh"
 #include "util/error.hh"
 
@@ -16,9 +17,8 @@ using namespace protocol;
 using namespace seastar;
 using namespace std::chrono_literals;
 
-exchanger::exchanger(const struct config& config, registry& reg)
-  : _config(config)
-  , _registry(reg)
+exchanger::exchanger(registry& reg)
+  : _registry(reg)
   , _express(*this)
   , _dropped_messages{0}
   , _rpc(std::make_unique<rpc_protocol>(serializer{})) {
@@ -28,14 +28,15 @@ exchanger::exchanger(const struct config& config, registry& reg)
 future<> exchanger::start_listen() {
   l.info(
       "exchanger::start_listen: {}:{}",
-      _config.listen_address,
-      _config.listen_port);
+      config::shard().listen_address,
+      config::shard().listen_port);
   rpc::server_options opts;
   // TODO(jyc): compress, tcp_no_delay, encryption, resource limit, etc
   opts.load_balancing_algorithm = server_socket::load_balancing_algorithm::port;
   opts.streaming_domain = rpc::streaming_domain_type{0x0615};
   auto address = socket_address{
-      net::inet_address{_config.listen_address}, _config.listen_port};
+      net::inet_address{config::shard().listen_address},
+      config::shard().listen_port};
   _server =
       std::make_unique<rpc_protocol_server>(*_rpc, std::move(opts), address);
   return make_ready_future<>();
@@ -121,7 +122,8 @@ shared_ptr<exchanger::rpc_protocol_client> exchanger::get_rpc_client(
   }
 
   auto peer = socket_address(address.address, address.port);
-  auto local = socket_address(net::inet_address{_config.listen_address}, 0);
+  auto local =
+      socket_address(net::inet_address{config::shard().listen_address}, 0);
   rpc::client_options opts;
   opts.keepalive = {60s, 60s, 10};
   // TODO(jyc): compress, tcp_no_delay, encryption

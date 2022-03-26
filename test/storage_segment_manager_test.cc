@@ -28,27 +28,28 @@ class segment_manager_test
   , public ::testing::WithParamInterface<bool> {
  protected:
   static void SetUpTestSuite() {
-    _config = test::util::default_config();
     base::submit([]() -> future<> {
-      co_await recursive_touch_directory(_config.data_dir);
+      config::initialize(test::util::default_config());
+      co_await config::broadcast();
+      co_await recursive_touch_directory(config::shard().data_dir);
     });
   }
 
   static void TearDownTestSuite() {
     base::submit([]() -> future<> {
-      co_await recursive_remove_directory(_config.data_dir);
+      co_await recursive_remove_directory(config::shard().data_dir);
     });
   }
 
   void SetUp() override {
     base::submit([this]() -> future<> {
-      co_await recursive_remove_directory(_config.data_dir);
-      co_await recursive_touch_directory(_config.data_dir + "/wal");
+      co_await recursive_remove_directory(config::shard().data_dir);
+      co_await recursive_touch_directory(config::shard().data_dir + "/wal");
       _gids = {{1, 1}, {1, 2}, {2, 1}, {2, 2}, {3, 3}};
       if (GetParam()) {
         co_await prepare_segments();
       }
-      _manager = std::make_unique<segment_manager>(_config);
+      _manager = std::make_unique<segment_manager>();
       co_await _manager->start();
       co_return;
     });
@@ -80,7 +81,8 @@ class segment_manager_test
       std::shuffle(shuffled.begin(), shuffled.end(), g);
       _updates.insert(_updates.end(), shuffled.begin(), shuffled.end());
     }
-    std::string wal_dir = std::filesystem::path(_config.data_dir).append("wal");
+    std::string wal_dir =
+        std::filesystem::path(config::shard().data_dir).append("wal");
     auto seg1 = co_await segment::open(3, segment::form_path(wal_dir, 3));
     auto seg2 = co_await segment::open(4, segment::form_path(wal_dir, 4));
     auto ignored_segment = co_await segment::open(
@@ -103,7 +105,6 @@ class segment_manager_test
     co_return;
   }
 
-  static inline rafter::config _config;
   std::unique_ptr<segment_manager> _manager;
   std::vector<group_id> _gids;
   std::vector<update> _updates;

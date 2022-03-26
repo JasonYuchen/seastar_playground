@@ -4,6 +4,7 @@
 
 #include <seastar/core/sleep.hh>
 
+#include "rafter/config.hh"
 #include "test/base.hh"
 #include "test/util.hh"
 #include "transport/exchanger.hh"
@@ -22,9 +23,12 @@ namespace {
 class exchanger_test : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
-    _config = test::util::default_config();
-    _config.listen_address = "::1";
-    _config.listen_port = 20615;
+    base::submit(
+        [] {
+          config::initialize(test::util::default_config());
+          return config::broadcast();
+        },
+        0);
   }
 
   void SetUp() override {
@@ -36,7 +40,7 @@ class exchanger_test : public ::testing::Test {
         return make_ready_future<>();
       });
       _exchanger = std::make_unique<sharded<exchanger>>();
-      co_await _exchanger->start(std::ref(_config), std::ref(*_registry));
+      co_await _exchanger->start(std::ref(*_registry));
       co_await _exchanger->invoke_on_all(&exchanger::start_listen);
     });
   }
@@ -51,7 +55,6 @@ class exchanger_test : public ::testing::Test {
     });
   }
 
-  static inline rafter::config _config;
   static inline rafter::protocol::group_id _gid = {1, 1};
   static inline rafter::transport::peer_address _peer = {
       net::inet_address("::1"), 20615, 10};

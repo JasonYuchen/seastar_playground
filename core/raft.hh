@@ -11,6 +11,7 @@
 #include "core/read_index.hh"
 #include "core/remote.hh"
 #include "protocol/raft.hh"
+#include "rafter/config.hh"
 #include "util/types.hh"
 
 namespace rafter::core {
@@ -25,10 +26,7 @@ class raft {
     protocol::hard_state state;
   };
 
-  raft(const config& config, log_reader& reader)
-    : _config(config)
-    , _log(_gid, reader)
-    , _limiter(config.max_in_memory_log_bytes) {}
+  raft(const raft_config& cfg, log_reader& lr);
 
   seastar::future<> handle(protocol::message& m);
   seastar::future<> handle(protocol::message&& m) { return handle(m); }
@@ -43,6 +41,8 @@ class raft {
   // misc
   void initialize_handlers();
   void assert_handlers();
+  protocol::hard_state state() const noexcept;
+  void set_state(protocol::hard_state s);
   bool is_self(uint64_t id) const noexcept { return _gid.node == id; }
   bool is_leader() const noexcept { return _role == role::leader; }
   bool is_candidate() const noexcept { return _role == role::candidate; }
@@ -217,7 +217,7 @@ class raft {
   //  replicate         -> follower
   //  install_snapshot  -> follower
 
-  const config& _config;
+  const raft_config& _config;
   protocol::group_id _gid;
   protocol::raft_role _role;
   uint64_t _leader_id;

@@ -7,7 +7,6 @@
 #include <seastar/rpc/rpc.hh>
 
 #include "protocol/serializer.hh"
-#include "rafter/config.hh"
 #include "transport/express.hh"
 #include "transport/registry.hh"
 
@@ -28,8 +27,7 @@ class exchanger
   : public seastar::async_sharded_service<exchanger>
   , public seastar::peering_sharded_service<exchanger> {
  public:
-  explicit exchanger(const config& config, registry& reg);
-  const config& config() const noexcept { return _config; }
+  explicit exchanger(registry& reg);
 
   using rpc_protocol =
       seastar::rpc::protocol<protocol::serializer, messaging_verb>;
@@ -106,7 +104,6 @@ class exchanger
 
   bool remove_rpc_client(peer_address address);
 
-  const struct config& _config;
   registry& _registry;
   express _express;
   bool _shutting_down = false;

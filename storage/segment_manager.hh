@@ -7,7 +7,6 @@
 #include <seastar/core/queue.hh>
 #include <seastar/core/shared_mutex.hh>
 
-#include "rafter/config.hh"
 #include "storage/index.hh"
 #include "storage/logdb.hh"
 #include "storage/segment.hh"
@@ -19,8 +18,7 @@ namespace rafter::storage {
 // sharded<segment_manager>
 class segment_manager final : public logdb {
  public:
-  // TODO(jyc): storage configuration class
-  explicit segment_manager(const config& config);
+  explicit segment_manager();
   ~segment_manager() = default;
   seastar::future<> start();
   seastar::future<> stop();
@@ -58,7 +56,6 @@ class segment_manager final : public logdb {
   seastar::future<> gc_service(std::vector<uint64_t>& segs, bool& open);
   seastar::future<> compaction(protocol::group_id id);
 
-  const config& _config;
   // segments dir, e.g. <data_dir>
   std::string _log_dir;
   // TODO(jyc): more options

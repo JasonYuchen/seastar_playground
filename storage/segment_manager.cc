@@ -8,6 +8,7 @@
 #include <seastar/util/defer.hh>
 
 #include "protocol/serializer.hh"
+#include "rafter/config.hh"
 #include "storage/logger.hh"
 #include "util/error.hh"
 
@@ -17,18 +18,17 @@ using namespace protocol;
 using namespace seastar;
 using namespace std;
 
-segment_manager::segment_manager(const config& config)
-  : _config(config)
-  , _gc_worker("segment_gc", _config.wal_gc_queue_capacity, l) {}
+segment_manager::segment_manager()
+  : _gc_worker("segment_gc", config::shard().wal_gc_queue_capacity, l) {}
 
 future<> segment_manager::start() {
-  _log_dir = filesystem::path(_config.data_dir).append("wal");
+  _log_dir = filesystem::path(config::shard().data_dir).append("wal");
   co_await recursive_touch_directory(_log_dir);
   l.info(
       "segment_manager::start: dir:{}, rolling_size:{}, gc_queue_cap:{}",
       _log_dir,
-      _config.wal_rolling_size,
-      _config.wal_gc_queue_capacity);
+      config::shard().wal_rolling_size,
+      config::shard().wal_gc_queue_capacity);
   file dir = co_await open_directory(_log_dir);
   co_await dir
       .list_directory([this](auto e) { return parse_existing_segments(e); })
@@ -264,7 +264,7 @@ future<bool> segment_manager::append(const update& up) {
       .offset = offset,
       .length = new_offset - offset,
   };
-  if (new_offset >= _config.wal_rolling_size) {
+  if (new_offset >= config::shard().wal_rolling_size) {
     co_await rolling();
     need_sync = false;
   }
