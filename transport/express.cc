@@ -8,6 +8,7 @@
 #include <seastar/core/fstream.hh>
 #include <seastar/util/defer.hh>
 
+#include "rafter/config.hh"
 #include "transport/exchanger.hh"
 #include "transport/logger.hh"
 #include "util/error.hh"
@@ -74,7 +75,7 @@ future<> express::sender::start(snapshot_ptr snapshot) {
     auto deferred = defer([&sink] { (void)sink.close(); });
     uint64_t chunk_id = 0;
     uint64_t total_chunks = 0;
-    uint64_t snapshot_chunk_size = _exchanger.config().snapshot_chunk_size;
+    uint64_t snapshot_chunk_size = config::shard().snapshot_chunk_size;
     total_chunks += (snapshot->file_size - 1) / snapshot_chunk_size + 1;
     for (const auto& file : snapshot->files) {
       total_chunks += (file->file_size - 1) / snapshot_chunk_size + 1;
@@ -126,7 +127,7 @@ future<> express::sender::split_and_send(
     throw util::out_of_range_error(fmt::format("empty file:{}", file_path));
   }
   auto fstream = make_file_input_stream(f);
-  uint64_t snapshot_chunk_size = _exchanger.config().snapshot_chunk_size;
+  uint64_t snapshot_chunk_size = config::shard().snapshot_chunk_size;
   uint64_t file_chunk_count = (file_size - 1) / snapshot_chunk_size + 1;
   for (uint64_t i = 0; i < file_chunk_count; ++i) {
     if (_close) {
