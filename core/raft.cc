@@ -19,6 +19,47 @@ void throw_with_log(logger::format_info fmt, Args&&... args) {
   throw util::invalid_raft_state();
 }
 
+raft::raft(const raft_config& cfg, log_reader& lr)
+  : _config(cfg)
+  , _gid{cfg.cluster_id, cfg.node_id}
+  , _role(role::follower)
+  , _leader_id(group_id::INVALID_NODE)
+  , _leader_transfer_target(group_id::INVALID_NODE)
+  , _term(log_id::INVALID_TERM)
+  , _vote(group_id::INVALID_NODE)
+  , _applied(log_id::INVALID_INDEX)
+  , _is_leader_transfer_target(false)
+  , _pending_config_change(false)
+  , _quiesce(cfg.quiesce)
+  , _check_quorum(cfg.check_quorum)
+  , _snapshotting(false)
+  , _log(_gid, lr)
+  , _limiter(_config.max_in_memory_log_bytes) {
+  auto st = lr.get_state();
+  auto member = lr.get_membership();
+  for (const auto& [id, address] : member->addresses) {
+    _remotes[id].next = 1;
+  }
+  for (const auto& [id, address] : member->observers) {
+    _observers[id].next = 1;
+  }
+  for (const auto& [id, address] : member->witnesses) {
+    _witnesses[id].next = 1;
+  }
+  reset_matched();
+  set_state(st);
+  if (cfg.observer) {
+    _role = role::observer;
+    become_observer(_term, group_id::INVALID_NODE);
+  } else if (cfg.witness) {
+    _role = role::witness;
+    become_witness(_term, group_id::INVALID_NODE);
+  } else {
+    become_follower(_term, group_id::INVALID_NODE, true);
+  }
+  initialize_handlers();
+}
+
 std::ostream& operator<<(std::ostream& os, const raft& r) {
   return os << "raft[" << r._gid << ","
             << "r:" << r._role << ","
@@ -191,6 +232,27 @@ void raft::assert_handlers() {
   if (fatal) {
     std::terminate();
   }
+}
+
+protocol::hard_state raft::state() const noexcept {
+  return {.term = _term, .vote = _vote, .commit = _log.committed()};
+}
+
+void raft::set_state(hard_state s) {
+  if (s.empty()) {
+    return;
+  }
+  if (s.commit < _log.committed() || s.commit > _log.last_index()) {
+    throw_with_log(
+        "{}: got out of range hard state, commit:{} not in [{},{}]",
+        *this,
+        s.commit,
+        _log.committed(),
+        _log.last_index());
+  }
+  _term = s.term;
+  _vote = s.vote;
+  _log.set_committed(s.commit);
 }
 
 void raft::must_be(raft_role role) const {
@@ -906,8 +968,9 @@ bool raft::time_to_check_quorum() const noexcept {
 bool raft::time_to_abort_leader_transfer() const noexcept {
   return is_leader_transferring() && _election_tick >= _election_timeout;
 }
+
 bool raft::time_to_gc() const noexcept {
-  return _tick % _config.in_memory_gc_timeout == 0;
+  return _tick % config::shard().in_memory_gc_timeout == 0;
 }
 
 bool raft::time_to_check_rate_limit() const noexcept {

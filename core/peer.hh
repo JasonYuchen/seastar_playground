@@ -14,9 +14,9 @@ namespace rafter::core {
 class peer {
  public:
   peer(
-      const config& c,
+      const raft_config& c,
       log_reader& lr,
-      std::map<uint64_t, std::string> addresses,
+      const std::map<uint64_t, std::string>& addresses,
       bool initial,
       bool new_node);
   // void gc(uint64_t now);
@@ -35,16 +35,16 @@ class peer {
   seastar::future<> handle(protocol::message m);
   bool has_entry_to_apply();
   bool has_update(bool more_to_apply);
-  protocol::update get_update(bool more_to_apply, uint64_t last_applied);
-  void commit(protocol::update& up);
-  void notify_last_applied(uint64_t last_applied);
-  bool is_leader();
-  bool rate_limited();
-
-  static void set_fast_apply(protocol::update& up);
-  static void validate_update(protocol::update& up);
+  seastar::future<protocol::update> get_update(
+      bool more_to_apply, uint64_t last_applied);
+  void commit(const protocol::update& up);
+  void notify_last_applied(uint64_t last_applied) noexcept;
+  bool is_leader() const noexcept { return _raft.is_leader(); }
+  bool rate_limited() const noexcept { return _raft._limiter.enabled(); }
 
  private:
+  void bootstrap(const std::map<uint64_t, std::string>& addresses);
+
   protocol::hard_state _prev_state;
   raft _raft;
 };
