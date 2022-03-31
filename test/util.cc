@@ -16,6 +16,8 @@ config util::default_config() {
   return config{
       .data_dir = "test_data",
       .wal_rolling_size = 100UL * KB,  // a smaller size to make more segments
+      .listen_address = "::1",
+      .listen_port = 20615,
   };
 }
 

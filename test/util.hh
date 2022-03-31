@@ -7,8 +7,8 @@
 #include <memory>
 #include <seastar/core/shared_ptr.hh>
 
-#include "storage/segment.hh"
-#include "storage/segment_manager.hh"
+#include "protocol/raft.hh"
+#include "rafter/config.hh"
 
 namespace rafter::test {
 
