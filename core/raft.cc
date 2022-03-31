@@ -34,7 +34,14 @@ raft::raft(const raft_config& cfg, log_reader& lr)
   , _check_quorum(cfg.check_quorum)
   , _snapshotting(false)
   , _log(_gid, lr)
-  , _limiter(_config.max_in_memory_log_bytes) {
+  , _limiter(_config.max_in_memory_log_bytes)
+  , _random_engine(std::chrono::system_clock::now().time_since_epoch().count())
+  , _tick(0)
+  , _election_tick(0)
+  , _heartbeat_tick(0)
+  , _election_timeout(cfg.election_rtt)
+  , _heartbeat_timeout(cfg.heartbeat_rtt)
+  , _randomized_election_timeout(0) {
   auto st = lr.get_state();
   auto member = lr.get_membership();
   for (const auto& [id, address] : member->addresses) {
