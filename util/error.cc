@@ -27,6 +27,7 @@ const char* status_string(enum code e) {
       "invalid_argument",
       "invalid_raft_state",
       "no_data",
+      "exhausted",
       "unknown"};
   static_assert(
       sizeof(s) / sizeof(s[0]) == static_cast<int>(code::num_of_codes));

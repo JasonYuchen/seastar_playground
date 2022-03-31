@@ -35,6 +35,7 @@ enum class code : uint8_t {
   invalid_argument,
   invalid_raft_state,
   no_data,
+  exhausted,
   num_of_codes,
 };
 
@@ -190,8 +191,21 @@ class invalid_raft_state : public logic_error {
  public:
   using logic_error::logic_error;
   invalid_raft_state() : logic_error(code::invalid_raft_state) {}
-  invalid_raft_state(std::string_view msg)
+  explicit invalid_raft_state(std::string_view msg)
     : logic_error("{}: {}", code::invalid_raft_state, msg) {}
+};
+
+class request_error : public base_error {
+ public:
+  // TODO(jyc): categorize request related error
+  using base_error::base_error;
+  explicit request_error(std::string_view msg)
+    : base_error(code::unknown, std::string(msg)) {}
+};
+
+class system_busy : public request_error {
+ public:
+  system_busy() : request_error(code::exhausted) {}
 };
 
 }  // namespace rafter::util
