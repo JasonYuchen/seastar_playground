@@ -106,6 +106,18 @@ struct config {
   // the interval between gc in memory logs, defined as the number of ticks
   uint64_t in_memory_gc_timeout = 10;
 
+  // soft
+  // the max bytes of a single entry
+  uint64_t max_entry_size = 10UL * MB;
+
+  // the number of allowed pending proposals for a raft instance
+  uint64_t incoming_proposal_queue_length = 2048;
+
+  // the number of allowed pending reads for a raft instance
+  uint64_t incoming_read_index_queue_length = 4096;
+
+  // hard
+
   void validate() const;
 
   // initialize the config on shard 0 with default value
