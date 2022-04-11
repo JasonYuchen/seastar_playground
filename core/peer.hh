@@ -26,7 +26,7 @@ class peer {
   seastar::future<> read_index(protocol::hint ctx);
   seastar::future<> propose_entries(protocol::log_entry_vector entries);
   seastar::future<> propose_config_change(
-      protocol::config_change change, uint64_t key);
+      const protocol::config_change& change, uint64_t key);
   seastar::future<> apply_config_change(protocol::config_change change);
   seastar::future<> reject_config_change();
   seastar::future<> restore_remotes(protocol::snapshot_ptr snapshot);

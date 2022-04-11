@@ -59,7 +59,7 @@ future<> peer::propose_entries(protocol::log_entry_vector entries) {
 }
 
 future<> peer::propose_config_change(
-    protocol::config_change change, uint64_t key) {
+    const protocol::config_change& change, uint64_t key) {
   log_entry_vector e;
   e.emplace_back(make_lw_shared<log_entry>());
   e.back()->type = entry_type::config_change;

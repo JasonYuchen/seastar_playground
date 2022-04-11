@@ -75,6 +75,8 @@ class pending_proposal {
   void apply(uint64_t key, protocol::rsm_result result, bool rejected);
 
  private:
+  friend class node;
+
   const raft_config& _config;
   bool _stopped = false;
   uint64_t _next_key = 0;
@@ -94,6 +96,8 @@ class pending_read_index {
   void apply(uint64_t applied_index);
 
  private:
+  friend class node;
+
   struct read_batch {
     uint64_t index = protocol::log_id::INVALID_INDEX;
     std::vector<seastar::promise<request_result>> requests;
@@ -117,7 +121,11 @@ class pending_config_change {
   void apply(uint64_t key, bool rejected);
 
  private:
+  friend class node;
+
   const raft_config& _config;
+  bool _stopped = false;
+  uint64_t _next_key = 0;
   std::optional<uint64_t> _key;
   std::optional<protocol::config_change> _request;
   std::optional<seastar::promise<request_result>> _pending;
@@ -132,7 +140,11 @@ class pending_snapshot {
   void apply(uint64_t key, bool ignored, bool aborted, uint64_t index);
 
  private:
+  friend class node;
+
   const raft_config& _config;
+  bool _stopped = false;
+  uint64_t _next_key = 0;
   std::optional<uint64_t> _key;
   std::optional<protocol::snapshot_request> _request;
   std::optional<seastar::promise<request_result>> _pending;
@@ -141,10 +153,16 @@ class pending_snapshot {
 class pending_leader_transfer {
  public:
   explicit pending_leader_transfer(const raft_config& cfg);
-  void request(uint64_t target);
+  seastar::future<request_result> request(uint64_t target);
+  void close();
+
+  void notify(uint64_t leader_id);
 
  private:
+  friend class node;
+
   const raft_config& _config;
+  bool _stopped = false;
   std::optional<uint64_t> _request;
   std::optional<seastar::promise<request_result>> _pending;
 };
