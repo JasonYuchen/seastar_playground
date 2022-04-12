@@ -57,15 +57,28 @@ class worker {
       q().emplace_back(std::move(task));
       notify_not_empty();
       return seastar::make_ready_future<>();
-    } else {
-      seastar::promise<> pr;
-      auto fut = pr.get_future();
-      _waiter.emplace_back(std::move(pr), std::move(task));
-      return fut;
     }
+    seastar::promise<> pr;
+    auto fut = pr.get_future();
+    _waiter.emplace_back(std::move(pr), std::move(task));
+    return fut;
   }
 
-  bool full() const { return _q[_curr_idx % 2].size() == _capacity; }
+  bool push(T& task) {
+    if (_ex) {
+      std::rethrow_exception(_ex);
+    }
+    if (!full()) {
+      q().emplace_back(std::move(task));
+      notify_not_empty();
+      return true;
+    }
+    return false;
+  }
+
+  bool full() const { return size() == _capacity; }
+
+  size_t size() const { return _q[_curr_idx % 2].size(); }
 
   size_t waiters() const { return _waiter.size(); }
 
