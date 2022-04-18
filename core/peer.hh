@@ -8,6 +8,7 @@
 
 #include "core/raft.hh"
 #include "protocol/raft.hh"
+#include "util/seastarx.hh"
 
 namespace rafter::core {
 
@@ -20,22 +21,22 @@ class peer {
       bool initial,
       bool new_node);
   // void gc(uint64_t now);
-  seastar::future<> tick();
-  seastar::future<> quiesced_tick();
-  seastar::future<> request_leader_transfer(uint64_t target);
-  seastar::future<> read_index(protocol::hint ctx);
-  seastar::future<> propose_entries(protocol::log_entry_vector entries);
-  seastar::future<> propose_config_change(
+  future<> tick();
+  future<> quiesced_tick();
+  future<> request_leader_transfer(uint64_t target);
+  future<> read_index(protocol::hint ctx);
+  future<> propose_entries(protocol::log_entry_vector entries);
+  future<> propose_config_change(
       const protocol::config_change& change, uint64_t key);
-  seastar::future<> apply_config_change(protocol::config_change change);
-  seastar::future<> reject_config_change();
-  seastar::future<> restore_remotes(protocol::snapshot_ptr snapshot);
-  seastar::future<> report_unreachable(uint64_t node);
-  seastar::future<> report_snapshot_status(uint64_t node, bool reject);
-  seastar::future<> handle(protocol::message m);
+  future<> apply_config_change(protocol::config_change change);
+  future<> reject_config_change();
+  future<> restore_remotes(protocol::snapshot_ptr snapshot);
+  future<> report_unreachable(uint64_t node);
+  future<> report_snapshot_status(uint64_t node, bool reject);
+  future<> handle(protocol::message m);
   bool has_entry_to_apply();
   bool has_update(bool more_to_apply);
-  seastar::future<protocol::update> get_update(
+  future<protocol::update> get_update(
       bool more_to_apply, uint64_t last_applied);
   void commit(const protocol::update& up);
   void notify_last_applied(uint64_t last_applied) noexcept;

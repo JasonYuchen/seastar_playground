@@ -11,7 +11,6 @@
 namespace rafter::core {
 
 using namespace protocol;
-using namespace seastar;
 
 peer::peer(
     const raft_config& c,

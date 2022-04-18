@@ -5,7 +5,6 @@
 #include "segment_manager.hh"
 
 #include <seastar/core/reactor.hh>
-#include <seastar/util/defer.hh>
 
 #include "protocol/serializer.hh"
 #include "rafter/config.hh"
@@ -15,7 +14,6 @@
 namespace rafter::storage {
 
 using namespace protocol;
-using namespace seastar;
 using namespace std;
 
 segment_manager::segment_manager()
@@ -314,7 +312,7 @@ future<> segment_manager::parse_existing_segments(directory_entry s) {
   _segments.emplace(filename, std::move(seg));
 }
 
-seastar::future<> segment_manager::recovery_compaction() {
+future<> segment_manager::recovery_compaction() {
   // TODO(jyc): use callback and avoid this allocation
   auto groups = _index_group.managed_groups();
   for (auto gid : groups) {

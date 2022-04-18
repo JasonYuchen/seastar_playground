@@ -8,6 +8,7 @@
 
 #include "protocol/raft.hh"
 #include "storage/segment_manager.hh"
+#include "util/seastarx.hh"
 
 namespace rafter::core {
 
@@ -51,17 +52,17 @@ class log_reader {
   protocol::hard_state get_state() const noexcept;
   void set_state(protocol::hard_state state) noexcept;
   protocol::membership_ptr get_membership() const noexcept;
-  seastar::future<size_t> query(
+  future<size_t> query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
       size_t max_bytes);
-  seastar::future<uint64_t> get_term(uint64_t index);
+  future<uint64_t> get_term(uint64_t index);
   protocol::hint get_range() const noexcept;
   void set_range(protocol::hint range);
   protocol::snapshot_ptr get_snapshot() const noexcept;
   void apply_snapshot(protocol::snapshot_ptr snapshot);
   void apply_entries(protocol::log_entry_span entries);
-  seastar::future<> apply_compaction(uint64_t index);
+  future<> apply_compaction(uint64_t index);
 
  private:
   friend class raft_log;
@@ -84,9 +85,9 @@ class raft_log {
   uint64_t processed() const noexcept { return _processed; }
   uint64_t first_index() const noexcept;
   uint64_t last_index() const noexcept;
-  seastar::future<uint64_t> term(uint64_t index) const;
-  seastar::future<uint64_t> last_term() const;
-  seastar::future<bool> term_index_match(protocol::log_id lid) const;
+  future<uint64_t> term(uint64_t index) const;
+  future<uint64_t> last_term() const;
+  future<bool> term_index_match(protocol::log_id lid) const;
   // the available entries' term range + snapshot's term
   protocol::hint term_entry_range() const noexcept;
   // the available entries' range
@@ -98,35 +99,33 @@ class raft_log {
   bool has_config_change_to_apply() const noexcept;
   bool has_entries_to_save() const noexcept;
   void get_entries_to_save(protocol::log_entry_vector& entries);
-  seastar::future<> get_entries_to_apply(protocol::log_entry_vector& entries);
-  seastar::future<size_t> query(
+  future<> get_entries_to_apply(protocol::log_entry_vector& entries);
+  future<size_t> query(
       uint64_t start,
       protocol::log_entry_vector& entries,
       size_t max_bytes) const;
-  seastar::future<size_t> query(
+  future<size_t> query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
       size_t max_bytes) const;
-  seastar::future<size_t> query_logdb(
+  future<size_t> query_logdb(
       protocol::hint range,
       protocol::log_entry_vector& entries,
       size_t max_bytes) const noexcept;
-  seastar::future<size_t> query_memory(
+  future<size_t> query_memory(
       protocol::hint range,
       protocol::log_entry_vector& entries,
       size_t max_bytes) const noexcept;
   protocol::snapshot_ptr get_snapshot() const noexcept;
   protocol::snapshot_ptr get_memory_snapshot() const noexcept;
-  seastar::future<uint64_t> get_conflict_index(
-      protocol::log_entry_span entries) const;
-  seastar::future<uint64_t> pending_config_change_count();
-  seastar::future<bool> try_append(
-      uint64_t index, protocol::log_entry_span entries);
+  future<uint64_t> get_conflict_index(protocol::log_entry_span entries) const;
+  future<uint64_t> pending_config_change_count();
+  future<bool> try_append(uint64_t index, protocol::log_entry_span entries);
   void append(protocol::log_entry_span entries);
-  seastar::future<bool> try_commit(protocol::log_id lid);
+  future<bool> try_commit(protocol::log_id lid);
   void commit(uint64_t index);
   void commit_update(const protocol::update_commit& uc);
-  seastar::future<bool> up_to_date(protocol::log_id lid);
+  future<bool> up_to_date(protocol::log_id lid);
   void restore(protocol::snapshot_ptr snapshot);
 
  private:

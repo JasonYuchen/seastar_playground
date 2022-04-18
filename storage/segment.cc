@@ -14,12 +14,11 @@
 namespace rafter::storage {
 
 using namespace protocol;
-using namespace seastar;
 using namespace std;
 
 future<unique_ptr<segment>> segment::open(
     uint64_t filename, string filepath, bool existing) {
-  // TODO(jyc): tune seastar::file_open_options
+  // TODO(jyc): tune file_open_options
   l.info("open segment:{}, existing:{}", filepath, existing);
   assert(filename > 0);
   auto s = make_unique<segment>();

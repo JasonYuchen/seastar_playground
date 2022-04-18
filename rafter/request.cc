@@ -9,8 +9,6 @@
 
 namespace rafter {
 
-using namespace seastar;
-
 pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
   _proposal_queue.reserve(config::shard().incoming_proposal_queue_length);
 }
@@ -314,6 +312,8 @@ void pending_leader_transfer::notify(uint64_t leader_id) {
     } else {
       request_result::reject(_pending.value(), {.value = leader_id});
     }
+    _request = std::nullopt;
+    _pending = std::nullopt;
   }
 }
 

@@ -9,7 +9,6 @@
 namespace rafter::core {
 
 using namespace protocol;
-using namespace seastar;
 
 // TODO(jyc): add raft event listener
 
@@ -75,7 +74,7 @@ std::ostream& operator<<(std::ostream& os, const raft& r) {
             << "t:" << r._term << "]";
 }
 
-seastar::future<> raft::handle(protocol::message& m) {
+future<> raft::handle(protocol::message& m) {
   if (!term_not_matched(m)) {
     if (!is_prevote(m.type) && m.term != log_id::INVALID_TERM &&
         m.term != _term) {
@@ -563,7 +562,7 @@ void raft::add_witness(uint64_t id) {
   _witnesses[id] = remote{.match = 0, .next = _log.last_index() + 1};
 }
 
-seastar::future<> raft::remove_node(uint64_t id) {
+future<> raft::remove_node(uint64_t id) {
   _remotes.erase(id);
   _observers.erase(id);
   _witnesses.erase(id);

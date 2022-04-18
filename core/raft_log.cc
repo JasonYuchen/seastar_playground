@@ -9,8 +9,6 @@
 
 namespace rafter::core {
 
-using namespace seastar;
-
 in_memory_log::in_memory_log(uint64_t last_index)
   : _marker(last_index + 1), _saved(last_index) {}
 
@@ -356,7 +354,7 @@ uint64_t raft_log::last_index() const noexcept {
   return last;
 }
 
-seastar::future<uint64_t> raft_log::term(uint64_t index) const {
+future<uint64_t> raft_log::term(uint64_t index) const {
   auto [first, last] = term_entry_range();
   if (index < first || index > last) {
     co_return protocol::log_id::INVALID_TERM;

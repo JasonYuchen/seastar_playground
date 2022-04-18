@@ -14,7 +14,6 @@
 namespace rafter::transport {
 
 using namespace protocol;
-using namespace seastar;
 using namespace std::chrono_literals;
 
 exchanger::exchanger(registry& reg)

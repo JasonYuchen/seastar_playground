@@ -20,6 +20,7 @@
 #include "protocol/raft.hh"
 #include "storage/index.hh"
 #include "util/fragmented_temporary_buffer.hh"
+#include "util/seastarx.hh"
 #include "util/types.hh"
 
 namespace rafter::storage {
@@ -29,26 +30,26 @@ class segment {
   segment() = default;
   DEFAULT_MOVE_AND_ASSIGN(segment);
 
-  static seastar::future<std::unique_ptr<segment>> open(
+  static future<std::unique_ptr<segment>> open(
       uint64_t filename, std::string filepath, bool existing = false);
 
   uint64_t filename() const noexcept;
   uint64_t bytes() const noexcept;
 
   // return the file length after appending the update
-  seastar::future<uint64_t> append(const protocol::update& update);
-  seastar::future<protocol::update> query(index::entry i) const;
+  future<uint64_t> append(const protocol::update& update);
+  future<protocol::update> query(index::entry i) const;
   // read segment and append saved entries to entries, return left bytes
-  seastar::future<size_t> query(
+  future<size_t> query(
       std::span<const index::entry> indexes,
       protocol::log_entry_vector& entries,
       size_t left_bytes) const;
-  seastar::future<> sync();
-  seastar::future<> close();
-  seastar::future<> remove();
-  seastar::future<> list_update(
-      std::function<seastar::future<>(
-          const protocol::update& up, index::entry e)> next) const;
+  future<> sync();
+  future<> close();
+  future<> remove();
+  future<> list_update(
+      std::function<future<>(const protocol::update& up, index::entry e)> next)
+      const;
   operator bool() const;
 
   static constexpr char SUFFIX[] = "log";

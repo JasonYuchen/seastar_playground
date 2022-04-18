@@ -12,6 +12,7 @@
 #include "core/remote.hh"
 #include "protocol/raft.hh"
 #include "rafter/config.hh"
+#include "util/seastarx.hh"
 #include "util/types.hh"
 
 namespace rafter::core {
@@ -28,8 +29,8 @@ class raft {
 
   raft(const raft_config& cfg, log_reader& lr);
 
-  seastar::future<> handle(protocol::message& m);
-  seastar::future<> handle(protocol::message&& m) { return handle(m); }
+  future<> handle(protocol::message& m);
+  future<> handle(protocol::message&& m) { return handle(m); }
 
  private:
   DISALLOW_COPY_MOVE_AND_ASSIGN(raft);
@@ -55,7 +56,7 @@ class raft {
   void report_dropped_proposal(protocol::message& m);
   void report_dropped_read_index(protocol::message& m);
   void finalize_message(protocol::message& m);
-  seastar::future<protocol::message> make_replicate(
+  future<protocol::message> make_replicate(
       uint64_t to, uint64_t next, uint64_t max_bytes);
   protocol::message make_install_snapshot(uint64_t to);
   bool term_not_matched(protocol::message& m);
@@ -68,15 +69,15 @@ class raft {
   void send_timeout_now(uint64_t to);
   void send_rate_limit();
   void send_heartbeat(uint64_t to, protocol::hint ctx, uint64_t match_index);
-  seastar::future<> send_replicate(uint64_t to, remote& r);
+  future<> send_replicate(uint64_t to, remote& r);
   void broadcast_heartbeat();
-  seastar::future<> broadcast_replicate();
+  future<> broadcast_replicate();
 
   // membership
   void add_node(uint64_t id);
   void add_observer(uint64_t id);
   void add_witness(uint64_t id);
-  seastar::future<> remove_node(uint64_t id);
+  future<> remove_node(uint64_t id);
   bool is_self_removed() const;
   uint64_t quorum() const noexcept;
   uint64_t voting_members_size() const noexcept;
@@ -84,11 +85,11 @@ class raft {
 
   // state transition
   void set_leader(uint64_t leader_id);
-  seastar::future<> pre_campaign();
-  seastar::future<> campaign();
+  future<> pre_campaign();
+  future<> campaign();
   uint64_t handle_vote_resp(uint64_t from, bool rejected, bool prevote);
   bool can_grant_vote(uint64_t peer_id, uint64_t peer_term) const noexcept;
-  seastar::future<> become_leader();
+  future<> become_leader();
   void become_candidate();
   void become_pre_candidate();
   void become_follower(uint64_t term, uint64_t leader_id, bool reset_election);
@@ -98,18 +99,18 @@ class raft {
   void abort_leader_transfer();
   void reset(uint64_t term, bool reset_election_timeout);
   void reset_matched();
-  seastar::future<bool> restore(protocol::snapshot_ptr ss);
+  future<bool> restore(protocol::snapshot_ptr ss);
 
   // log
-  seastar::future<bool> try_commit();
-  seastar::future<> append_entries(protocol::log_entry_vector& entries);
-  seastar::future<> append_noop_entry();
-  seastar::future<bool> has_committed_entry();
+  future<bool> try_commit();
+  future<> append_entries(protocol::log_entry_vector& entries);
+  future<> append_noop_entry();
+  future<bool> has_committed_entry();
 
   // clock
-  seastar::future<> tick();
-  seastar::future<> leader_tick();
-  seastar::future<> nonleader_tick();
+  future<> tick();
+  future<> leader_tick();
+  future<> nonleader_tick();
   void quiesced_tick();
   void leader_is_available(uint64_t leader_id) noexcept;
   bool time_to_elect() const noexcept;
@@ -121,16 +122,16 @@ class raft {
   void set_randomized_election_timeout();
 
   // common
-  seastar::future<> node_election(protocol::message& m);
-  seastar::future<> node_request_vote(protocol::message& m);
-  seastar::future<> node_request_prevote(protocol::message& m);
-  seastar::future<> node_config_change(protocol::message& m);
-  seastar::future<> node_local_tick(protocol::message& m);
-  seastar::future<> node_restore_remote(protocol::message& m);
+  future<> node_election(protocol::message& m);
+  future<> node_request_vote(protocol::message& m);
+  future<> node_request_prevote(protocol::message& m);
+  future<> node_config_change(protocol::message& m);
+  future<> node_local_tick(protocol::message& m);
+  future<> node_restore_remote(protocol::message& m);
 
-  seastar::future<> node_heartbeat(protocol::message& m);
-  seastar::future<> node_replicate(protocol::message& m);
-  seastar::future<> node_install_snapshot(protocol::message& m);
+  future<> node_heartbeat(protocol::message& m);
+  future<> node_replicate(protocol::message& m);
+  future<> node_install_snapshot(protocol::message& m);
 
   // leader
   //  election          -> common
@@ -139,16 +140,16 @@ class raft {
   //  config_change     -> common
   //  local_tick        -> common
   //  snapshot_received -> common
-  seastar::future<> leader_heartbeat(protocol::message& m);
-  seastar::future<> leader_heartbeat_resp(protocol::message& m);
-  seastar::future<> leader_check_quorum(protocol::message& m);
-  seastar::future<> leader_propose(protocol::message& m);
-  seastar::future<> leader_read_index(protocol::message& m);
-  seastar::future<> leader_replicate_resp(protocol::message& m);
-  seastar::future<> leader_snapshot_status(protocol::message& m);
-  seastar::future<> leader_unreachable(protocol::message& m);
-  seastar::future<> leader_leader_transfer(protocol::message& m);
-  seastar::future<> leader_rate_limit(protocol::message& m);
+  future<> leader_heartbeat(protocol::message& m);
+  future<> leader_heartbeat_resp(protocol::message& m);
+  future<> leader_check_quorum(protocol::message& m);
+  future<> leader_propose(protocol::message& m);
+  future<> leader_read_index(protocol::message& m);
+  future<> leader_replicate_resp(protocol::message& m);
+  future<> leader_snapshot_status(protocol::message& m);
+  future<> leader_unreachable(protocol::message& m);
+  future<> leader_leader_transfer(protocol::message& m);
+  future<> leader_rate_limit(protocol::message& m);
 
   // candidate
   //  election          -> common
@@ -157,12 +158,12 @@ class raft {
   //  config_change     -> common
   //  local_tick        -> common
   //  snapshot_received -> common
-  seastar::future<> candidate_heartbeat(protocol::message& m);
-  seastar::future<> candidate_propose(protocol::message& m);
-  seastar::future<> candidate_read_index(protocol::message& m);
-  seastar::future<> candidate_replicate(protocol::message& m);
-  seastar::future<> candidate_install_snapshot(protocol::message& m);
-  seastar::future<> candidate_request_vote_resp(protocol::message& m);
+  future<> candidate_heartbeat(protocol::message& m);
+  future<> candidate_propose(protocol::message& m);
+  future<> candidate_read_index(protocol::message& m);
+  future<> candidate_replicate(protocol::message& m);
+  future<> candidate_install_snapshot(protocol::message& m);
+  future<> candidate_request_vote_resp(protocol::message& m);
 
   // pre-candidate
   //  election          -> common
@@ -176,7 +177,7 @@ class raft {
   //  read_index        -> candidate
   //  replicate         -> candidate
   //  install_snapshot  -> candidate
-  seastar::future<> pre_candidate_request_prevote_resp(protocol::message& m);
+  future<> pre_candidate_request_prevote_resp(protocol::message& m);
 
   // follower
   //  election          -> common
@@ -185,14 +186,14 @@ class raft {
   //  config_change     -> common
   //  local_tick        -> common
   //  snapshot_received -> common
-  seastar::future<> follower_heartbeat(protocol::message& m);
-  seastar::future<> follower_propose(protocol::message& m);
-  seastar::future<> follower_read_index(protocol::message& m);
-  seastar::future<> follower_read_index_resp(protocol::message& m);
-  seastar::future<> follower_replicate(protocol::message& m);
-  seastar::future<> follower_leader_transfer(protocol::message& m);
-  seastar::future<> follower_install_snapshot(protocol::message& m);
-  seastar::future<> follower_timeout_now(protocol::message& m);
+  future<> follower_heartbeat(protocol::message& m);
+  future<> follower_propose(protocol::message& m);
+  future<> follower_read_index(protocol::message& m);
+  future<> follower_read_index_resp(protocol::message& m);
+  future<> follower_replicate(protocol::message& m);
+  future<> follower_leader_transfer(protocol::message& m);
+  future<> follower_install_snapshot(protocol::message& m);
+  future<> follower_timeout_now(protocol::message& m);
 
   // observer
   //  request_vote      -> common
