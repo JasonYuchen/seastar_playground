@@ -71,6 +71,10 @@ struct request_state {
     uint64_t last_gc = 0;
     static constexpr uint64_t DEFAULT_GC_TICK = 2;
   };
+  request_state() = default;
+  explicit request_state(uint64_t deadline) : deadline(deadline) {}
+  DEFAULT_MOVE_AND_ASSIGN(request_state);
+
   uint64_t deadline = UINT64_MAX;
   promise<request_result> result;
 };
@@ -79,7 +83,7 @@ class pending_proposal {
  public:
   explicit pending_proposal(const raft_config& cfg);
   future<request_result> propose(
-      const protocol::session& session, std::string_view cmd);
+      const protocol::session& session, std::string_view cmd, uint64_t timeout);
   void close();
   void tick(uint64_t t) { _clock.tick = t; }
   void gc();
@@ -102,7 +106,7 @@ class pending_proposal {
 class pending_read_index {
  public:
   explicit pending_read_index(const raft_config& cfg);
-  future<request_result> read();
+  future<request_result> read(uint64_t timeout);
   void close();
   void tick(uint64_t t) { _clock.tick = t; }
   void gc();
@@ -131,7 +135,7 @@ class pending_read_index {
 class pending_config_change {
  public:
   explicit pending_config_change(const raft_config& cfg);
-  future<request_result> request(protocol::config_change cc);
+  future<request_result> request(protocol::config_change cc, uint64_t timeout);
   void close();
   void tick(uint64_t t) { _clock.tick = t; }
   void gc();
@@ -157,7 +161,8 @@ class pending_config_change {
 class pending_snapshot {
  public:
   explicit pending_snapshot(const raft_config& cfg);
-  future<request_result> request(protocol::snapshot_request request);
+  future<request_result> request(
+      protocol::snapshot_request request, uint64_t timeout);
   void close();
   void tick(uint64_t t) { _clock.tick = t; }
   void gc();
@@ -179,6 +184,7 @@ class pending_snapshot {
 };
 
 class pending_leader_transfer {
+  // TODO(jyc): timeout support, notify support
  public:
   explicit pending_leader_transfer(const raft_config& cfg);
   future<request_result> request(uint64_t target);

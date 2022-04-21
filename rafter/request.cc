@@ -16,10 +16,14 @@ pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
 }
 
 future<request_result> pending_proposal::propose(
-    const session& session, std::string_view cmd) {
+    const session& session, std::string_view cmd, uint64_t timeout) {
   if (cmd.size() > config::shard().max_entry_size) [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cmd", "too big"));
+  }
+  if (timeout == 0) [[unlikely]] {
+    return make_exception_future<request_result>(
+        util::invalid_argument("timeout", "too small"));
   }
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -32,8 +36,6 @@ future<request_result> pending_proposal::propose(
   if (_pending.contains(_next_key + 1)) [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
-  promise<request_result> pr;
-  auto fut = pr.get_future();
   auto& e = _proposal_queue.emplace_back(make_lw_shared<log_entry>());
   e->type = cmd.empty() ? entry_type::application : entry_type::encoded;
   e->key = _next_key++;
@@ -42,8 +44,10 @@ future<request_result> pending_proposal::propose(
   e->responded_to = session.responded_to;
   // TODO(jyc): add compression support
   e->payload = cmd;
-  _pending.emplace(e->key, request_state{0, std::move(pr)});
-  return fut;
+  auto deadline = _clock.tick + timeout;
+  auto [it, inserted] = _pending.emplace(e->key, request_state{deadline});
+  assert(inserted);
+  return it->second.result.get_future();
 }
 
 void pending_proposal::close() {
@@ -109,16 +113,21 @@ pending_read_index::pending_read_index(const raft_config& cfg)
   _read_queue.reserve(config::shard().incoming_read_index_queue_length);
 }
 
-future<request_result> pending_read_index::read() {
+future<request_result> pending_read_index::read(uint64_t timeout) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
         util::closed_error("pending_read_index"));
+  }
+  if (timeout == 0) [[unlikely]] {
+    return make_exception_future<request_result>(
+        util::invalid_argument("timeout", "too small"));
   }
   if (_read_queue.size() >= config::shard().incoming_read_index_queue_length)
       [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
-  auto& st = _read_queue.emplace_back(request_state{});
+  auto deadline = _clock.tick + timeout;
+  auto& st = _read_queue.emplace_back(request_state{deadline});
   st->deadline = 0;
   return st->result.get_future();
 }
@@ -247,17 +256,22 @@ void pending_read_index::apply(uint64_t applied_index) {
 pending_config_change::pending_config_change(const raft_config& cfg)
   : _config(cfg) {}
 
-future<request_result> pending_config_change::request(config_change cc) {
+future<request_result> pending_config_change::request(
+    config_change cc, uint64_t timeout) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
         util::closed_error("pending_config_change"));
   }
-  if (_key.has_value()) {
+  if (timeout == 0) [[unlikely]] {
+    return make_exception_future<request_result>(
+        util::invalid_argument("timeout", "too small"));
+  }
+  if (_key.has_value()) [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
   _key = _next_key++;
-  _request = cc;
-  _pending = request_state{.deadline = 0, .result = {}};
+  _request = std::move(cc);
+  _pending = request_state{_clock.tick + timeout};
   return _pending->result.get_future();
 }
 
@@ -317,17 +331,22 @@ void pending_config_change::reset() {
 
 pending_snapshot::pending_snapshot(const raft_config& cfg) : _config(cfg) {}
 
-future<request_result> pending_snapshot::request(snapshot_request request) {
+future<request_result> pending_snapshot::request(
+    snapshot_request request, uint64_t timeout) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
         util::closed_error("pending_snapshot"));
   }
-  if (_key.has_value()) {
+  if (timeout == 0) [[unlikely]] {
+    return make_exception_future<request_result>(
+        util::invalid_argument("timeout", "too small"));
+  }
+  if (_key.has_value()) [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
   _key = _next_key++;
   _request = std::move(request);
-  _pending = request_state{.deadline = 0, .result = {}};
+  _pending = request_state{_clock.tick + timeout};
   return _pending->result.get_future();
 }
 
@@ -385,11 +404,11 @@ future<request_result> pending_leader_transfer::request(uint64_t target) {
     return make_exception_future<request_result>(
         util::closed_error("pending_snapshot"));
   }
-  if (_request.has_value()) {
+  if (_request.has_value()) [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
   _request = target;
-  _pending = request_state{.deadline = 0, .result = {}};
+  _pending = request_state{};
   return _pending->result.get_future();
 }
 
