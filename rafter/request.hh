@@ -19,7 +19,7 @@ namespace rafter {
 
 struct request_result {
   enum class code {
-    timeout,  // not supported yet
+    timeout,
     committed,
     terminated,
     aborted,
@@ -64,12 +64,25 @@ struct request_result {
   protocol::rsm_result result;
 };
 
+struct request_state {
+  // TODO(jyc): switch to std::chrono
+  struct logical_clock {
+    uint64_t tick = 0;
+    uint64_t last_gc = 0;
+    static constexpr uint64_t DEFAULT_GC_TICK = 2;
+  };
+  uint64_t deadline = UINT64_MAX;
+  promise<request_result> result;
+};
+
 class pending_proposal {
  public:
   explicit pending_proposal(const raft_config& cfg);
   future<request_result> propose(
       const protocol::session& session, std::string_view cmd);
   void close();
+  void tick(uint64_t t) { _clock.tick = t; }
+  void gc();
 
   void commit(uint64_t key);
   void drop(uint64_t key);
@@ -80,9 +93,10 @@ class pending_proposal {
 
   const raft_config& _config;
   bool _stopped = false;
+  request_state::logical_clock _clock;
   uint64_t _next_key = 0;
   std::vector<protocol::log_entry_ptr> _proposal_queue;
-  std::unordered_map<uint64_t, promise<request_result>> _pending;
+  std::unordered_map<uint64_t, request_state> _pending;
 };
 
 class pending_read_index {
@@ -90,6 +104,8 @@ class pending_read_index {
   explicit pending_read_index(const raft_config& cfg);
   future<request_result> read();
   void close();
+  void tick(uint64_t t) { _clock.tick = t; }
+  void gc();
 
   std::optional<protocol::hint> pack();
   void add_ready(protocol::ready_to_read_vector readies);
@@ -101,13 +117,14 @@ class pending_read_index {
 
   struct read_batch {
     uint64_t index = protocol::log_id::INVALID_INDEX;
-    std::vector<promise<request_result>> requests;
+    std::vector<std::optional<request_state>> requests;
   };
   const raft_config& _config;
   bool _stopped = false;
+  request_state::logical_clock _clock;
   std::mt19937_64 _random_engine;
   uint64_t _next_key = 0;
-  std::vector<promise<request_result>> _read_queue;
+  std::vector<std::optional<request_state>> _read_queue;
   std::unordered_map<protocol::hint, read_batch, util::pair_hasher> _pending;
 };
 
@@ -116,6 +133,8 @@ class pending_config_change {
   explicit pending_config_change(const raft_config& cfg);
   future<request_result> request(protocol::config_change cc);
   void close();
+  void tick(uint64_t t) { _clock.tick = t; }
+  void gc();
 
   void commit(uint64_t key);
   void drop(uint64_t key);
@@ -124,12 +143,15 @@ class pending_config_change {
  private:
   friend class node;
 
+  void reset();
+
   const raft_config& _config;
   bool _stopped = false;
+  request_state::logical_clock _clock;
   uint64_t _next_key = 0;
   std::optional<uint64_t> _key;
   std::optional<protocol::config_change> _request;
-  std::optional<promise<request_result>> _pending;
+  std::optional<request_state> _pending;
 };
 
 class pending_snapshot {
@@ -137,18 +159,23 @@ class pending_snapshot {
   explicit pending_snapshot(const raft_config& cfg);
   future<request_result> request(protocol::snapshot_request request);
   void close();
+  void tick(uint64_t t) { _clock.tick = t; }
+  void gc();
 
   void apply(uint64_t key, bool ignored, bool aborted, uint64_t index);
 
  private:
   friend class node;
 
+  void reset();
+
   const raft_config& _config;
   bool _stopped = false;
+  request_state::logical_clock _clock;
   uint64_t _next_key = 0;
   std::optional<uint64_t> _key;
   std::optional<protocol::snapshot_request> _request;
-  std::optional<promise<request_result>> _pending;
+  std::optional<request_state> _pending;
 };
 
 class pending_leader_transfer {
@@ -165,7 +192,7 @@ class pending_leader_transfer {
   const raft_config& _config;
   bool _stopped = false;
   std::optional<uint64_t> _request;
-  std::optional<promise<request_result>> _pending;
+  std::optional<request_state> _pending;
 };
 
 }  // namespace rafter

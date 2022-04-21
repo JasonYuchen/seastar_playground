@@ -9,12 +9,14 @@
 
 namespace rafter {
 
+using namespace protocol;
+
 pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
   _proposal_queue.reserve(config::shard().incoming_proposal_queue_length);
 }
 
 future<request_result> pending_proposal::propose(
-    const protocol::session& session, std::string_view cmd) {
+    const session& session, std::string_view cmd) {
   if (cmd.size() > config::shard().max_entry_size) [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cmd", "too big"));
@@ -32,30 +34,50 @@ future<request_result> pending_proposal::propose(
   }
   promise<request_result> pr;
   auto fut = pr.get_future();
-  auto& e = _proposal_queue.emplace_back(make_lw_shared<protocol::log_entry>());
-  e->type = protocol::entry_type::encoded;
+  auto& e = _proposal_queue.emplace_back(make_lw_shared<log_entry>());
+  e->type = cmd.empty() ? entry_type::application : entry_type::encoded;
   e->key = _next_key++;
   e->client_id = session.client_id;
   e->series_id = session.series_id;
   e->responded_to = session.responded_to;
+  // TODO(jyc): add compression support
   e->payload = cmd;
-  _pending.emplace(e->key, std::move(pr));
+  _pending.emplace(e->key, request_state{0, std::move(pr)});
   return fut;
 }
 
 void pending_proposal::close() {
   _stopped = true;
-  for (auto& [key, pr] : _pending) {
+  for (auto& [key, st] : _pending) {
     // TODO(jyc): exception or abort/terminate state
-    pr.set_exception(util::closed_error("pending_proposal"));
+    st.result.set_exception(util::closed_error("pending_proposal"));
   }
   _pending.clear();
+}
+
+void pending_proposal::gc() {
+  if (_stopped) {
+    return;
+  }
+  auto now = _clock.tick;
+  if (now - _clock.last_gc < request_state::logical_clock::DEFAULT_GC_TICK) {
+    return;
+  }
+  _clock.last_gc = now;
+  for (auto it = _pending.begin(); it != _pending.end();) {
+    if (it->second.deadline < now) {
+      request_result::timeout(it->second.result);
+      it = _pending.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 void pending_proposal::commit(uint64_t key) {
   auto it = _pending.find(key);
   if (it != _pending.end()) {
-    request_result::commit(it->second);
+    request_result::commit(it->second.result);
     _pending.erase(it);
   }
 }
@@ -63,19 +85,18 @@ void pending_proposal::commit(uint64_t key) {
 void pending_proposal::drop(uint64_t key) {
   auto it = _pending.find(key);
   if (it != _pending.end()) {
-    request_result::drop(it->second);
+    request_result::drop(it->second.result);
     _pending.erase(it);
   }
 }
 
-void pending_proposal::apply(
-    uint64_t key, protocol::rsm_result result, bool rejected) {
+void pending_proposal::apply(uint64_t key, rsm_result result, bool rejected) {
   auto it = _pending.find(key);
   if (it != _pending.end()) {
     if (rejected) {
-      request_result::reject(it->second, std::move(result));
+      request_result::reject(it->second.result, std::move(result));
     } else {
-      request_result::complete(it->second, std::move(result));
+      request_result::complete(it->second.result, std::move(result));
     }
     _pending.erase(it);
   }
@@ -97,25 +118,60 @@ future<request_result> pending_read_index::read() {
       [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
-  return _read_queue.emplace_back().get_future();
+  auto& st = _read_queue.emplace_back(request_state{});
+  st->deadline = 0;
+  return st->result.get_future();
 }
 
 void pending_read_index::close() {
   _stopped = true;
   for (auto& [hint, batch] : _pending) {
     // TODO(jyc): exception or abort/terminate state
-    for (auto& pr : batch.requests) {
-      pr.set_exception(util::closed_error("pending_read_index"));
+    for (auto& st : batch.requests) {
+      if (st.has_value()) {
+        st->result.set_exception(util::closed_error("pending_read_index"));
+      }
     }
   }
-  for (auto& pr : _read_queue) {
-    pr.set_exception(util::closed_error("pending_read_index"));
+  for (auto& st : _read_queue) {
+    if (st.has_value()) {
+      st->result.set_exception(util::closed_error("pending_read_index"));
+    }
   }
   _read_queue.clear();
   _pending.clear();
 }
 
-std::optional<protocol::hint> pending_read_index::pack() {
+void pending_read_index::gc() {
+  if (_stopped) {
+    return;
+  }
+  auto now = _clock.tick;
+  if (now - _clock.last_gc < request_state::logical_clock::DEFAULT_GC_TICK) {
+    return;
+  }
+  _clock.last_gc = now;
+  for (auto it = _pending.begin(); it != _pending.end();) {
+    size_t count = 0;
+    for (auto& st : it->second.requests) {
+      if (st.has_value() && st->deadline < now) {
+        request_result::timeout(st->result);
+        st.reset();
+      }
+      if (st.has_value()) {
+        count++;
+      }
+    }
+    if (count == 0) {
+      // all request in this batch have been notified
+      it = _pending.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+std::optional<hint> pending_read_index::pack() {
   if (_stopped) {
     return std::nullopt;
   }
@@ -134,7 +190,7 @@ std::optional<protocol::hint> pending_read_index::pack() {
   return hint;
 }
 
-void pending_read_index::add_ready(protocol::ready_to_read_vector readies) {
+void pending_read_index::add_ready(ready_to_read_vector readies) {
   if (readies.empty()) {
     return;
   }
@@ -146,13 +202,16 @@ void pending_read_index::add_ready(protocol::ready_to_read_vector readies) {
   }
 }
 
-void pending_read_index::drop(protocol::hint hint) {
+void pending_read_index::drop(struct hint hint) {
   if (_stopped) {
     return;
   }
   if (auto it = _pending.find(hint); it != _pending.end()) {
-    for (auto& pr : it->second.requests) {
-      request_result::drop(pr);
+    for (auto& st : it->second.requests) {
+      if (st.has_value()) {
+        request_result::drop(st->result);
+        st.reset();
+      }
     }
     _pending.erase(it);
   }
@@ -162,24 +221,33 @@ void pending_read_index::apply(uint64_t applied_index) {
   if (_stopped || _pending.empty()) {
     return;
   }
+  auto now = _clock.tick;
   for (auto it = _pending.begin(); it != _pending.end();) {
-    if (it->second.index != protocol::log_id::INVALID_INDEX &&
+    if (it->second.index != log_id::INVALID_INDEX &&
         it->second.index < applied_index) {
-      for (auto& pr : it->second.requests) {
-        request_result::complete(pr, {});
+      for (auto& st : it->second.requests) {
+        if (st.has_value()) {
+          if (st->deadline > now) {
+            request_result::complete(st->result, {});
+          } else {
+            request_result::timeout(st->result);
+          }
+          st.reset();
+        }
       }
       it = _pending.erase(it);
     } else {
       it++;
     }
   }
+  // apply triggered gc
+  gc();
 }
 
 pending_config_change::pending_config_change(const raft_config& cfg)
   : _config(cfg) {}
 
-future<request_result> pending_config_change::request(
-    protocol::config_change cc) {
+future<request_result> pending_config_change::request(config_change cc) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
         util::closed_error("pending_config_change"));
@@ -189,55 +257,67 @@ future<request_result> pending_config_change::request(
   }
   _key = _next_key++;
   _request = cc;
-  _pending = promise<request_result>();
-  return _pending->get_future();
+  _pending = request_state{.deadline = 0, .result = {}};
+  return _pending->result.get_future();
 }
 
 void pending_config_change::close() {
   _stopped = true;
   if (_pending.has_value()) {
-    _pending->set_exception(util::closed_error("pending_config_change"));
+    _pending->result.set_exception(util::closed_error("pending_config_change"));
   }
-  _key = std::nullopt;
-  _request = std::nullopt;
-  _pending = std::nullopt;
+  reset();
+}
+
+void pending_config_change::gc() {
+  if (_stopped || !_pending.has_value()) {
+    return;
+  }
+  auto now = _clock.tick;
+  if (now - _clock.last_gc < request_state::logical_clock::DEFAULT_GC_TICK) {
+    return;
+  }
+  _clock.last_gc = now;
+  if (_pending->deadline < now) {
+    request_result::timeout(_pending->result);
+    reset();
+  }
 }
 
 void pending_config_change::commit(uint64_t key) {
   if (_key.has_value() && _key.value() == key) {
-    request_result::commit(_pending.value());
-    _key = std::nullopt;
-    _request = std::nullopt;
-    _pending = std::nullopt;
+    request_result::commit(_pending->result);
+    reset();
   }
 }
 
 void pending_config_change::drop(uint64_t key) {
   if (_key.has_value() && _key.value() == key) {
-    request_result::drop(_pending.value());
-    _key = std::nullopt;
-    _request = std::nullopt;
-    _pending = std::nullopt;
+    request_result::drop(_pending->result);
+    reset();
   }
 }
 
 void pending_config_change::apply(uint64_t key, bool rejected) {
   if (_key.has_value() && _key.value() == key) {
     if (rejected) {
-      request_result::reject(_pending.value(), {});
+      request_result::reject(_pending->result, {});
     } else {
-      request_result::complete(_pending.value(), {});
+      request_result::complete(_pending->result, {});
     }
-    _key = std::nullopt;
-    _request = std::nullopt;
-    _pending = std::nullopt;
+    reset();
   }
+}
+
+void pending_config_change::reset() {
+  _key.reset();
+  _request.reset();
+  _pending.reset();
 }
 
 pending_snapshot::pending_snapshot(const raft_config& cfg) : _config(cfg) {}
 
-future<request_result> pending_snapshot::request(
-    protocol::snapshot_request request) {
+future<request_result> pending_snapshot::request(snapshot_request request) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<request_result>(
         util::closed_error("pending_snapshot"));
@@ -247,18 +327,31 @@ future<request_result> pending_snapshot::request(
   }
   _key = _next_key++;
   _request = std::move(request);
-  _pending = promise<request_result>();
-  return _pending->get_future();
+  _pending = request_state{.deadline = 0, .result = {}};
+  return _pending->result.get_future();
 }
 
 void pending_snapshot::close() {
   _stopped = true;
   if (_pending.has_value()) {
-    _pending->set_exception(util::closed_error("pending_snapshot"));
+    _pending->result.set_exception(util::closed_error("pending_snapshot"));
   }
-  _key = std::nullopt;
-  _request = std::nullopt;
-  _pending = std::nullopt;
+  reset();
+}
+
+void pending_snapshot::gc() {
+  if (_stopped || !_pending.has_value()) {
+    return;
+  }
+  auto now = _clock.tick;
+  if (now - _clock.last_gc < request_state::logical_clock::DEFAULT_GC_TICK) {
+    return;
+  }
+  _clock.last_gc = now;
+  if (_pending->deadline < now) {
+    request_result::timeout(_pending->result);
+    reset();
+  }
 }
 
 void pending_snapshot::apply(
@@ -268,16 +361,20 @@ void pending_snapshot::apply(
   }
   if (_key.has_value() && _key.value() == key) {
     if (ignored) {
-      request_result::reject(_pending.value(), {});
+      request_result::reject(_pending->result, {});
     } else if (aborted) {
-      request_result::abort(_pending.value());
+      request_result::abort(_pending->result);
     } else {
-      request_result::complete(_pending.value(), {.value = index});
+      request_result::complete(_pending->result, {.value = index});
     }
-    _key = std::nullopt;
-    _request = std::nullopt;
-    _pending = std::nullopt;
+    reset();
   }
+}
+
+void pending_snapshot::reset() {
+  _key.reset();
+  _request.reset();
+  _pending.reset();
 }
 
 pending_leader_transfer::pending_leader_transfer(const raft_config& cfg)
@@ -292,14 +389,15 @@ future<request_result> pending_leader_transfer::request(uint64_t target) {
     return make_exception_future<request_result>(util::system_busy());
   }
   _request = target;
-  _pending = promise<request_result>();
-  return _pending->get_future();
+  _pending = request_state{.deadline = 0, .result = {}};
+  return _pending->result.get_future();
 }
 
 void pending_leader_transfer::close() {
   _stopped = true;
   if (_pending.has_value()) {
-    _pending->set_exception(util::closed_error("pending_leader_transfer"));
+    _pending->result.set_exception(
+        util::closed_error("pending_leader_transfer"));
   }
   _request = std::nullopt;
   _pending = std::nullopt;
@@ -308,9 +406,9 @@ void pending_leader_transfer::close() {
 void pending_leader_transfer::notify(uint64_t leader_id) {
   if (_pending.has_value()) {
     if (leader_id == _request.value()) {
-      request_result::complete(_pending.value(), {.value = leader_id});
+      request_result::complete(_pending->result, {.value = leader_id});
     } else {
-      request_result::reject(_pending.value(), {.value = leader_id});
+      request_result::reject(_pending->result, {.value = leader_id});
     }
     _request = std::nullopt;
     _pending = std::nullopt;
