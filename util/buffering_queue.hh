@@ -86,7 +86,7 @@ class buffering_queue {
 
   bool full() const { return size() == _capacity; }
 
-  size_t size() const { return _q[_curr_idx % 2].size(); }
+  size_t size() const { return q().size(); }
 
   size_t waiters() const { return _waiter.size(); }
 
@@ -103,6 +103,8 @@ class buffering_queue {
   };
 
   std::vector<T>& q() { return _q[_curr_idx % 2]; }
+
+  const std::vector<T>& q() const { return _q[_curr_idx % 2]; }
 
   void notify_not_empty() {
     if (_not_empty) {

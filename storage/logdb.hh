@@ -16,6 +16,11 @@ struct raft_state {
   protocol::hard_state hard_state;
   uint64_t first_index = protocol::log_id::INVALID_INDEX;
   uint64_t entry_count = 0;
+
+  bool empty() const {
+    return hard_state.empty() &&
+           first_index == protocol::log_id::INVALID_INDEX && entry_count == 0;
+  }
 };
 
 class logdb {

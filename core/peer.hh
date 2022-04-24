@@ -28,7 +28,7 @@ class peer {
   future<> propose_entries(protocol::log_entry_vector entries);
   future<> propose_config_change(
       const protocol::config_change& change, uint64_t key);
-  future<> apply_config_change(protocol::config_change change);
+  future<> apply_config_change(const protocol::config_change& change);
   future<> reject_config_change();
   future<> restore_remotes(protocol::snapshot_ptr snapshot);
   future<> report_unreachable(uint64_t node);

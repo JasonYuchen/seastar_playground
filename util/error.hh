@@ -14,8 +14,11 @@
 
 namespace rafter::util {
 
+// TODO(jyc): rafactor: make error code more reasonable
+
 enum class code : uint8_t {
   ok = 0,
+  panic,
   configuration,
   serialization,
   short_read,
@@ -57,6 +60,13 @@ class base_error : public std::exception {
  protected:
   enum code _e;
   std::string _msg;
+};
+
+class panic : public base_error {
+ public:
+  using base_error::base_error;
+  explicit panic(std::string_view msg)
+    : base_error(code::panic, std::string(msg)) {}
 };
 
 class configuration_error : public base_error {

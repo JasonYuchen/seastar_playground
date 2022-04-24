@@ -144,11 +144,11 @@ future<raft_state> segment_manager::query_raft_state(
 
   // TODO(jyc): read from segment or read from _index_group?
   auto st = _index_group.get_hard_state(id);
-  if (st.empty()) {
-    l.error("{} segment_manager::query_raft_state: no data", id);
-    co_return coroutine::make_exception(util::failed_precondition_error());
-  }
   raft_state r;
+  if (st.empty()) {
+    l.warn("{} segment_manager::query_raft_state: no data", id);
+    co_return r;
+  }
   r.hard_state = st;
   auto ie = _index_group.query(id, {.low = last_index + 1, .high = UINT64_MAX});
   if (!ie.empty()) {

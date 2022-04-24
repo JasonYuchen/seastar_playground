@@ -456,6 +456,8 @@ class utils {
  public:
   static void assert_continuous(log_entry_span left, log_entry_span right);
   static void fill_metadata_entries(log_entry_vector &entries);
+  static log_entry_vector entries_to_apply(
+      const log_entry_vector &entries, uint64_t applied);
 };
 
 }  // namespace rafter::protocol

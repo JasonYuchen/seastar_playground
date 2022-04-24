@@ -301,6 +301,8 @@ void log_reader::apply_snapshot(protocol::snapshot_ptr snapshot) {
         "snapshot", _snapshot->log_id.index, snapshot->log_id.index);
   }
   _snapshot = snapshot;
+  _marker = snapshot->log_id;
+  _length = 1;
 }
 
 void log_reader::apply_entries(protocol::log_entry_span entries) {

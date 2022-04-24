@@ -9,6 +9,7 @@ namespace rafter::util {
 const char* status_string(enum code e) {
   static const char* s[] = {
       "ok",
+      "panic",
       "configuration",
       "serialization",
       "short_read",

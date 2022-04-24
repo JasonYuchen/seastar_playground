@@ -199,7 +199,7 @@ std::optional<hint> pending_read_index::pack() {
   return hint;
 }
 
-void pending_read_index::add_ready(ready_to_read_vector readies) {
+void pending_read_index::add_ready(const ready_to_read_vector& readies) {
   if (readies.empty()) {
     return;
   }

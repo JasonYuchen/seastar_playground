@@ -46,11 +46,11 @@ future<> peer::request_leader_transfer(uint64_t target) {
       .hint = {target}});
 }
 
-future<> peer::read_index(protocol::hint ctx) {
+future<> peer::read_index(hint ctx) {
   return _raft.handle(message{.type = message_type::read_index, .hint = ctx});
 }
 
-future<> peer::propose_entries(protocol::log_entry_vector entries) {
+future<> peer::propose_entries(log_entry_vector entries) {
   return _raft.handle(message{
       .type = message_type::propose,
       .from = _raft._gid.node,
@@ -58,7 +58,7 @@ future<> peer::propose_entries(protocol::log_entry_vector entries) {
 }
 
 future<> peer::propose_config_change(
-    const protocol::config_change& change, uint64_t key) {
+    const config_change& change, uint64_t key) {
   log_entry_vector e;
   e.emplace_back(make_lw_shared<log_entry>());
   e.back()->type = entry_type::config_change;
@@ -68,7 +68,7 @@ future<> peer::propose_config_change(
       message{.type = message_type::propose, .entries = std::move(e)});
 }
 
-future<> peer::apply_config_change(protocol::config_change change) {
+future<> peer::apply_config_change(const config_change& change) {
   if (change.node == group_id::INVALID_NODE) {
     _raft._pending_config_change = false;
     return make_ready_future<>();
@@ -84,7 +84,7 @@ future<> peer::reject_config_change() {
       message{.type = message_type::config_change, .reject = true});
 }
 
-future<> peer::restore_remotes(protocol::snapshot_ptr snapshot) {
+future<> peer::restore_remotes(snapshot_ptr snapshot) {
   return _raft.handle(message{
       .type = message_type::snapshot_received,
       .snapshot = std::move(snapshot)});
@@ -99,7 +99,7 @@ future<> peer::report_snapshot_status(uint64_t node, bool reject) {
       .type = message_type::snapshot_status, .from = node, .reject = reject});
 }
 
-future<> peer::handle(protocol::message m) {
+future<> peer::handle(message m) {
   if (is_local(m.type)) [[unlikely]] {
     throw util::failed_precondition_error("peer received local message");
   }
@@ -140,9 +140,8 @@ bool peer::has_update(bool more_to_apply) {
   return false;
 }
 
-future<protocol::update> peer::get_update(
-    bool more_to_apply, uint64_t last_applied) {
-  auto up = protocol::update{
+future<update> peer::get_update(bool more_to_apply, uint64_t last_applied) {
+  auto up = update{
       .gid = _raft._gid,
       .fast_apply = true,
       .messages = _raft._messages,
@@ -191,14 +190,14 @@ void peer::notify_last_applied(uint64_t last_applied) noexcept {
 }
 
 void peer::bootstrap(const std::map<uint64_t, std::string>& addresses) {
-  protocol::log_entry_vector entries;
+  log_entry_vector entries;
   entries.reserve(addresses.size());
   for (const auto& [id, address] : addresses) {
     l.info("{}: added bootstrap node {} {}", _raft, id, address);
-    auto entry = make_lw_shared<protocol::log_entry>();
+    auto entry = make_lw_shared<log_entry>();
     entry->type = entry_type::config_change;
     entry->lid = {.term = 1, .index = entries.size() + 1};
-    entry->payload = write_to_string(protocol::config_change{
+    entry->payload = write_to_string(config_change{
         .type = config_change_type::add_node,
         .node = id,
         .address = address,

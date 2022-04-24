@@ -112,7 +112,7 @@ class pending_read_index {
   void gc();
 
   std::optional<protocol::hint> pack();
-  void add_ready(protocol::ready_to_read_vector readies);
+  void add_ready(const protocol::ready_to_read_vector& readies);
   void drop(protocol::hint hint);
   void apply(uint64_t applied_index);
 
