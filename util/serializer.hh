@@ -42,7 +42,7 @@ inline void skip(Input& i, type<T>) {
 namespace detail {
 
 template <typename T>
-requires endian::detail::numerical<T>
+  requires endian::detail::numerical<T>
 struct numeric_serializer {
   template <typename Input>
   static T read(Input& i) {
@@ -347,6 +347,26 @@ struct unordered_set_serializer {
   }
 };
 
+template <typename T1, typename T2>
+struct pair_serializer {
+  template <typename Input>
+  static std::pair<T1, T2> read(Input& i) {
+    T1 t1 = deserialize(i, type<T1>());
+    T2 t2 = deserialize(i, type<T2>());
+    return std::make_pair(std::move(t1), std::move(t2));
+  }
+  template <typename Output>
+  static void write(Output& o, const std::pair<T1, T2>& p) {
+    serialize(o, p.first);
+    serialize(o, p.second);
+  }
+  template <typename Input>
+  static void skip(Input& i) {
+    serializer<T1>::skip(i);
+    serializer<T2>::skip(i);
+  }
+};
+
 }  // namespace detail
 
 template <typename Output>
@@ -407,5 +427,8 @@ struct serializer<std::map<K, V>> : public detail::map_serializer<K, V> {};
 template <typename K, typename V>
 struct serializer<std::unordered_map<K, V>>
   : public detail::unordered_map_serializer<K, V> {};
+template <typename T1, typename T2>
+struct serializer<std::pair<T1, T2>>
+  : public detail::pair_serializer<T1, T2> {};
 
 }  // namespace rafter::util

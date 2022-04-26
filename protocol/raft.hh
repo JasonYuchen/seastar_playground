@@ -11,6 +11,8 @@
 
 namespace rafter::protocol {
 
+// TODO(jyc): separate data structures into different files
+
 enum class raft_role : uint8_t {
   follower,
   pre_candidate,
@@ -451,6 +453,55 @@ struct update {
 };
 
 using update_ptr = seastar::lw_shared_ptr<update>;
+
+struct rsm_result {
+  uint64_t value = 0;
+  std::string data;
+};
+
+struct snapshot_request {
+  enum class type : uint8_t {
+    periodic,
+    user_triggered,
+    exported,
+    streaming,
+  };
+  enum type type = type::periodic;
+  std::string path;
+  uint64_t compaction_overhead = 0;
+  uint64_t key = 0;
+
+  bool exported() const { return type == type::exported; }
+};
+
+struct rsm_task {
+  uint64_t index = log_id::INVALID_INDEX;
+  log_entry_vector entries;
+  snapshot_request ss_request;
+  bool save = false;
+  bool stream = false;
+  bool periodic_sync = false;
+  bool new_node = false;
+  bool recover = false;
+  bool initial = false;
+};
+
+struct snapshot_state {
+  uint64_t snapshot_index = protocol::log_id::INVALID_INDEX;
+  uint64_t request_snapshot_index = protocol::log_id::INVALID_INDEX;
+  uint64_t compact_log_to = protocol::log_id::INVALID_INDEX;
+  uint64_t compacted_to = protocol::log_id::INVALID_INDEX;
+  // TODO(jyc): have to use these independent fields?
+  bool saving = false;
+  bool recovering = false;
+  bool streaming = false;
+  std::optional<rsm_task> recover_ready;
+  std::optional<rsm_task> save_ready;
+  std::optional<rsm_task> stream_ready;
+  std::optional<rsm_task> recover_completed;
+  std::optional<rsm_task> save_completed;
+  std::optional<rsm_task> stream_completed;
+};
 
 class utils {
  public:

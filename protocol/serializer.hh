@@ -496,6 +496,27 @@ struct serializer<update> {
   }
 };
 
+template <>
+struct serializer<protocol::rsm_result> {
+  template <typename Input>
+  static rsm_result read(Input& i) {
+    rsm_result v;
+    v.value = deserialize(i, type<uint64_t>());
+    v.data = deserialize(i, type<std::string>());
+    return v;
+  }
+  template <typename Output>
+  static void write(Output& o, const rsm_result& v) {
+    serialize(o, v.value);
+    serialize(o, v.data);
+  }
+  template <typename Input>
+  static void skip(Input& i) {
+    skip(i, type<uint64_t>());
+    skip(i, type<std::string>());
+  }
+};
+
 }  // namespace rafter::util
 
 namespace rafter::protocol {
