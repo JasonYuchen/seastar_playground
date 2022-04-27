@@ -10,7 +10,6 @@
 
 #include "protocol/client.hh"
 #include "protocol/raft.hh"
-#include "protocol/rsm.hh"
 #include "rafter/config.hh"
 #include "util/seastarx.hh"
 #include "util/util.hh"
