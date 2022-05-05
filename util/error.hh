@@ -42,14 +42,14 @@ enum class code : uint8_t {
   num_of_codes,
 };
 
-const char* status_string(enum code e);
+std::string_view status_string(enum code e);
 
 class base_error : public std::exception {
  public:
   explicit base_error(enum code e) : _e(e) {}
   base_error(enum code e, std::string msg) : _e(e), _msg(std::move(msg)) {}
   template <typename... Args>
-  base_error(const char* s, enum code e, Args&&... args)
+  base_error(std::string_view s, enum code e, Args&&... args)
     : _e(e)
     , _msg(fmt::format(s, status_string(e), std::forward<Args>(args)...)) {}
 

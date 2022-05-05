@@ -6,8 +6,8 @@
 
 namespace rafter::util {
 
-const char* status_string(enum code e) {
-  static const char* s[] = {
+std::string_view status_string(enum code e) {
+  static std::string_view s[] = {
       "ok",
       "panic",
       "configuration",

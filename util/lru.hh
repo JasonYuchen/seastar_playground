@@ -13,6 +13,8 @@
 
 namespace rafter::util {
 
+// TODO: improve the interface to respect the STL's style
+
 template <typename K, typename V>
 class lru {
  public:
@@ -28,6 +30,14 @@ class lru {
     : _capacity(capacity), _on_eviction(std::move(cb)) {}
 
   // TODO(jyc): support emplace
+
+  std::pair<node, bool> insert(const std::pair<K, V>& item) {
+    return insert(item.first, item.second);
+  }
+
+  std::pair<node, bool> insert(std::pair<K, V>&& item) {
+    return insert(item.first, std::move(item.second));
+  }
 
   std::pair<node, bool> insert(const K& k, const V& v) {
     auto it = _map.find(k);
@@ -112,6 +122,16 @@ class lru {
   size_t size() const { return _map.size(); }
 
   size_t capacity() const { return _capacity; }
+
+  template <typename Func>
+    requires requires(Func f, const entry& item) {
+               { f(item) } -> std::same_as<void>;
+             }
+  void iterate(Func f) {
+    for (const auto& item : _list) {
+      f(item);
+    }
+  }
 
  private:
   bool expire() {

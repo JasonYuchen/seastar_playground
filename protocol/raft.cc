@@ -14,8 +14,8 @@ namespace rafter::protocol {
 
 using namespace std;
 
-const char* name(enum raft_role role) {
-  static const char* types[] = {
+std::string_view name(enum raft_role role) {
+  static std::string_view types[] = {
       "follower",
       "pre_candidate",
       "candidate",
@@ -23,14 +23,17 @@ const char* name(enum raft_role role) {
       "observer",
       "witness",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(raft_role::num_of_role));
   assert(
       static_cast<uint8_t>(role) <
       static_cast<uint8_t>(raft_role::num_of_role));
   return types[static_cast<uint8_t>(role)];
 }
 
-const char* name(enum message_type type) {
-  static const char* types[] = {
+std::string_view name(enum message_type type) {
+  static std::string_view types[] = {
       "noop",
       "local_tick",
       "election",
@@ -55,67 +58,86 @@ const char* name(enum message_type type) {
       "unreachable",
       "quiesce",
       "check_quorum",
+      "rate_limit",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(message_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(message_type::num_of_type));
   return types[static_cast<uint8_t>(type)];
 }
 
-const char* name(enum entry_type type) {
-  static const char* types[] = {
+std::string_view name(enum entry_type type) {
+  static std::string_view types[] = {
       "application",
       "config_change",
       "encoded",
       "metadata",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(entry_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(entry_type::num_of_type));
   return types[static_cast<uint8_t>(type)];
 }
 
-const char* name(enum config_change_type type) {
-  static const char* types[] = {
+std::string_view name(enum config_change_type type) {
+  static std::string_view types[] = {
       "add_node",
       "remove_node",
       "add_observer",
       "add_witness",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(config_change_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(config_change_type::num_of_type));
   return types[static_cast<uint8_t>(type)];
 }
 
-const char* name(enum state_machine_type type) {
-  static const char* types[] = {
+std::string_view name(enum state_machine_type type) {
+  static std::string_view types[] = {
       "regular",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(state_machine_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(state_machine_type::num_of_type));
   return types[static_cast<uint8_t>(type)];
 }
 
-const char* name(enum compression_type type) {
-  static const char* types[] = {
+std::string_view name(enum compression_type type) {
+  static std::string_view types[] = {
       "no_compression",
       "lz4",
       "snappy",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(compression_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(compression_type::num_of_type));
   return types[static_cast<uint8_t>(type)];
 }
 
-const char* name(enum checksum_type type) {
-  static const char* types[] = {
+std::string_view name(enum checksum_type type) {
+  static std::string_view types[] = {
       "no_checksum",
       "crc32",
       "highway",
   };
+  static_assert(
+      sizeof(types) / sizeof(types[0]) ==
+      static_cast<int>(checksum_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(checksum_type::num_of_type));
@@ -179,6 +201,10 @@ bool snapshot::empty() const noexcept {
 }
 
 uint64_t snapshot_file::bytes() const noexcept { return sizer(*this); }
+
+std::string snapshot_file::filename() {
+  return fmt::format("external-file-{}", file_id);
+}
 
 uint64_t snapshot::bytes() const noexcept { return sizer(*this); }
 

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <any>
 #include <seastar/core/shared_ptr.hh>
 #include <span>
 #include <string>
@@ -23,7 +24,7 @@ enum class raft_role : uint8_t {
   num_of_role,
 };
 
-const char *name(enum raft_role role);
+std::string_view name(enum raft_role role);
 inline std::ostream &operator<<(std::ostream &os, raft_role role) {
   return os << name(role);
 }
@@ -122,7 +123,7 @@ inline bool is_response(message_type type) {
          type == snapshot_status || type == leader_transfer;
 }
 
-const char *name(enum message_type type);
+std::string_view name(enum message_type type);
 inline std::ostream &operator<<(std::ostream &os, message_type type) {
   return os << name(type);
 }
@@ -135,7 +136,7 @@ enum class entry_type : uint8_t {
   num_of_type,
 };
 
-const char *name(enum entry_type type);
+std::string_view name(enum entry_type type);
 inline std::ostream &operator<<(std::ostream &os, entry_type type) {
   return os << name(type);
 }
@@ -148,7 +149,7 @@ enum class config_change_type : uint8_t {
   num_of_type,
 };
 
-const char *name(enum config_change_type type);
+std::string_view name(enum config_change_type type);
 inline std::ostream &operator<<(std::ostream &os, config_change_type type) {
   return os << name(type);
 }
@@ -158,7 +159,7 @@ enum class state_machine_type : uint8_t {
   num_of_type,
 };
 
-const char *name(enum state_machine_type type);
+std::string_view name(enum state_machine_type type);
 inline std::ostream &operator<<(std::ostream &os, state_machine_type type) {
   return os << name(type);
 }
@@ -170,7 +171,7 @@ enum class compression_type : uint8_t {
   num_of_type,
 };
 
-const char *name(enum compression_type type);
+std::string_view name(enum compression_type type);
 inline std::ostream &operator<<(std::ostream &os, compression_type type) {
   return os << name(type);
 }
@@ -182,7 +183,7 @@ enum class checksum_type : uint8_t {
   num_of_type,
 };
 
-const char *name(enum checksum_type type);
+std::string_view name(enum checksum_type type);
 inline std::ostream &operator<<(std::ostream &os, checksum_type type) {
   return os << name(type);
 }
@@ -258,6 +259,7 @@ struct snapshot_file {
   std::string metadata;
 
   uint64_t bytes() const noexcept;
+  std::string filename();
 
   std::strong_ordering operator<=>(const snapshot_file &) const = default;
 };
@@ -474,6 +476,18 @@ struct snapshot_request {
   bool exported() const { return type == type::exported; }
 };
 
+struct snapshot_metadata {
+  uint64_t from = group_id::INVALID_NODE;
+  log_id lid;
+  snapshot_request request;
+  membership_ptr membership;
+  state_machine_type smtype;
+  compression_type comptype;
+  std::string session_data;
+  std::any ctx;
+};
+
+// TODO(jyc): more elegant task type
 struct rsm_task {
   uint64_t index = log_id::INVALID_INDEX;
   log_entry_vector entries;

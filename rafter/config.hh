@@ -61,6 +61,19 @@ struct raft_config {
   void validate() const;
 };
 
+struct snapshot_option {
+  // export_path is the path where the exported snapshot should be stored, it
+  // must point to an existing directory for which the current user has write
+  // permission.
+  std::string export_path;
+
+  // compaction_overhead is the compaction overhead value to use for the
+  // requested snapshot operation. This field is ignored when set to 0 or
+  // exporting a snapshot. A non-zero value will override the raft_config's
+  // compaction_overhead.
+  uint64_t compaction_overhead = 0;
+};
+
 // config file is shared among all shards
 // TODO(jyc): refactor the shard-wide configuration referring to the
 //  https://github.com/scylladb/scylla/blob/master/utils/config_file.hh
@@ -116,7 +129,21 @@ struct config {
   // the number of allowed pending reads for a raft instance
   uint64_t incoming_read_index_queue_length = 4096;
 
+  // the number of allowed tasks in the task queue (e.g. rsm apply queue)
+  uint64_t task_queue_capacity = 64;
+
+  // max_send_queue_bytes is the maximum size in bytes of each send queue.
+  // When set to 0, it means the send queue size is unlimited.
+  uint64_t max_send_queue_bytes = 0;
+
+  // max_receive_queue_bytes is the maximum size in bytes of each receive queue.
+  // When set to 0, it means the receive queue size is unlimited.
+  uint64_t max_receive_queue_bytes = 0;
+
   // hard
+  // lru_max_session_count is the max number of client sessions that can be
+  // concurrently held and managed by each raft cluster.
+  uint64_t lru_max_session_count = 4096;
 
   void validate() const;
 

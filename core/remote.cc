@@ -140,7 +140,7 @@ bool remote::snapshot_ack_tick() {
 }
 
 std::ostream& operator<<(std::ostream& os, enum remote::state s) {
-  static const char* states[] = {"retry", "wait", "replicate", "snapshot"};
+  static std::string_view states[] = {"retry", "wait", "replicate", "snapshot"};
   return os << states[static_cast<uint8_t>(s)];
 }
 
