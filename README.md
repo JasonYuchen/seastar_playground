@@ -2,7 +2,8 @@
 
 ## Introduction
 
-rafter (*in progress*) is a pipelined asynchronous multi-raft group library with an in-memory key-value replicated state machine based on seastar.
+rafter (*in progress*) is a pipelined asynchronous multi-raft group library with an in-memory key-value replicated state
+machine based on seastar.
 
 rafter is deeply inspired by
 
@@ -37,19 +38,19 @@ TBD
 
 ### Raft Core State Machine
 
-The raft core state machine implements the raft algorithm based on the etcd's design.
+The [core](core/README.md) module implements the raft algorithm based on the etcd's design.
 
 1. ⭕design doc
 2. ⚠️election with prevote
 3. ⚠️leader lease
 4. ⚠️leadership transfer
-5. ⭕log compaction
-6. ⭕snapshot
+5. ⚠️log compaction
+6. ⚠️snapshot
 7. ⚠️single membership change
 8. ⭕joint consensus
 9. ⚠️observer
 10. ⚠️witness
-11. ⭕quiesce
+11. ⚠️quiesce
 12. ⚠️linearizable semantics
 
 ### Storage
@@ -80,10 +81,18 @@ clusters.
 
 ### Replicated State Machine
 
-The replicated state machine is a naive in-memory key-value storage to demonstrate the interactions between a user
+The [rsm](rsm/README.md) module bridges the user-defined replicated state machine (e.g. an in-memory key-value
+store) and the Raft Core State Machine (also Storage, Transport), managing the lookup, update operations as well as
+snapshot taking, recovering actions of the user's state machine.
+
+A naive in-memory key-value storage is provided to demonstrate the interactions between a user
 defined replicated state machine and the underlying framework.
 
-TBD
+1. ⭕design doc
+2. ⚠️session, for idempotent operation
+3. ⚠️session manager, for managing sessions
+4. ⚠️snapshotter, for managing snapshot save/load operations
+5. ⚠️statemachine_manager, for bridging the execution engine and the user's statemachine
 
 ### Misc
 
