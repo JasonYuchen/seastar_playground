@@ -120,7 +120,7 @@ future<> express::sender::split_and_send(
     rpc::sink<protocol::snapshot_chunk_ptr>& sink) const {
   const auto& file_path = file ? file->file_path : snapshot->file_path;
   auto file_size = file ? file->file_size : snapshot->file_size;
-  auto func = [&, total_chunks](class file f) -> future<> {
+  auto func = [&, total_chunks](class file& f) -> future<> {
     uint64_t actual_file_size = co_await f.size();
     if (file_size != actual_file_size) {
       throw util::failed_precondition_error(fmt::format(

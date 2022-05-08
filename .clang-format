@@ -15,6 +15,7 @@ BreakBeforeBinaryOperators: None
 BreakConstructorInitializers: BeforeComma
 BreakInheritanceList: BeforeComma
 ConstructorInitializerIndentWidth: 2
+ContinuationIndentWidth: 4
 ReflowComments: true
 SortIncludes: CaseSensitive
 SortUsingDeclarations: true

@@ -265,6 +265,7 @@ struct snapshot_file {
 };
 
 using snapshot_file_ptr = seastar::lw_shared_ptr<snapshot_file>;
+using snapshot_files = std::vector<snapshot_file_ptr>;
 
 struct snapshot {
   struct group_id group_id;
@@ -272,7 +273,7 @@ struct snapshot {
   std::string file_path;
   uint64_t file_size = 0;
   membership_ptr membership;
-  std::vector<snapshot_file_ptr> files;
+  snapshot_files files;
   state_machine_type smtype = state_machine_type::regular;
   bool imported = false;
   bool witness = false;
@@ -313,7 +314,7 @@ struct message {
   bool witness = false;
   bool reject = false;
   struct hint hint;
-  std::vector<log_entry_ptr> entries;
+  log_entry_vector entries;
   snapshot_ptr snapshot;
 
   bool is_request() const noexcept;
