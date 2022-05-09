@@ -23,18 +23,19 @@ class session {
   uint64_t series_id = 0;
   uint64_t responded_to = 0;
 
-  session(uint64_t cluster_id, uint64_t client_id, bool noop = false);
+  explicit session(uint64_t cluster_id, bool noop = false);
   DEFAULT_COPY_MOVE_AND_ASSIGN(session);
 
-  bool is_noop() const noexcept;
+  bool is_noop() const noexcept { return series_id == NOOP_SERIES_ID; }
   void prepare_for_register();
   void prepare_for_unregister();
   void prepare_for_propose();
   void proposal_completed();
-  bool is_valid_for_proposal(uint64_t cluster_id) const noexcept;
-  bool is_valid_for_session_operation(uint64_t cluster_id) const noexcept;
+  bool is_valid_for_proposal(uint64_t cluster) const;
+  bool is_valid_for_session_operation(uint64_t cluster) const;
 
  private:
+  static uint64_t next_client_id();
   void assert_regular() const;
 };
 
