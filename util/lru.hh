@@ -127,9 +127,19 @@ class lru {
     requires requires(Func f, const entry& item) {
                { f(item) } -> std::same_as<void>;
              }
-  void iterate(Func f) {
+  void iterate(Func f) const {
     for (const auto& item : _list) {
       f(item);
+    }
+  }
+
+  template <typename Func>
+    requires requires(Func f, const entry& item) {
+               { f(item) } -> std::same_as<void>;
+             }
+  void riterate(Func f) const {
+    for (auto it = _list.rbegin(); it != _list.rend(); ++it) {
+      f(*it);
     }
   }
 
