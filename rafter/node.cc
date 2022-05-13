@@ -4,17 +4,37 @@
 
 #include "node.hh"
 
+#include "rafter/engine.hh"
 #include "rafter/logger.hh"
+#include "rsm/session_manager.hh"
 
 namespace rafter {
 
 using namespace protocol;
 
-future<bool> node::start(
+node::node(
     raft_config cfg,
-    const std::map<uint64_t, std::string>& peers,
-    bool initial) {
-  _config = std::move(cfg);
+    engine& engine,
+    transport::registry& registry,
+    storage::logdb& logdb,
+    core::log_reader& log_reader)
+  : _config(std::move(cfg))
+  , _engine(engine)
+  , _node_registry(registry)
+  , _logdb(logdb)
+  , _log_reader(log_reader)
+  , _pending_proposal(_config)
+  , _pending_read_index(_config)
+  , _pending_snapshot(_config)
+  , _pending_config_change(_config)
+  , _pending_leader_transfer(_config)
+  , _received_messages("q", 100 /*FIXME*/)
+  , _quiesce(id(), _config.quiesce, _config.election_rtt * 2) {
+  // TODO(jyc)
+}
+
+future<bool> node::start(
+    const std::map<uint64_t, std::string>& peers, bool initial) {
   bool new_node = co_await replay_log();
   _peer = std::make_unique<core::peer>(
       _config, _log_reader, peers, initial, new_node);
@@ -34,6 +54,20 @@ future<> node::stop() {
   _pending_config_change.close();
   _pending_snapshot.close();
   _pending_leader_transfer.close();
+}
+
+future<std::optional<update>> node::step() {
+  if (!_initialized) {
+    co_return std::nullopt;
+  }
+  bool has_event = co_await handle_events();
+  if (!has_event) {
+    co_return std::nullopt;
+  }
+  if (_quiesce.is_new_quiesce()) {
+    co_await send_enter_quiesce_messages();
+  }
+  co_return co_await get_update();
 }
 
 future<request_result> node::propose_session(
@@ -89,13 +123,13 @@ future<request_result> node::request_leader_transfer(uint64_t target_id) {
   return _pending_leader_transfer.request(target_id);
 }
 
-future<> node::apply_update(
+future<> node::apply_entry(
     const log_entry& e,
     protocol::rsm_result result,
     bool rejected,
     bool ignored,
     bool notify_read) {
-  if (_config.witness) {
+  if (is_witness()) {
     return make_ready_future<>();
   }
   if (notify_read) {
@@ -131,7 +165,7 @@ future<> node::apply_config_change(
         l.error("{}: unknown config change type {}", id(), cc.type);
     }
   }
-  if (_config.witness) {
+  if (is_witness()) {
     co_return;
   }
   if (rejected) {
@@ -169,6 +203,126 @@ future<> node::restore_remotes(protocol::snapshot_ptr ss) {
   // TODO(jyc): notify config change
 }
 
+future<> node::apply_raft_update(const protocol::update& up) {
+  auto entries =
+      protocol::utils::entries_to_apply(up.committed_entries, _pushed_index);
+  if (entries.empty()) {
+    co_return;
+  }
+  auto last_index = entries.back()->lid.index;
+  co_await _sm->push(rsm_task{.entries = std::move(entries)});
+  _pushed_index = last_index;
+}
+
+future<> node::commit_raft_update(const protocol::update& up) {
+  _peer->commit(up);
+  return make_ready_future<>();
+}
+
+future<> node::process_raft_update(protocol::update& up) {
+  _log_reader.apply_entries(up.entries_to_save);
+  co_await send_messages(up.messages);
+  co_await remove_log();
+  // on disk sm run sync task
+  if (save_snapshot_required(up.last_applied)) {
+    co_await _sm->push(rsm_task{.save = true});
+  }
+}
+
+future<> node::process_dropped_entries(const protocol::update& up) {
+  for (const auto& e : up.dropped_entries) {
+    if (e->is_proposal()) {
+      _pending_proposal.drop(e->key);
+    } else if (e->type == entry_type::config_change) {
+      _pending_config_change.drop(e->key);
+    } else {
+      throw util::failed_precondition_error(
+          fmt::format("{}: unknown entry type:{}", id(), e->type));
+    }
+  }
+  return make_ready_future<>();
+}
+
+future<> node::process_dropped_read_indexes(const protocol::update& up) {
+  for (auto hint : up.dropped_read_indexes) {
+    _pending_read_index.drop(hint);
+  }
+  return make_ready_future<>();
+}
+
+future<> node::process_ready_to_read(const protocol::update& up) {
+  if (!up.ready_to_reads.empty()) {
+    _pending_read_index.add_ready(up.ready_to_reads);
+    _pending_read_index.apply(up.last_applied);
+  }
+  return make_ready_future<>();
+}
+
+future<> node::process_snapshot(const protocol::update& up) {
+  if (up.snapshot && !up.snapshot->empty()) {
+    _log_reader.apply_snapshot(up.snapshot);
+    auto ssi = up.snapshot->log_id.index;
+    if (ssi < _pushed_index || ssi < _snapshot_state.snapshot_index ||
+        ssi < up.last_applied) {
+      l.error(
+          "{}: out of date snapshot, index:{}, pushed:{}, applied:{}",
+          id(),
+          ssi,
+          _pushed_index,
+          _snapshot_state.snapshot_index);
+      throw util::failed_precondition_error("invalid snapshot");
+    }
+    co_await _sm->push(rsm_task{.index = ssi, .recover = true});
+    _snapshot_state.snapshot_index = ssi;
+    _pushed_index = ssi;
+    _engine.apply_ready(_config.cluster_id);
+  }
+}
+
+bool node::is_busy_snapshotting() const {
+  bool snapshotting = _snapshot_state.recovering || _snapshot_state.saving;
+  return snapshotting && _sm->busy();
+}
+
+future<> node::handle_snapshot_task(protocol::rsm_task task) {
+  if (_snapshot_state.recovering) {
+    l.error("{}: recovering again", id());
+    throw util::failed_precondition_error("TODO");
+  }
+  if (task.recover) {
+    report_recover_snapshot(std::move(task));
+  } else if (task.save) {
+    if (_snapshot_state.saving) {
+      l.warn("{}: taking snapshot, ignored new snapshot request", id());
+      report_ignored_snapshot_request(task.ss_request.key);
+      co_return;
+    }
+    report_save_snapshot(std::move(task));
+  } else if (task.stream) {
+    // TODO(jyc): support stream snapshot
+    report_stream_snapshot(std::move(task));
+  } else {
+    l.error("{}: unknown task type", id());
+  }
+  co_return;
+}
+
+future<bool> node::process_status_transition() {
+  if (co_await process_save_status()) {
+    co_return true;
+  }
+  if (co_await process_stream_status()) {
+    co_return true;
+  }
+  if (co_await process_recover_status()) {
+    co_return true;
+  }
+  if (co_await process_unintialized_status()) {
+    co_return true;
+  }
+  co_return false;
+}
+
 future<bool> node::replay_log() {
   l.info("{}: replaying raft logs", id());
   auto snapshot = co_await _logdb.query_snapshot(id());
@@ -188,6 +342,20 @@ future<bool> node::replay_log() {
   _log_reader.set_range(
       {state.first_index, state.first_index + state.entry_count});
   co_return false;
+}
+
+future<> node::remove_log() {
+  auto compact_to = _snapshot_state.compact_log_to;
+  if (compact_to == 0) {
+    co_return;
+  }
+  co_await _log_reader.apply_compaction(compact_to)
+      .handle_exception_type([](util::compacted_error& err) {
+        (void)err;  // compacted is ok
+      });
+  co_await _logdb.remove(id(), compact_to);
+  l.debug("{}: compact log up to index:{}", id(), compact_to);
+  _snapshot_state.compacted_to = compact_to;
 }
 
 future<bool> node::handle_events() {
@@ -344,6 +512,39 @@ future<bool> node::handle_compaction() {
       _snapshot_state.compacted_to > 0 || _snapshot_state.compact_log_to > 0);
 }
 
+future<> node::send_enter_quiesce_messages() {
+  // the members should not change during loop sending
+  const auto& members = _sm->get_membership();
+  for (auto& [node_id, _] : members.addresses) {
+    if (_config.node_id != node_id) {
+      co_await _send(message{
+          .type = message_type::quiesce,
+          .cluster = _config.cluster_id,
+          .from = _config.node_id,
+          .to = node_id});
+    }
+  }
+  co_return;
+}
+
+future<> node::send_replicate_messages(protocol::message_vector& msgs) {
+  for (auto& msg : msgs) {
+    if (msg.type == message_type::replicate) {
+      co_await _send(std::move(msg));
+    }
+  }
+  co_return;
+}
+
+future<> node::send_messages(protocol::message_vector& msgs) {
+  for (auto& msg : msgs) {
+    if (msg.type != message_type::replicate) {
+      co_await _send(std::move(msg));
+    }
+  }
+  co_return;
+}
+
 void node::gc() {
   if (_gc_tick != _current_tick) {
     _pending_proposal.gc();
@@ -382,6 +583,25 @@ uint64_t node::update_applied_index() {
   _applied_index = _sm->last_applied_index();
   _peer->notify_last_applied(_applied_index);
   return _applied_index;
+}
+
+future<std::optional<update>> node::get_update() {
+  bool not_busy = !_sm->busy();
+  if (_peer->has_update(not_busy) || _confirmed_index != _applied_index ||
+      _snapshot_state.compact_log_to > 0 || _snapshot_state.compacted_to > 0) {
+    if (_applied_index < _confirmed_index) [[unlikely]] {
+      l.error(
+          "{}: applied index moving backward from {} to {}",
+          id(),
+          _confirmed_index,
+          _applied_index);
+      throw util::failed_precondition_error();
+    }
+    auto update = co_await _peer->get_update(not_busy, _applied_index);
+    _confirmed_index = _applied_index;
+    co_return std::move(update);
+  }
+  co_return std::nullopt;
 }
 
 }  // namespace rafter

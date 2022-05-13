@@ -7,7 +7,7 @@
 #include "core/peer.hh"
 #include "core/quiesce.hh"
 #include "core/raft_log.hh"
-#include "protocol/rsm.hh"
+#include "protocol/raft.hh"
 #include "rafter/config.hh"
 #include "rafter/info.hh"
 #include "rafter/request.hh"
@@ -23,15 +23,21 @@ class engine;
 
 class node {
  public:
-  protocol::group_id id() const {
+  node(
+      raft_config cfg,
+      engine& engine,
+      transport::registry& registry,
+      storage::logdb& logdb,
+      core::log_reader& log_reader);
+  protocol::group_id id() const noexcept {
     return {_config.cluster_id, _config.node_id};
   }
+  bool is_witness() const noexcept { return _config.witness; }
+
   future<bool> start(
-      raft_config cfg,
-      const std::map<uint64_t, std::string>& peers,
-      bool initial);
+      const std::map<uint64_t, std::string>& peers, bool initial);
   future<> stop();
-  future<protocol::update> step();
+  future<std::optional<protocol::update>> step();
 
   future<request_result> propose_session(
       const protocol::session& s, uint64_t timeout);
@@ -44,7 +50,7 @@ class node {
       protocol::config_change cc, uint64_t timeout);
   future<request_result> request_leader_transfer(uint64_t target_id);
 
-  future<> apply_update(
+  future<> apply_entry(
       const protocol::log_entry& e,
       protocol::rsm_result result,
       bool rejected,
@@ -53,9 +59,22 @@ class node {
   future<> apply_config_change(
       protocol::config_change cc, uint64_t key, bool rejected);
   future<> restore_remotes(protocol::snapshot_ptr ss);
+  future<> apply_raft_update(const protocol::update& up);
+  future<> commit_raft_update(const protocol::update& up);
+  // This method will access underlying logdb, which is not multi-coroutine safe
+  future<> process_raft_update(protocol::update& up);
+  future<> process_dropped_entries(const protocol::update& up);
+  future<> process_dropped_read_indexes(const protocol::update& up);
+  future<> process_ready_to_read(const protocol::update& up);
+  future<> process_snapshot(const protocol::update& up);
+
+  bool is_busy_snapshotting() const;
+  future<> handle_snapshot_task(protocol::rsm_task task);
+  future<bool> process_status_transition();
 
  private:
   future<bool> replay_log();
+  future<> remove_log();
 
   future<bool> handle_events();
   future<bool> handle_read_index();
@@ -66,13 +85,31 @@ class node {
   future<bool> handle_snapshot(uint64_t last_applied);
   future<bool> handle_compaction();
 
+  future<bool> process_save_status();
+  future<bool> process_stream_status();
+  future<bool> process_recover_status();
+  future<bool> process_unintialized_status();
+
+  future<> send_enter_quiesce_messages();
+  // only send replicate messages
+  future<> send_replicate_messages(protocol::message_vector& msgs);
+  // only send non-replicate messages
+  future<> send_messages(protocol::message_vector& msgs);
+
   void gc();
   future<> tick(uint64_t tick);
   void record_message(const protocol::message& m);
   uint64_t update_applied_index();
+  bool save_snapshot_required(uint64_t applied);
+  future<std::optional<protocol::update>> get_update();
+  void report_ignored_snapshot_request(uint64_t key);
+  void report_save_snapshot(protocol::rsm_task task);
+  void report_stream_snapshot(protocol::rsm_task task);
+  void report_recover_snapshot(protocol::rsm_task task);
 
   raft_config _config;
   bool _stopped = true;
+  bool _initialized = false;
   bool _rate_limited = 0;
   cluster_info _cluster_info;
   engine& _engine;
@@ -84,7 +121,10 @@ class node {
   pending_snapshot _pending_snapshot;
   pending_config_change _pending_config_change;
   pending_leader_transfer _pending_leader_transfer;
+  // TODO(jyc): use a more delicate message queue
   util::buffering_queue<protocol::message> _received_messages;
+  std::function<future<>(protocol::message)> _send;
+  std::function<future<>(protocol::group_id, bool)> _report_snapshot_status;
   core::quiesce _quiesce;
   std::unique_ptr<core::peer> _peer;
   std::unique_ptr<rsm::statemachine_manager> _sm;
