@@ -25,12 +25,11 @@ class snapshot_context {
   static inline constexpr char GEN_SUFFIX[] = "generating";
   static inline constexpr char RCV_SUFFIX[] = "receiving";
   static inline constexpr char SNK_SUFFIX[] = "shrunk";
-  static inline const std::regex DIR_RE{"^snapshot-[0-9A-F]+$"};
-  static inline const std::regex DIR_INDEX_RE{"^snapshot-([0-9A-F]+)$"};
+  static inline const std::regex DIR_RE{"^[0-9A-F]+$"};
   static inline const std::regex GEN_DIR_RE{
-      "^snapshot-[0-9A-F]+-[0-9A-F]+\\.generating$"};
+      "^[0-9A-F]+-[0-9A-F]+\\.generating$"};
   static inline const std::regex RCV_DIR_RE{
-      "^snapshot-[0-9A-F]+-[0-9A-F]+\\.receiving$"};
+      "^[0-9A-F]+-[0-9A-F]+\\.receiving$"};
   static std::string dir_name(uint64_t index);
   static std::string file_name(uint64_t index, bool shrink = false);
 

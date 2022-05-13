@@ -77,19 +77,34 @@ disk(s)           |                        |                        |
              |           |            |           |            |           |
              +-----------+            +-----------+            +-----------+
 
-rafter @ disk0
-  |--{cluster_id:020d}_{node_id:020d}
-  |    |--config
-  |    |--{shard:05d}_{seq:020d}.log
-  |    |--{shard:05d}_{seq:020d}.log
-  |    |--{shard:05d}_{seq:020d}.log
-  |    |--...
-  |--{cluster_id:020d}_{node_id:020d}
-  |--...
+rafter @ disk0                                     <- root dir of a shard
+  ├── bootstrap
+  │    ├── {cluster_id:020d}_{node_id:020d}        <- bootstrap info of a cluster
+  │    ├── {cluster_id:020d}_{node_id:020d}.tmp    <- tmp bootstrap info of a cluster
+  │    └── ...
+  ├── wal
+  │    ├── {shard:05d}_{seq:020d}.log              <- raft log of clusters sitting on the same shard
+  │    ├── {shard:05d}_{seq:020d}.log
+  │    └── ...
+  └── snapshot
+       ├── {cluster_id:020d}_{node_id:020d}        <- root dir of temp snapshot files of a cluster
+       │    ├── {index:016X}-{from}.generating     <- temp dir for generating snapshot files
+       │    │    ├── snapshot.metadata
+       │    │    ├── snapshot.flag
+       │    │    ├── {index:016X}.snap
+       │    │    ├── {file_id}.sm                  <- state machine provided files (hard link)
+       │    │    └── ...
+       │    └── {index:016X}-{from}.receiving      <- temp dir for receiving snapshot files
+       │         └── ...
+       ├── {cluster_id:020d}_{node_id:020d}
+       │    └── {index:016X}                       <- root dir of finalized snapshot files of a cluster
+       │         └── ...                              renamed from a temp dir with generating/receiving suffix
+       └── ...
 
-rafter @ disk1
-  |--{cluster_id:020d}_{node_id:020d}
-  |--...
+rafter @ disk1                                     <- different shards can be stored in different dirs/disks 
+  ├── bootstrap
+  ├── wal
+  └── snapshot
 ```
 
 ![storage](storage.drawio.png)

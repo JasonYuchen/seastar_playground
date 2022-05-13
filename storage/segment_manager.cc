@@ -4,23 +4,28 @@
 
 #include "segment_manager.hh"
 
+#include <charconv>
 #include <seastar/core/reactor.hh>
 
 #include "protocol/serializer.hh"
 #include "rafter/config.hh"
 #include "storage/logger.hh"
 #include "util/error.hh"
+#include "util/file.hh"
+#include "util/util.hh"
 
 namespace rafter::storage {
 
 using namespace protocol;
 using namespace std;
 
-segment_manager::segment_manager()
-  : _gc_worker("segment_gc", config::shard().wal_gc_queue_capacity, l) {}
+segment_manager::segment_manager(function<unsigned(group_id)> func)
+  : _partitioner(std::move(func))
+  , _gc_worker("segment_gc", config::shard().wal_gc_queue_capacity, l) {}
 
 future<> segment_manager::start() {
   _log_dir = filesystem::path(config::shard().data_dir).append("wal");
+  _boot_dir = filesystem::path(config::shard().data_dir).append("bootstrap");
   co_await recursive_touch_directory(_log_dir);
   l.info(
       "segment_manager::start: dir:{}, rolling_size:{}, gc_queue_cap:{}",
@@ -50,52 +55,69 @@ future<> segment_manager::stop() {
 
 stats segment_manager::stats() const noexcept { return _stats; }
 
-future<> segment_manager::save_bootstrap(group_id id, const bootstrap& info) {
-  std::string name = filesystem::path(_log_dir).append(
-      fmt::format("BOOT-{}-{}", id.cluster, id.node));
-  std::string tmp = name.append(".tmp");
-  using enum open_flags;
-  co_await with_file(
-      open_file_dma(tmp, create | wo | truncate | dsync),
-      [&info](file f) -> future<> {
-        auto fs = co_await make_file_output_stream(f);
-        auto data = write_to_string(info);
-        co_await fs.write(data);
-        co_await fs.flush();
-        co_await fs.close();
-        co_return;
+future<vector<group_id>> segment_manager::list_nodes() {
+  return with_file(
+      open_directory(_boot_dir), [this](file f) -> future<vector<group_id>> {
+        vector<group_id> nodes;
+        co_await f
+            .list_directory([this, &nodes](directory_entry entry) {
+              do {
+                if (entry.type && entry.type != directory_entry_type::regular) {
+                  break;
+                }
+                group_id id;
+                auto c =
+                    util::parse_file_name(entry.name, '_', id.cluster, id.node);
+                if (c != 2) {
+                  break;
+                }
+                if (this_shard_id() == _partitioner(id)) {
+                  nodes.emplace_back(id);
+                }
+              } while (false);
+              l.warn(
+                  "segment_manager::list_nodes: invalid bootstrap file {}",
+                  entry.name);
+              return make_ready_future<>();
+            })
+            .done();
+        co_return nodes;
       });
-  co_await rename_file(tmp, name);
+}
+
+future<> segment_manager::save_bootstrap(group_id id, const bootstrap& info) {
+  auto name = fmt::format("{:020d}_{:020d}", id.cluster, id.node);
+  co_await util::create_file(_log_dir, name + ".tmp", write_to_string(info));
+  co_await rename_file(
+      filesystem::path(_boot_dir).append(name + ".tmp").string(),
+      filesystem::path(_boot_dir).append(name).string());
   co_await sync_directory(_log_dir);
-  co_return;
 }
 
 future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
-  std::string name = filesystem::path(_log_dir).append(
-      fmt::format("BOOT-{}-{}", id.cluster, id.node));
-  auto exist = co_await file_exists(name);
+  auto name = fmt::format("{:020d}_{:020d}", id.cluster, id.node);
+  auto exist =
+      co_await file_exists(filesystem::path(_boot_dir).append(name).string());
   if (!exist) {
     co_return std::optional<bootstrap>{};
   }
-  co_return co_await with_file(
-      open_file_dma(name, open_flags::ro),
-      [](file f) -> future<std::optional<bootstrap>> {
-        auto fs = make_file_input_stream(f);
-        auto b = co_await fs.read_exactly(co_await f.size());
-        co_return read_from_string(
-            {b.get(), b.size()}, util::type<bootstrap>());
+  co_return co_await util::read_file(_boot_dir, name)
+      .then([](temporary_buffer<char> buf) {
+        return read_from_string(
+            {buf.get(), buf.size()}, util::type<bootstrap>());
       });
 }
 
 future<> segment_manager::save(std::span<protocol::update> updates) {
-  bool need_sync = false;
-  for (const auto& up : updates) {
-    need_sync = need_sync || co_await append(up);
-  }
-  if (need_sync) {
-    co_await sync();
-  }
-  co_return;
+  return with_lock(_mtx, [=]() -> future<> {
+    bool need_sync = false;
+    for (const auto& up : updates) {
+      need_sync = need_sync || co_await append(up);
+    }
+    if (need_sync) {
+      co_await sync();
+    }
+  });
 }
 
 future<size_t> segment_manager::query_entries(
@@ -194,16 +216,19 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
 }
 
 future<> segment_manager::remove(group_id id, uint64_t index) {
-  _stats._remove++;
-  update comp{
-      .gid = id,
-      .state =
-          {
-              .commit = index,
-          },
-  };
-  co_await append(comp);
-  co_await compaction(id);
+  return with_lock(_mtx, [=]() -> future<> {
+    _stats._remove++;
+    update comp{
+        .gid = id,
+        .state =
+            {
+                .commit = index,
+            },
+    };
+    co_await append(comp);
+    co_await sync();
+    co_await compaction(id);
+  });
 }
 
 future<> segment_manager::remove_node(protocol::group_id id) {
@@ -224,19 +249,21 @@ future<> segment_manager::remove_node(protocol::group_id id) {
 }
 
 future<> segment_manager::import_snapshot(protocol::snapshot_ptr snapshot) {
-  auto id = snapshot->group_id;
-  auto info = bootstrap{.join = true, .smtype = snapshot->smtype};
-  co_await remove_node(id);
-  co_await save_bootstrap(id, info);
-  auto up = update{
-      .gid = id,
-      .state =
-          {.term = snapshot->log_id.term, .commit = snapshot->log_id.index},
-      .snapshot = snapshot};
-  bool need_sync = co_await append(up);
-  if (need_sync) {
-    co_await sync();
-  }
+  return with_lock(_mtx, [=]() -> future<> {
+    auto id = snapshot->group_id;
+    auto info = bootstrap{.join = true, .smtype = snapshot->smtype};
+    co_await remove_node(id);
+    co_await save_bootstrap(id, info);
+    auto up = update{
+        .gid = id,
+        .state =
+            {.term = snapshot->log_id.term, .commit = snapshot->log_id.index},
+        .snapshot = snapshot};
+    bool need_sync = co_await append(up);
+    if (need_sync) {
+      co_await sync();
+    }
+  });
 }
 
 future<bool> segment_manager::append(const update& up) {

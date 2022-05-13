@@ -34,12 +34,12 @@ std::string get_final_dir_name(std::string_view root, uint64_t index) {
 namespace rafter::server {
 
 std::string snapshot_context::dir_name(uint64_t index) {
-  return fmt::format("snapshot-{:016X}", index);
+  return fmt::format("{:016X}", index);
 }
 
 std::string snapshot_context::file_name(uint64_t index, bool shrink) {
   return fmt::format(
-      "snapshot-{:016X}.{}",
+      "{:016X}.{}",
       index,
       shrink ? snapshot_context::SNK_SUFFIX : snapshot_context::FILE_SUFFIX);
 }

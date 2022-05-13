@@ -19,13 +19,14 @@ namespace rafter::storage {
 // sharded<segment_manager>
 class segment_manager final : public logdb {
  public:
-  explicit segment_manager();
+  explicit segment_manager(std::function<unsigned(protocol::group_id)> func);
   ~segment_manager() = default;
   future<> start();
   future<> stop();
   stats stats() const noexcept;
 
   std::string name() const noexcept override { return "segment_manager"; }
+  future<std::vector<protocol::group_id>> list_nodes() override;
   future<> save_bootstrap(
       protocol::group_id id, const protocol::bootstrap& info) override;
   future<std::optional<protocol::bootstrap>> load_bootstrap(
@@ -58,6 +59,11 @@ class segment_manager final : public logdb {
 
   // segments dir, e.g. <data_dir>
   std::string _log_dir;
+  // bootstrap dir
+  std::string _boot_dir;
+  // group_id -> shard_id
+  std::function<unsigned(protocol::group_id)> _partitioner;
+
   // TODO(jyc): more options
 
   // used to allocate new segments
@@ -70,6 +76,8 @@ class segment_manager final : public logdb {
   index_group _index_group;
   // segment ids ready for GC
   util::worker<uint64_t> _gc_worker;
+  // the underlying write operations must be serial
+  shared_mutex _mtx;
 
   struct stats _stats;
 };
