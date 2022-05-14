@@ -118,6 +118,8 @@ support testing an asynchronous application with GoogleTest's style.
 
 ## Doc
 
+Some [tips](doc/tips.md) available.
+
 in progress
 
 ## License
