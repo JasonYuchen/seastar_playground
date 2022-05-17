@@ -16,23 +16,25 @@ namespace rafter::transport {
 using namespace protocol;
 using namespace std::chrono_literals;
 
-exchanger::exchanger(registry& reg)
+exchanger::exchanger(registry& reg, snapshot_dir_func snapshot_dir)
   : _registry(reg)
   , _express(*this)
   , _dropped_messages{0}
-  , _rpc(std::make_unique<rpc_protocol>(serializer{})) {
+  , _rpc(std::make_unique<rpc_protocol>(serializer{}))
+  , _snapshot_dir(std::move(snapshot_dir)) {
   _rpc->set_logger(&l);
 }
 
 future<> exchanger::start_listen() {
+  finalize_handlers();
   l.info(
       "exchanger::start_listen: {}:{}",
       config::shard().listen_address,
       config::shard().listen_port);
-  rpc::server_options opts;
+  srpc::server_options opts;
   // TODO(jyc): compress, tcp_no_delay, encryption, resource limit, etc
   opts.load_balancing_algorithm = server_socket::load_balancing_algorithm::port;
-  opts.streaming_domain = rpc::streaming_domain_type{0x0615};
+  opts.streaming_domain = srpc::streaming_domain_type{0x0615};
   auto address = socket_address{
       net::inet_address{config::shard().listen_address},
       config::shard().listen_port};
@@ -66,51 +68,78 @@ future<> exchanger::send_message(message m) {
     _dropped_messages[static_cast<int32_t>(messaging_verb::message)]++;
     throw util::peer_not_found_error(gid);
   }
-  return send<rpc::no_wait_type>(
+  return send<srpc::no_wait_type>(
       messaging_verb::message, *address, std::move(m));
 }
 
-future<> exchanger::send_snapshot(protocol::message m) {
+future<> exchanger::send_snapshot(message m) {
   if (!m.snapshot) {
     throw util::invalid_argument("snapshot", "empty snapshot in message");
   }
   return _express.send(std::move(m));
 }
 
-future<rpc::sink<snapshot_chunk_ptr>> exchanger::make_sink_for_snapshot_chunk(
-    uint64_t cluster_id, uint64_t from, uint64_t to) {
+future<srpc::sink<snapshot_chunk>> exchanger::make_sink_for_snapshot_chunk(
+    uint64_t cluster_id, uint64_t from, uint64_t to, log_id lid) {
   // if shutting down
-  protocol::group_id remote = {.cluster = cluster_id, .node = to};
+  group_id remote = {.cluster = cluster_id, .node = to};
   auto address = _registry.resolve(remote);
   if (!address) {
     // TODO(jyc): group unreachable
     co_return coroutine::make_exception(util::peer_not_found_error(remote));
   }
   auto client = get_rpc_client(messaging_verb::message, *address);
-  auto sink =
-      co_await client->make_stream_sink<serializer, snapshot_chunk_ptr>();
+  auto sink = co_await client->make_stream_sink<serializer, snapshot_chunk>();
   // register streaming pipeline in the server
   auto rpc_handler = _rpc->make_client<void(
-      uint64_t, uint64_t, uint64_t, rpc::sink<snapshot_chunk_ptr>)>(
+      uint64_t, uint64_t, uint64_t, log_id, srpc::sink<snapshot_chunk>)>(
       messaging_verb::snapshot);
-  co_await rpc_handler(*client, cluster_id, from, to, sink);
+  co_await rpc_handler(*client, cluster_id, from, to, lid, sink);
   co_return std::move(sink);
 }
 
-future<> exchanger::notify_unreachable(protocol::group_id target) {
-  // TODO(jyc): notify unreachable
-  l.warn("exchanger::notify_unreachable: {}", target);
-  co_return;
-}
-
-future<> exchanger::notify_successful(protocol::group_id target) {
-  // TODO(jyc): notify successful
-  l.info("exchanger::notify_successful: {}", target);
-  co_return;
+void exchanger::finalize_handlers() {
+  if (!_notify_unreachable) {
+    throw util::panic("unreachable handler not set");
+  }
+  if (!_notify_message) {
+    throw util::panic("message handler not set");
+  }
+  if (!_notify_snapshot) {
+    throw util::panic("snapshot handler not set");
+  }
+  if (!_notify_snapshot_status) {
+    throw util::panic("snapshot status handler not set");
+  }
+  _rpc->register_handler(
+      messaging_verb::message,
+      [this](const srpc::client_info& info, message m) {
+        // TODO(jyc): use this info to update registry
+        // FIXME: will not wait for result, e.g. the message may be dropped by
+        //  the handler due to heavy load, if we wait for the consuming result
+        //  here, the upstream node may be blocked by this node, raft layer has
+        //  its own mechanism to handle such situation
+        (void)_notify_message(std::move(m));
+        return srpc::no_wait;
+      });
+  _rpc->register_handler(
+      messaging_verb::snapshot,
+      [this](
+          const srpc::client_info& info,
+          uint64_t cluster,
+          uint64_t from,
+          uint64_t to,
+          log_id lid,
+          srpc::source<snapshot_chunk> source) {
+        // TODO(jyc): use this info to update registry
+        return _express.receive({cluster, from, to}, lid, std::move(source));
+      });
 }
 
 shared_ptr<exchanger::rpc_protocol_client> exchanger::get_rpc_client(
     messaging_verb, peer_address address) {
+  // TODO(jyc): use group_id to cache a rpc_protocol_client and avoid an extra
+  //  group_id -> peer_address look up
   auto it = _clients.find(address);
   if (it != _clients.end()) {
     auto client = it->second.rpc_client;
@@ -123,7 +152,7 @@ shared_ptr<exchanger::rpc_protocol_client> exchanger::get_rpc_client(
   auto peer = socket_address(address.address, address.port);
   auto local =
       socket_address(net::inet_address{config::shard().listen_address}, 0);
-  rpc::client_options opts;
+  srpc::client_options opts;
   opts.keepalive = {60s, 60s, 10};
   // TODO(jyc): compress, tcp_no_delay, encryption
   opts.tcp_nodelay = true;
