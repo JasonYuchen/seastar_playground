@@ -12,10 +12,9 @@ namespace rafter::util {
 
 future<> create_file(
     std::string_view dir, std::string_view name, std::string msg) {
-  using enum open_flags;
-  return open_file_dma(
-             std::filesystem::path(dir).append(name).string(),
-             create | wo | truncate | dsync)
+  auto of = open_flags::create | open_flags::wo | open_flags::truncate |
+            open_flags::dsync;
+  return open_file_dma(std::filesystem::path(dir).append(name).string(), of)
       .then([msg = std::move(msg)](file f) mutable {
         return make_file_output_stream(std::move(f))
             .then([msg = std::move(msg)](output_stream<char>&& out) mutable {
@@ -34,8 +33,8 @@ future<> create_file(
 
 future<temporary_buffer<char>> read_file(
     std::string_view dir, std::string_view name) {
-  using enum open_flags;
-  return open_file_dma(std::filesystem::path(dir).append(name).string(), ro)
+  return open_file_dma(
+             std::filesystem::path(dir).append(name).string(), open_flags::ro)
       .then([](file f) {
         return f.size().then([&](size_t size) {
           return do_with(

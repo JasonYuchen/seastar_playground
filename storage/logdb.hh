@@ -25,7 +25,9 @@ struct raft_state {
 
 class logdb {
  public:
+  virtual ~logdb() = 0;
   virtual std::string name() const noexcept = 0;
+  virtual future<std::vector<protocol::group_id>> list_nodes() = 0;
   virtual future<> save_bootstrap(
       protocol::group_id id, const protocol::bootstrap& info) = 0;
   virtual future<std::optional<protocol::bootstrap>> load_bootstrap(

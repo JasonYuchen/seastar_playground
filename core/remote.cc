@@ -8,20 +8,18 @@
 
 namespace rafter::core {
 
-using enum remote::state;
-
 bool remote::is_paused() const noexcept {
-  return state == wait || state == snapshot;
+  return state == state::wait || state == state::snapshot;
 }
 
 void remote::become_retry() noexcept {
-  if (state == snapshot) {
+  if (state == state::snapshot) {
     next = std::max(match, snapshot_index) + 1;
   } else {
     next = match + 1;
   }
   snapshot_index = 0;
-  state = retry;
+  state = state::retry;
 }
 
 void remote::become_wait() noexcept {
@@ -32,28 +30,28 @@ void remote::become_wait() noexcept {
 void remote::become_replicate() noexcept {
   next = match + 1;
   snapshot_index = 0;
-  state = replicate;
+  state = state::replicate;
 }
 
 void remote::become_snapshot(uint64_t index) noexcept {
   snapshot_index = index;
-  state = snapshot;
+  state = state::snapshot;
 }
 
 void remote::retry_to_wait() noexcept {
-  if (state == retry) {
-    state = wait;
+  if (state == state::retry) {
+    state = state::wait;
   }
 }
 
 void remote::wait_to_retry() noexcept {
-  if (state == wait) {
-    state = retry;
+  if (state == state::wait) {
+    state = state::retry;
   }
 }
 
 void remote::replicate_to_retry() noexcept {
-  if (state == replicate) {
+  if (state == state::replicate) {
     become_retry();
   }
 }
@@ -73,9 +71,9 @@ bool remote::try_update(uint64_t index) noexcept {
 }
 
 void remote::optimistic_update(uint64_t last_index) {
-  if (state == replicate) {
+  if (state == state::replicate) {
     next = last_index + 1;
-  } else if (state == retry) {
+  } else if (state == state::retry) {
     // do not optimistically update the `next` since the remote is in Retry
     // state due to inflight snapshot or unreachable network
     retry_to_wait();
@@ -86,7 +84,7 @@ void remote::optimistic_update(uint64_t last_index) {
 
 bool remote::try_decrease(
     uint64_t rejected_index, uint64_t peer_last_index) noexcept {
-  if (state == replicate) {
+  if (state == state::replicate) {
     if (rejected_index <= match) {
       // The rejection must be stale if the progress has matched and
       // `rejected_index` is smaller than `match`
@@ -109,9 +107,9 @@ bool remote::try_decrease(
 }
 
 void remote::responded_to() noexcept {
-  if (state == retry) {
+  if (state == state::retry) {
     become_replicate();
-  } else if (state == snapshot && match >= snapshot_index) {
+  } else if (state == state::snapshot && match >= snapshot_index) {
     become_retry();
   }
 }

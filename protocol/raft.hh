@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <fmt/ostream.h>
+
 #include <any>
 #include <seastar/core/shared_ptr.hh>
 #include <span>
@@ -89,38 +91,44 @@ enum class message_type : uint8_t {
 };
 
 inline bool is_prevote(message_type type) {
-  using enum message_type;
-  return type == request_prevote || type == request_prevote_resp;
+  return type == message_type::request_prevote ||
+         type == message_type::request_prevote_resp;
 }
 
 inline bool is_request_vote(message_type type) {
-  using enum message_type;
-  return type == request_vote || type == request_prevote;
+  return type == message_type::request_vote ||
+         type == message_type::request_prevote;
 }
 
 inline bool is_request(message_type type) {
-  using enum message_type;
-  return type == propose || type == read_index || type == leader_transfer;
+  return type == message_type::propose || type == message_type::read_index ||
+         type == message_type::leader_transfer;
 }
 
 inline bool is_leader(message_type type) {
-  using enum message_type;
-  return type == replicate || type == install_snapshot || type == heartbeat ||
-         type == timeout_now || type == read_index_resp;
+  return type == message_type::replicate ||
+         type == message_type::install_snapshot ||
+         type == message_type::heartbeat || type == message_type::timeout_now ||
+         type == message_type::read_index_resp;
 }
 
 inline bool is_local(message_type type) {
-  using enum message_type;
-  return type == election || type == leader_heartbeat || type == unreachable ||
-         type == snapshot_status || type == check_quorum || type == local_tick;
+  return type == message_type::election ||
+         type == message_type::leader_heartbeat ||
+         type == message_type::unreachable ||
+         type == message_type::snapshot_status ||
+         type == message_type::check_quorum || type == message_type::local_tick;
 }
 
 inline bool is_response(message_type type) {
-  using enum message_type;
-  return type == replicate_resp || type == request_vote_resp ||
-         type == request_prevote_resp || type == heartbeat_resp ||
-         type == read_index_resp || type == unreachable ||
-         type == snapshot_status || type == leader_transfer;
+  return type == message_type::replicate_resp ||
+         type == message_type::request_vote_resp ||
+         type == message_type::request_prevote_resp ||
+         type == message_type::heartbeat_resp ||
+         type == message_type::read_index_resp ||
+         type == message_type::unreachable ||
+         type == message_type::snapshot_status ||
+         type == message_type::leader_transfer;
 }
 
 std::string_view name(enum message_type type);
@@ -225,6 +233,7 @@ struct log_entry {
   uint64_t bytes() const noexcept;
   bool is_proposal() const noexcept;
   bool is_config_change() const noexcept;
+  bool is_noop() const noexcept;
   bool is_session_managed() const noexcept;
   bool is_new_session_request() const noexcept;
   bool is_end_session_request() const noexcept;
@@ -373,6 +382,10 @@ struct snapshot_chunk {
   bool witness = false;
 
   uint64_t bytes() const noexcept;
+  bool is_last_chunk() const noexcept { return id + 1 == count; }
+  bool is_last_file_chunk() const noexcept {
+    return file_chunk_id + 1 == file_chunk_count;
+  }
 };
 
 using snapshot_chunk_ptr = seastar::lw_shared_ptr<snapshot_chunk>;
@@ -462,6 +475,8 @@ struct rsm_result {
   std::string data;
 };
 
+using snapshot_dir_func = std::function<std::string(group_id)>;
+
 struct snapshot_request {
   enum class type : uint8_t {
     periodic,
@@ -484,7 +499,6 @@ struct snapshot_metadata {
   membership_ptr membership;
   state_machine_type smtype;
   compression_type comptype;
-  std::string session_data;
   std::any ctx;
 };
 

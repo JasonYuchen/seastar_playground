@@ -4,7 +4,9 @@
 
 #include "session_manager.hh"
 
+#include "protocol/serializer.hh"
 #include "rafter/config.hh"
+#include "util/error.hh"
 
 namespace rafter::rsm {
 
@@ -35,7 +37,13 @@ session* session_manager::registered_client(uint64_t client_id) {
 }
 
 session& session_manager::must_registered_client(uint64_t client_id) {
-  return _sessions[client_id];
+  auto it = _sessions.find(client_id);
+  if (it == _sessions.end()) {
+    throw util::panic("session not found");
+  }
+  return it->second;
 }
+
+uint64_t session_manager::bytes() const { return util::sizer(*this); }
 
 }  // namespace rafter::rsm

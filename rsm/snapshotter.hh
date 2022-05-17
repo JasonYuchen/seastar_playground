@@ -18,7 +18,7 @@ class snapshotter {
   snapshotter(
       protocol::group_id gid,
       storage::logdb& logdb,
-      std::function<std::string(protocol::group_id)> snapshot_dir);
+      protocol::snapshot_dir_func snapshot_dir);
 
   future<bool> shrunk(protocol::snapshot_ptr snapshot);
 
@@ -66,7 +66,7 @@ class snapshotter {
 
   protocol::group_id _gid;
   storage::logdb& _logdb;
-  std::function<std::string(protocol::group_id)> _snapshot_dir;
+  protocol::snapshot_dir_func _snapshot_dir;
   std::string _dir;
 };
 

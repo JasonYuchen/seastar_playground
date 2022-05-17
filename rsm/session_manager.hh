@@ -23,6 +23,8 @@ class session_manager {
 
   session& must_registered_client(uint64_t client_id);
 
+  uint64_t bytes() const;
+
  private:
   friend struct util::serializer<rsm::session_manager>;
 
@@ -49,7 +51,7 @@ struct serializer<rsm::session_manager> {
   template <typename Output>
   static void write(Output& o, const rsm::session_manager& v) {
     serialize(o, v._sessions.size());
-    v._sessions.iterate([&o](const auto& item) { serialize(o, item); });
+    v._sessions.riterate([&o](const auto& item) { serialize(o, item); });
   }
   template <typename Input>
   static void skip(Input& i) {

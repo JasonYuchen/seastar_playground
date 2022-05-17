@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
+#include "protocol/client.hh"
 #include "protocol/serializer.hh"
 #include "util/error.hh"
 
@@ -189,6 +190,38 @@ bool log_entry::is_proposal() const noexcept {
 
 bool log_entry::is_config_change() const noexcept {
   return type == entry_type::config_change;
+}
+
+bool log_entry::is_noop() const noexcept {
+  return !is_config_change() && !is_session_managed() && payload.empty();
+}
+
+bool log_entry::is_session_managed() const noexcept {
+  if (is_config_change()) {
+    return false;
+  }
+  if (payload.empty() && client_id == session::NOT_MANAGED_ID &&
+      series_id == session::NOOP_SERIES_ID) {
+    return false;
+  }
+  return true;
+}
+
+bool log_entry::is_new_session_request() const noexcept {
+  return !is_config_change() && payload.empty() &&
+         client_id != session::NOT_MANAGED_ID &&
+         series_id == session::REGISTRATION_SERIES_ID;
+}
+
+bool log_entry::is_end_session_request() const noexcept {
+  return !is_config_change() && payload.empty() &&
+         client_id != session::NOT_MANAGED_ID &&
+         series_id == session::UNREGISTRATION_SERIES_ID;
+}
+
+bool log_entry::is_noop_session() const noexcept {
+  // TODO(jyc)
+  return series_id == session::NOOP_SERIES_ID;
 }
 
 bool hard_state::empty() const noexcept {

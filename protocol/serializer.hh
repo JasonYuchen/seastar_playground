@@ -540,6 +540,7 @@ T read(serializer, Input& i, util::type<T>) {
   return util::deserialize(i, util::type<T>());
 }
 
+// TODO(jyc): switch to temporary buffer ?
 template <typename T>
 std::string write_to_string(const T& v) {
   std::string data;

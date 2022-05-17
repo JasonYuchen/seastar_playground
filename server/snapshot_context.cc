@@ -4,6 +4,7 @@
 
 #include "snapshot_context.hh"
 
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/util/file.hh>
 

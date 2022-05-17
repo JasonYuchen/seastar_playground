@@ -4,6 +4,7 @@
 
 #include "snapshotter.hh"
 
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/fstream.hh>
 
 #include "rsm/logger.hh"
@@ -17,7 +18,7 @@ using namespace protocol;
 snapshotter::snapshotter(
     protocol::group_id gid,
     storage::logdb &logdb,
-    std::function<std::string(protocol::group_id)> snapshot_dir)
+    protocol::snapshot_dir_func snapshot_dir)
   : _gid(gid)
   , _logdb(logdb)
   , _snapshot_dir(std::move(snapshot_dir))
@@ -41,24 +42,22 @@ future<server::snapshot> snapshotter::save(
   auto file_path = ss.ctx.get_tmp_file_path();
   auto header_buf = temporary_buffer<char>::aligned(4096, 4096);  // FIXME
   std::fill_n(header_buf.get_write(), header_buf.size(), 0);
-  using enum open_flags;
-  co_await open_file_dma(file_path, create | wo | truncate | dsync)
-      .then([&](file f) {
-        return make_file_output_stream(f).then([&](output_stream<char> &&out) {
-          return do_with(std::move(out), [&](output_stream<char> &out) {
-            // write a dummy header
-            return out.write(header_buf.get(), header_buf.size())
-                .then([&]() mutable {
-                  return saver(std::move(meta.ctx), out, fs);
-                })
-                .then([&](bool dummy) {
-                  ss.ss->dummy = dummy;
-                  return out.flush();
-                })
-                .then([&out] { return out.close(); });
-          });
-        });
+  auto of = open_flags::create | open_flags::wo | open_flags::truncate |
+            open_flags::dsync;
+  co_await open_file_dma(file_path, of).then([&](file f) {
+    return make_file_output_stream(f).then([&](output_stream<char> &&out) {
+      return do_with(std::move(out), [&](output_stream<char> &out) {
+        // write a dummy header
+        return out.write(header_buf.get(), header_buf.size())
+            .then([&]() mutable { return saver(std::move(meta.ctx), out, fs); })
+            .then([&](bool dummy) {
+              ss.ss->dummy = dummy;
+              return out.flush();
+            })
+            .then([&out] { return out.close(); });
       });
+    });
+  });
   co_await fs.prepare_files(ss.ctx.get_tmp_dir(), ss.ctx.get_final_dir());
   ss.ss->files.swap(fs._files);
   ss.ss->group_id = _gid;
@@ -67,16 +66,16 @@ future<server::snapshot> snapshotter::save(
   ss.ss->log_id = meta.lid;
   ss.ss->smtype = meta.smtype;
   // TODO(jyc): checksum & size & write header to
-  co_await with_file(
-      open_file_dma(file_path, wo | dsync), [&header_buf](file f) {
-        return f.dma_write(0, header_buf.get(), header_buf.size())
-            .then([&](size_t size) {
-              if (size < header_buf.size()) {
-                return make_exception_future<>(util::short_write_error());
-              }
-              return f.flush();
-            });
-      });
+  of = open_flags::wo | open_flags::dsync;
+  co_await with_file(open_file_dma(file_path, of), [&header_buf](file f) {
+    return f.dma_write(0, header_buf.get(), header_buf.size())
+        .then([&](size_t size) {
+          if (size < header_buf.size()) {
+            return make_exception_future<>(util::short_write_error());
+          }
+          return f.flush();
+        });
+  });
   co_return std::move(ss);
 }
 
@@ -135,8 +134,8 @@ future<> snapshotter::remove_flag(uint64_t index) {
 }
 
 server::snapshot_context snapshotter::get_snapshot_context(uint64_t index) {
-  using enum server::snapshot_context::mode;
-  return server::snapshot_context(_dir, index, _gid.node, snapshotting);
+  return server::snapshot_context(
+      _dir, index, _gid.node, server::snapshot_context::mode::snapshotting);
 }
 
 server::snapshot_context snapshotter::get_snapshot_context(
@@ -146,8 +145,8 @@ server::snapshot_context snapshotter::get_snapshot_context(
       throw util::panic("empty path when trying to export snapshot");
     }
   }
-  using enum server::snapshot_context::mode;
-  return server::snapshot_context(path, index, _gid.node, snapshotting);
+  return server::snapshot_context(
+      path, index, _gid.node, server::snapshot_context::mode::snapshotting);
 }
 
 future<> snapshotter::process_orphans() {
