@@ -27,7 +27,10 @@ class express {
   future<> stop();
 
   future<> send(protocol::message message);
-  future<> receive(pair key, rpc::source<protocol::snapshot_chunk_ptr> source);
+  future<> receive(
+      pair key,
+      protocol::log_id lid,
+      rpc::source<protocol::snapshot_chunk> source);
 
  private:
   struct sender : public enable_lw_shared_from_this<sender> {
@@ -39,7 +42,7 @@ class express {
         protocol::snapshot_file_ptr file,
         uint64_t total_chunks,
         uint64_t& chunk_id,
-        rpc::sink<protocol::snapshot_chunk_ptr>& sink) const;
+        rpc::sink<protocol::snapshot_chunk>& sink) const;
 
     exchanger& _exchanger;
     pair _pair;
@@ -49,7 +52,8 @@ class express {
   using sender_ptr = lw_shared_ptr<sender>;
   struct receiver : public enable_lw_shared_from_this<receiver> {
     receiver(exchanger& e, pair p) : _exchanger(e), _pair(p) {}
-    future<> start(rpc::source<protocol::snapshot_chunk_ptr> source);
+    future<> start(
+        protocol::log_id lid, rpc::source<protocol::snapshot_chunk> source);
     future<> stop();
 
     exchanger& _exchanger;
