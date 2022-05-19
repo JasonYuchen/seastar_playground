@@ -29,8 +29,6 @@ class segment_manager_test
  protected:
   static void SetUpTestSuite() {
     base::submit([]() -> future<> {
-      config::initialize(test::util::default_config());
-      co_await config::broadcast();
       co_await recursive_touch_directory(config::shard().data_dir);
     });
   }
@@ -49,7 +47,8 @@ class segment_manager_test
       if (GetParam()) {
         co_await prepare_segments();
       }
-      _manager = std::make_unique<segment_manager>();
+      _manager =
+          std::make_unique<segment_manager>(test::util::partition_func());
       co_await _manager->start();
       co_return;
     });
@@ -232,9 +231,7 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
     }
   }
   auto ups = test::util::make_updates({4, 4}, 100, 1, 0, 0);
-  for (const auto& up : ups) {
-    co_await _manager->append(up);
-  }
+  co_await _manager->save(ups);
   co_await _manager->remove({4, 4}, ups.back().first_index);
   auto backoff = rafter::util::backoff<>::linear(3, 500ms);
   co_await backoff.attempt([this] {

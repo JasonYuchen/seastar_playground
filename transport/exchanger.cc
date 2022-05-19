@@ -111,29 +111,36 @@ void exchanger::finalize_handlers() {
   if (!_notify_snapshot_status) {
     throw util::panic("snapshot status handler not set");
   }
-  _rpc->register_handler(
-      messaging_verb::message,
-      [this](const srpc::client_info& info, message m) {
-        // TODO(jyc): use this info to update registry
-        // FIXME: will not wait for result, e.g. the message may be dropped by
-        //  the handler due to heavy load, if we wait for the consuming result
-        //  here, the upstream node may be blocked by this node, raft layer has
-        //  its own mechanism to handle such situation
-        (void)_notify_message(std::move(m));
-        return srpc::no_wait;
-      });
-  _rpc->register_handler(
-      messaging_verb::snapshot,
-      [this](
-          const srpc::client_info& info,
-          uint64_t cluster,
-          uint64_t from,
-          uint64_t to,
-          log_id lid,
-          srpc::source<snapshot_chunk> source) {
-        // TODO(jyc): use this info to update registry
-        return _express.receive({cluster, from, to}, lid, std::move(source));
-      });
+  if (!_rpc->has_handler(messaging_verb::message)) {
+    // handler maybe set during test
+    _rpc->register_handler(
+        messaging_verb::message,
+        [this](const srpc::client_info& info, message m) {
+          // TODO(jyc): use this info to update registry
+          // FIXME: will not wait for result, e.g. the message may be dropped by
+          //  the handler due to heavy load, if we wait for the consuming result
+          //  here, the upstream node may be blocked by this node, raft layer
+          //  has its own mechanism to handle such situation
+          (void)_notify_message(std::move(m));
+          return srpc::no_wait;
+        });
+  }
+
+  if (!_rpc->has_handler(messaging_verb::snapshot)) {
+    // handler maybe set during test
+    _rpc->register_handler(
+        messaging_verb::snapshot,
+        [this](
+            const srpc::client_info& info,
+            uint64_t cluster,
+            uint64_t from,
+            uint64_t to,
+            log_id lid,
+            srpc::source<snapshot_chunk> source) {
+          // TODO(jyc): use this info to update registry
+          return _express.receive({cluster, from, to}, lid, std::move(source));
+        });
+  }
 }
 
 shared_ptr<exchanger::rpc_protocol_client> exchanger::get_rpc_client(

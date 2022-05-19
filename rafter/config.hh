@@ -158,7 +158,9 @@ struct config {
   static config& mutable_shard();
 
  private:
-  static thread_local std::unique_ptr<config> _config;
+  static inline thread_local std::unique_ptr<config> _config;
 };
+
+std::ostream& operator<<(std::ostream& os, config cfg);
 
 }  // namespace rafter

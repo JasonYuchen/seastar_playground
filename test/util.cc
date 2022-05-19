@@ -4,7 +4,9 @@
 
 #include "util.hh"
 
+#include <filesystem>
 #include <random>
+#include <seastar/core/smp.hh>
 
 namespace rafter::test {
 
@@ -18,6 +20,18 @@ config util::default_config() {
       .wal_rolling_size = 100UL * KB,  // a smaller size to make more segments
       .listen_address = "::1",
       .listen_port = 20615,
+  };
+}
+
+function<unsigned(uint64_t)> util::partition_func() {
+  return [](uint64_t cluster_id) { return cluster_id % smp::count; };
+}
+
+function<string(group_id)> util::snapshot_dir_func(string root) {
+  return [root](group_id gid) {
+    filesystem::path path{root};
+    path.append(fmt::format("{:020d}_{:020d}", gid.cluster, gid.node));
+    return path.string();
   };
 }
 

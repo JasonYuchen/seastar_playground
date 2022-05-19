@@ -14,7 +14,7 @@ namespace rafter::transport {
 
 class rpc {
  public:
-  virtual ~rpc() = 0;
+  virtual ~rpc() = default;
 
   virtual future<> send_message(protocol::message m) = 0;
 
@@ -27,11 +27,11 @@ class rpc {
   virtual void register_message_handler(message_handler&& func) = 0;
 
   using snapshot_handler =
-      std::function<future<>(protocol::group_id, uint64_t)>;
+      std::function<future<>(protocol::group_id, uint64_t from)>;
   virtual void register_snapshot_handler(snapshot_handler&& func) = 0;
 
   using snapshot_status_handler =
-      std::function<future<>(protocol::group_id, bool)>;
+      std::function<future<>(protocol::group_id, bool rejected)>;
   virtual void register_snapshot_status_handler(
       snapshot_status_handler&& func) = 0;
 };

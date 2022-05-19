@@ -25,7 +25,6 @@ class segment_test : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
     base::submit([]() -> future<> {
-      config::initialize(test::util::default_config());
       co_await recursive_touch_directory(config::shard().data_dir);
     });
   }

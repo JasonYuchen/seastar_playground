@@ -5,7 +5,10 @@
 #include "base.hh"
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/util/file.hh>
 
+#include "rafter/config.hh"
+#include "test/util.hh"
 #include "util/signal.hh"
 
 using namespace std;
@@ -16,28 +19,38 @@ namespace rafter::test {
 void base::SetUp() {
   app_template::config app_cfg;
   app_cfg.auto_handle_sigint_sigterm = false;
-  _app = std::make_unique<app_template>(std::move(app_cfg));
+  _app = make_unique<app_template>(std::move(app_cfg));
   std::promise<void> pr;
   auto fut = pr.get_future();
-  _engine_thread = std::thread([this, pr = std::move(pr)]() mutable {
-    return _app->run(
-        _argc,
-        _argv,
-        // We cannot use `pr = std::move(pr)` here as it will forbid compilation
-        // see https://taylorconor.com/blog/noncopyable-lambdas/
-        [&pr]() mutable -> seastar::future<> {
-          l.info("reactor engine starting...");
-          rafter::util::stop_signal stop_signal;
-          pr.set_value();
-          auto signum = co_await stop_signal.wait();
-          l.info(
-              "reactor engine exiting..., caught signal {}:{}",
-              signum,
-              ::strsignal(signum));
-          co_return;
-        });
+  // We cannot use `pr = std::move(pr)` here as it will forbid compilation
+  // see https://taylorconor.com/blog/noncopyable-lambdas/
+  auto engine_func = [&pr]() mutable -> seastar::future<> {
+    l.info("reactor engine starting...");
+    l.info("initialize config {}", test::util::default_config());
+    config::initialize(test::util::default_config());
+    pr.set_value();
+    rafter::util::stop_signal stop_signal;
+    auto signum = co_await stop_signal.wait();
+    l.info(
+        "reactor engine exiting..., caught signal {}:{}",
+        signum,
+        ::strsignal(signum));
+    co_return;
+  };
+  _engine_thread = std::thread([this, func = std::move(engine_func)]() mutable {
+    return _app->run(_argc, _argv, std::move(func));
   });
   fut.get();
+  // FIXME（jyc): move to engine initialization
+  submit([] {
+    return config::broadcast()
+        .then([]() {
+          return recursive_remove_directory(config::shard().data_dir);
+        })
+        .handle_exception([](std::exception_ptr ex) {
+          l.warn("remove directory with exception:{}", ex);
+        });
+  });
 }
 
 void base::TearDown() {

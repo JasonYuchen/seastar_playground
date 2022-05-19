@@ -22,14 +22,7 @@ namespace {
 
 class exchanger_test : public ::testing::Test {
  protected:
-  static void SetUpTestSuite() {
-    base::submit(
-        [] {
-          config::initialize(test::util::default_config());
-          return config::broadcast();
-        },
-        0);
-  }
+  static void SetUpTestSuite() {}
 
   void SetUp() override {
     base::submit([this]() -> future<> {
@@ -40,8 +33,34 @@ class exchanger_test : public ::testing::Test {
         return make_ready_future<>();
       });
       _exchanger = std::make_unique<sharded<exchanger>>();
-      co_await _exchanger->start(std::ref(*_registry));
-      co_await _exchanger->invoke_on_all(&exchanger::start_listen);
+      co_await _exchanger->start(
+          std::ref(*_registry),
+          test::util::snapshot_dir_func(config::shard().data_dir));
+      // register noop handler, re-register if needed
+      co_await _exchanger->invoke_on_all(
+          &exchanger::register_unreachable_handler, [](auto gid) {
+            l.info("unreachable handler called with {}", gid);
+            return make_ready_future<>();
+          });
+      co_await _exchanger->invoke_on_all(
+          &exchanger::register_message_handler, [](auto msg) {
+            l.info("message handler called with msg {}", msg.type);
+            return make_ready_future<>();
+          });
+      co_await _exchanger->invoke_on_all(
+          &exchanger::register_snapshot_handler, [](auto gid, auto from) {
+            l.info("snapshot handler called with {}, from:{}", gid, from);
+            return make_ready_future<>();
+          });
+      co_await _exchanger->invoke_on_all(
+          &exchanger::register_snapshot_status_handler,
+          [](auto gid, auto reject) {
+            l.info(
+                "snapshot status handler called with {}, reject:{}",
+                gid,
+                reject);
+            return make_ready_future<>();
+          });
     });
   }
 
@@ -53,6 +72,10 @@ class exchanger_test : public ::testing::Test {
       _exchanger.reset();
       _registry.reset();
     });
+  }
+
+  future<> start_listen() {
+    return _exchanger->invoke_on_all(&exchanger::start_listen);
   }
 
   static inline rafter::protocol::group_id _gid = {1, 1};
@@ -72,6 +95,7 @@ RAFTER_TEST_F(exchanger_test, connect) {
     });
     return make_ready_future<>();
   });
+  co_await start_listen();
   protocol::message m;
   m.cluster = 1;
   m.to = 1;
@@ -92,8 +116,7 @@ RAFTER_TEST_F(exchanger_test, streaming) {
   uint64_t source_stream_id = 0;
   fiber_state state = fiber_state::noop;
   std::string payload;
-  auto fiber =
-      [&](rpc::source<protocol::snapshot_chunk_ptr> source) -> future<> {
+  auto fiber = [&](rpc::source<protocol::snapshot_chunk> source) -> future<> {
     l.info("fiber running at {}", this_shard_id());
     source_stream_id = source.get_id().id;
     state = fiber_state::created;
@@ -102,7 +125,7 @@ RAFTER_TEST_F(exchanger_test, streaming) {
       if (!m) {
         break;
       }
-      payload = std::get<0>(*m)->data;
+      payload = std::get<0>(*m).data;
       state = fiber_state::fetched;
     }
     state = fiber_state::exited;
@@ -116,6 +139,7 @@ RAFTER_TEST_F(exchanger_test, streaming) {
             uint64_t cluster,
             uint64_t from,
             uint64_t to,
+            protocol::log_id lid,
             auto source) -> future<> {
           // use this source to make a sink for bidirectional communication
           // save this source/sink in other coroutine
@@ -132,18 +156,24 @@ RAFTER_TEST_F(exchanger_test, streaming) {
         });
     return make_ready_future<>();
   });
+  co_await start_listen();
   auto sink = co_await _exchanger->invoke_on(
-      0, &exchanger::make_sink_for_snapshot_chunk, _gid.cluster, 2, _gid.node);
+      0,
+      &exchanger::make_sink_for_snapshot_chunk,
+      _gid.cluster,
+      2,
+      _gid.node,
+      protocol::log_id{0, 0});
   EXPECT_EQ(state, fiber_state::created);
   EXPECT_EQ(sink.get_id().id, source_stream_id);
-  auto chunk = make_lw_shared<protocol::snapshot_chunk>();
-  chunk->group_id = _gid;
-  chunk->data = "hello world";
+  protocol::snapshot_chunk chunk;
+  chunk.group_id = _gid;
+  chunk.data = "hello world";
   co_await sink(chunk);
   co_await sink.flush();
   co_await sleep(std::chrono::milliseconds(500));
   EXPECT_EQ(state, fiber_state::fetched);
-  EXPECT_EQ(payload, chunk->data);
+  EXPECT_EQ(payload, chunk.data);
   co_await sink.close();
   co_await _exchanger->invoke_on_all(&exchanger::shutdown);
   EXPECT_EQ(state, fiber_state::exited);

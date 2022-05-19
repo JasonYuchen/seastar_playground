@@ -75,4 +75,25 @@ const config& config::shard() { return *_config; }
 
 config& config::mutable_shard() { return *_config; }
 
+std::ostream& operator<<(std::ostream& os, config cfg) {
+  os << "rtt_ms: " << cfg.rtt_ms << ", "
+     << "data_dir: " << cfg.data_dir << ", "
+     << "wal_rolling_size: " << cfg.wal_rolling_size << ", "
+     << "wal_gc_queue_capacity: " << cfg.wal_gc_queue_capacity << ", "
+     << "listen_address: " << cfg.listen_address << ", "
+     << "listen_port: " << cfg.listen_port << ", "
+     << "snapshot_chunk_size: " << cfg.snapshot_chunk_size << ", "
+     << "in_memory_gc_timeout: " << cfg.in_memory_gc_timeout << ", "
+     << "max_entry_size: " << cfg.max_entry_size << ", "
+     << "incoming_proposal_queue_length: " << cfg.incoming_proposal_queue_length
+     << ", "
+     << "incoming_read_index_queue_length: "
+     << cfg.incoming_read_index_queue_length << ", "
+     << "task_queue_capacity: " << cfg.task_queue_capacity << ", "
+     << "max_send_queue_bytes: " << cfg.max_send_queue_bytes << ", "
+     << "max_receive_queue_bytes: " << cfg.max_receive_queue_bytes << ", "
+     << "lru_max_session_count: " << cfg.lru_max_session_count << ", ";
+  return os;
+}
+
 }  // namespace rafter

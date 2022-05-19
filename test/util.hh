@@ -15,6 +15,9 @@ namespace rafter::test {
 class util {
  public:
   static config default_config();
+  static std::function<unsigned(uint64_t)> partition_func();
+  static std::function<std::string(protocol::group_id)> snapshot_dir_func(
+      std::string root);
   static std::vector<protocol::update> make_updates(
       protocol::group_id gid,
       size_t num,                 // total number of updates
