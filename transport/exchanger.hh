@@ -48,16 +48,15 @@ class exchanger final
     shared_ptr<rpc_protocol_client> rpc_client;
     srpc::stats stats() const { return rpc_client->get_stats(); }
   };
-  // TODO(jyc): initialize all handlers
+
   future<> start_listen();
   future<> shutdown();
-  future<> stop() { return make_ready_future<>(); }
+  future<> stop() { return shutdown(); }
 
   template <typename Ret, typename... Args>
   auto send(messaging_verb verb, peer_address address, Args&&... args) {
     auto self = shared_from_this();
     auto rpc_handler = _rpc->make_client<Ret(Args...)>(verb);
-    // TODO(jyc): if shutting down
     auto client = get_rpc_client(verb, address);
     try {
       return rpc_handler(*client, std::forward<Args>(args)...);
