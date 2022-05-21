@@ -5,6 +5,7 @@
 #pragma once
 
 #include <seastar/core/queue.hh>
+#include <seastar/core/sharded.hh>
 #include <seastar/core/shared_mutex.hh>
 
 #include "storage/index.hh"
@@ -16,11 +17,13 @@
 
 namespace rafter::storage {
 
-// sharded<segment_manager>
-class segment_manager final : public logdb {
+class segment_manager final
+  : public async_sharded_service<segment_manager>
+  , public peering_sharded_service<segment_manager>
+  , public logdb {
  public:
-  explicit segment_manager(std::function<unsigned(protocol::group_id)> func);
-  ~segment_manager() = default;
+  explicit segment_manager(std::function<unsigned(uint64_t)> func);
+  ~segment_manager() override = default;
   future<> start();
   future<> stop();
   stats stats() const noexcept;
@@ -62,7 +65,7 @@ class segment_manager final : public logdb {
   // bootstrap dir
   std::string _boot_dir;
   // group_id -> shard_id
-  std::function<unsigned(protocol::group_id)> _partitioner;
+  std::function<unsigned(uint64_t)> _partitioner;
 
   // TODO(jyc): more options
 

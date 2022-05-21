@@ -4,7 +4,6 @@
 
 #include <random>
 
-#include "protocol/serializer.hh"
 #include "storage/segment.hh"
 #include "test/base.hh"
 #include "test/util.hh"

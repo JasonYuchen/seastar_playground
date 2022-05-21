@@ -4,6 +4,9 @@
 
 #include "raft_log.hh"
 
+#include <numeric>
+#include <seastar/core/coroutine.hh>
+
 #include "core/logger.hh"
 #include "util/error.hh"
 
@@ -207,8 +210,8 @@ void in_memory_log::assert_marker() const {
   }
 }
 
-log_reader::log_reader(protocol::group_id gid, storage::segment_manager& log)
-  : _gid(gid), _log(log), _snapshot(make_lw_shared<protocol::snapshot>()) {}
+log_reader::log_reader(protocol::group_id gid, storage::logdb& logdb)
+  : _gid(gid), _logdb(logdb), _snapshot(make_lw_shared<protocol::snapshot>()) {}
 
 protocol::hard_state log_reader::get_state() const noexcept { return _state; }
 void log_reader::set_state(protocol::hard_state state) noexcept {
@@ -232,7 +235,7 @@ future<size_t> log_reader::query(
     co_return coroutine::make_exception(
         util::unavailable_error(range.high, last_index() + 1));
   }
-  max_bytes = co_await _log.query_entries(_gid, range, entries, max_bytes);
+  max_bytes = co_await _logdb.query_entries(_gid, range, entries, max_bytes);
   if (entries.size() == range.high - range.low) {
     co_return max_bytes;
   }

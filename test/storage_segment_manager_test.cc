@@ -1,10 +1,9 @@
 //
-// Creat
-// ed by jason on 2021/12/11.
+// Created by jason on 2021/12/11.
 //
+
 #include <chrono>
 #include <random>
-#include <seastar/core/sleep.hh>
 
 #include "rafter/config.hh"
 #include "storage/segment_manager.hh"

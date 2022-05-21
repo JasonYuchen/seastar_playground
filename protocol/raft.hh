@@ -196,8 +196,10 @@ inline std::ostream &operator<<(std::ostream &os, checksum_type type) {
   return os << name(type);
 }
 
+using member_map = std::unordered_map<uint64_t, std::string>;
+
 struct bootstrap {
-  std::unordered_map<uint64_t, std::string> addresses;
+  member_map addresses;
   bool join = false;
   state_machine_type smtype = state_machine_type::regular;
 
@@ -208,9 +210,9 @@ using bootstrap_ptr = seastar::lw_shared_ptr<bootstrap>;
 
 struct membership {
   uint64_t config_change_id = 0;
-  std::unordered_map<uint64_t, std::string> addresses;
-  std::unordered_map<uint64_t, std::string> observers;
-  std::unordered_map<uint64_t, std::string> witnesses;
+  member_map addresses;
+  member_map observers;
+  member_map witnesses;
   std::unordered_map<uint64_t, bool> removed;
 
   uint64_t bytes() const noexcept;

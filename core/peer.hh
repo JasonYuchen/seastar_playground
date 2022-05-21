@@ -17,7 +17,7 @@ class peer {
   peer(
       const raft_config& c,
       log_reader& lr,
-      const std::map<uint64_t, std::string>& addresses,
+      const protocol::member_map& addresses,
       bool initial,
       bool new_node);
   // void gc(uint64_t now);
@@ -44,7 +44,7 @@ class peer {
   bool rate_limited() const noexcept { return _raft._limiter.enabled(); }
 
  private:
-  void bootstrap(const std::map<uint64_t, std::string>& addresses);
+  void bootstrap(const protocol::member_map& addresses);
 
   protocol::hard_state _prev_state;
   raft _raft;

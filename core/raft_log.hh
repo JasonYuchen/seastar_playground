@@ -7,7 +7,7 @@
 #include <optional>
 
 #include "protocol/raft.hh"
-#include "storage/segment_manager.hh"
+#include "storage/logdb.hh"
 #include "util/seastarx.hh"
 
 namespace rafter::core {
@@ -48,7 +48,7 @@ class in_memory_log {
 
 class log_reader {
  public:
-  log_reader(protocol::group_id gid, storage::segment_manager& log);
+  log_reader(protocol::group_id gid, storage::logdb& logdb);
   protocol::hard_state get_state() const noexcept;
   void set_state(protocol::hard_state state) noexcept;
   protocol::membership_ptr get_membership() const noexcept;
@@ -70,7 +70,7 @@ class log_reader {
   uint64_t last_index() const noexcept { return _marker.index + _length - 1; }
 
   protocol::group_id _gid;
-  storage::segment_manager& _log;
+  storage::logdb& _logdb;
   protocol::snapshot_ptr _snapshot;
   protocol::hard_state _state;
   protocol::log_id _marker;

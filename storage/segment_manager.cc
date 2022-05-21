@@ -19,7 +19,7 @@ namespace rafter::storage {
 using namespace protocol;
 using namespace std;
 
-segment_manager::segment_manager(function<unsigned(group_id)> func)
+segment_manager::segment_manager(function<unsigned(uint64_t)> func)
   : _partitioner(std::move(func))
   , _gc_worker("segment_gc", config::shard().wal_gc_queue_capacity, l) {}
 
@@ -71,7 +71,7 @@ future<vector<group_id>> segment_manager::list_nodes() {
                 if (c != 2) {
                   break;
                 }
-                if (this_shard_id() == _partitioner(id)) {
+                if (this_shard_id() == _partitioner(id.cluster)) {
                   nodes.emplace_back(id);
                 }
               } while (false);
@@ -112,7 +112,8 @@ future<> segment_manager::save(std::span<protocol::update> updates) {
   return with_lock(_mtx, [=]() -> future<> {
     bool need_sync = false;
     for (const auto& up : updates) {
-      need_sync = need_sync || co_await append(up);
+      bool sync = co_await append(up);
+      need_sync = need_sync || sync;
     }
     if (need_sync) {
       co_await sync();
@@ -216,19 +217,21 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
 }
 
 future<> segment_manager::remove(group_id id, uint64_t index) {
-  return with_lock(_mtx, [=]() -> future<> {
-    _stats._remove++;
-    update comp{
-        .gid = id,
-        .state =
-            {
-                .commit = index,
-            },
-    };
-    co_await append(comp);
-    co_await sync();
-    co_await compaction(id);
-  });
+  return with_lock(
+             _mtx,
+             [=]() -> future<> {
+               _stats._remove++;
+               update comp{
+                   .gid = id,
+                   .state =
+                       {
+                           .commit = index,
+                       },
+               };
+               co_await append(comp);
+               co_await sync();
+             })
+      .then([=] { return compaction(id); });
 }
 
 future<> segment_manager::remove_node(protocol::group_id id) {

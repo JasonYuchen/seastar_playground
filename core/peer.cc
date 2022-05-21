@@ -4,6 +4,8 @@
 
 #include "peer.hh"
 
+#include <seastar/core/coroutine.hh>
+
 #include "core/logger.hh"
 #include "protocol/serializer.hh"
 #include "util/error.hh"
@@ -15,7 +17,7 @@ using namespace protocol;
 peer::peer(
     const raft_config& c,
     log_reader& lr,
-    const std::map<uint64_t, std::string>& addresses,
+    const member_map& addresses,
     bool initial,
     bool new_node)
   : _raft(c, lr) {
@@ -189,7 +191,7 @@ void peer::notify_last_applied(uint64_t last_applied) noexcept {
   _raft._applied = last_applied;
 }
 
-void peer::bootstrap(const std::map<uint64_t, std::string>& addresses) {
+void peer::bootstrap(const member_map& addresses) {
   log_entry_vector entries;
   entries.reserve(addresses.size());
   for (const auto& [id, address] : addresses) {

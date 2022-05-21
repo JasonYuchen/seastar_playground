@@ -12,7 +12,7 @@ struct cluster_info {
   // group_id is the group id (cluster id, node id) of the Raft cluster node
   protocol::group_id group_id;
   // nodes is a map of member node IDs to their Raft addresses.
-  std::unordered_map<uint64_t, std::string> nodes;
+  protocol::member_map nodes;
   // config_change_index is Raft log index of the last applied membership change
   // entry.
   uint64_t config_change_index = 0;

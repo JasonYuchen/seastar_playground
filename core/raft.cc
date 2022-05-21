@@ -4,7 +4,11 @@
 
 #include "raft.hh"
 
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/loop.hh>
+
 #include "core/logger.hh"
+#include "util/error.hh"
 
 namespace rafter::core {
 
