@@ -117,6 +117,20 @@
   seastar::future<> GTEST_TEST_CLASS_NAME_(                                    \
       test_suite_name, test_name)::SeastarBody()
 
+#ifdef GTEST_FATAL_FAILURE_
+#undef GTEST_FATAL_FAILURE_
+#endif
+
+#define GTEST_FATAL_FAILURE_(message)                                          \
+  co_return GTEST_MESSAGE_(message, ::testing::TestPartResult::kFatalFailure)
+
+#ifdef GTEST_SKIP_
+#undef GTEST_SKIP_
+#endif
+
+#define GTEST_SKIP_(message)                                                   \
+  co_return GTEST_MESSAGE_(message, ::testing::TestPartResult::kSkip)
+
 namespace rafter::test {
 
 class base : public ::testing::Environment {
