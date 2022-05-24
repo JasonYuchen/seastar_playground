@@ -4,9 +4,12 @@
 
 #include "node.hh"
 
+#include <seastar/core/coroutine.hh>
+
 #include "rafter/engine.hh"
 #include "rafter/logger.hh"
 #include "rsm/session_manager.hh"
+#include "rsm/snapshotter.hh"
 
 namespace rafter {
 
@@ -17,29 +20,35 @@ node::node(
     engine& engine,
     transport::registry& registry,
     storage::logdb& logdb,
-    core::log_reader& log_reader)
+    std::unique_ptr<rsm::snapshotter> snapshotter,
+    statemachine::factory&& sm_factory,
+    std::function<future<>(protocol::message)>&& sender,
+    std::function<future<>(protocol::group_id, bool)>&& snapshot_notifier)
   : _config(std::move(cfg))
   , _engine(engine)
   , _node_registry(registry)
   , _logdb(logdb)
-  , _log_reader(log_reader)
+  , _log_reader(id(), _logdb)
   , _pending_proposal(_config)
   , _pending_read_index(_config)
   , _pending_snapshot(_config)
   , _pending_config_change(_config)
   , _pending_leader_transfer(_config)
   , _received_messages("q", 100 /*FIXME*/)
-  , _quiesce(id(), _config.quiesce, _config.election_rtt * 2) {
-  // TODO(jyc)
-}
+  , _send(std::move(sender))
+  , _report_snapshot_status(std::move(snapshot_notifier))
+  , _quiesce(id(), _config.quiesce, _config.election_rtt * 2)
+  , _snapshotter(std::move(snapshotter))
+  , _sm(std::make_unique<rsm::statemachine_manager>(
+        *this, *_snapshotter, std::move(sm_factory))) {}
 
-future<bool> node::start(
-    const std::map<uint64_t, std::string>& peers, bool initial) {
+future<> node::start(const member_map& peers, bool initial) {
+  co_await _sm->start();
   bool new_node = co_await replay_log();
   _peer = std::make_unique<core::peer>(
       _config, _log_reader, peers, initial, new_node);
   _stopped = false;
-  co_return new_node;
+  _new_node = new_node;
 }
 
 future<> node::stop() {
@@ -307,20 +316,20 @@ future<> node::handle_snapshot_task(protocol::rsm_task task) {
   co_return;
 }
 
-future<bool> node::process_status_transition() {
-  if (co_await process_save_status()) {
-    co_return true;
+bool node::process_status_transition() {
+  if (process_save_status()) {
+    return true;
   }
-  if (co_await process_stream_status()) {
-    co_return true;
+  if (process_stream_status()) {
+    return true;
   }
-  if (co_await process_recover_status()) {
-    co_return true;
+  if (process_recover_status()) {
+    return true;
   }
-  if (co_await process_unintialized_status()) {
-    co_return true;
+  if (process_unintialized_status()) {
+    return true;
   }
-  co_return false;
+  return false;
 }
 
 future<bool> node::replay_log() {
@@ -512,6 +521,62 @@ future<bool> node::handle_compaction() {
       _snapshot_state.compacted_to > 0 || _snapshot_state.compact_log_to > 0);
 }
 
+bool node::process_save_status() {
+  if (_snapshot_state.saving) {
+    if (!_snapshot_state.save_completed.has_value()) {
+      return true;  // TODO(jyc): concurrent snapshot
+    }
+    if (_snapshot_state.save_completed->save && !_initialized) {
+      throw util::panic("taking snapshot when uninitialized");
+    }
+    _snapshot_state.save_completed.reset();
+    _snapshot_state.saving = false;
+  }
+  return false;
+}
+
+bool node::process_stream_status() {
+  if (_snapshot_state.streaming) {
+    if (true /*TODO(jyc): on disk state machine*/) {
+      throw util::panic("non-on disk statemachine is streaming snapshot");
+    }
+    if (!_snapshot_state.stream_completed.has_value()) {
+      return false;
+    }
+    _snapshot_state.stream_completed.reset();
+    _snapshot_state.streaming = false;
+  }
+  return false;
+}
+
+bool node::process_recover_status() {
+  if (_snapshot_state.recovering) {
+    if (!_snapshot_state.recover_completed.has_value()) {
+      return true;
+    }
+    if (_snapshot_state.recover_completed->save) {
+      throw util::panic("completed");
+    }
+    if (_snapshot_state.recover_completed->initial) {
+      // TODO(jyc): set initial state
+    }
+    _snapshot_state.recover_completed.reset();
+    _snapshot_state.recovering = false;
+  }
+  return false;
+}
+
+bool node::process_unintialized_status() {
+  if (!_initialized) {
+    l.debug("{}: checking initial snapshot", id());
+    _snapshot_state.recovering = true;
+    report_recover_snapshot(
+        {.new_node = _new_node, .recover = true, .initial = true});
+    return true;
+  }
+  return false;
+}
+
 future<> node::send_enter_quiesce_messages() {
   // the members should not change during loop sending
   const auto& members = _sm->get_membership();
@@ -585,6 +650,24 @@ uint64_t node::update_applied_index() {
   return _applied_index;
 }
 
+bool node::save_snapshot_required(uint64_t applied) {
+  auto interval = _config.snapshot_interval;
+  if (interval == 0) {
+    return false;
+  }
+  auto si = _snapshot_state.snapshot_index;
+  if (_pushed_index <= interval + si || applied <= interval + si ||
+      applied <= interval + _snapshot_state.request_snapshot_index) {
+    return false;
+  }
+  if (is_busy_snapshotting()) {
+    return false;
+  }
+  l.debug("{}: requested to create snapshot, applied:{}", id(), applied);
+  _snapshot_state.request_snapshot_index = applied;
+  return true;
+}
+
 future<std::optional<update>> node::get_update() {
   bool not_busy = !_sm->busy();
   if (_peer->has_update(not_busy) || _confirmed_index != _applied_index ||
@@ -602,6 +685,28 @@ future<std::optional<update>> node::get_update() {
     co_return std::move(update);
   }
   co_return std::nullopt;
+}
+
+void node::report_ignored_snapshot_request(uint64_t key) {
+  _pending_snapshot.apply(key, true, false, log_id::INVALID_INDEX);
+}
+
+void node::report_save_snapshot(protocol::rsm_task task) {
+  _snapshot_state.saving = true;
+  _snapshot_state.save_ready = std::move(task);
+  _engine.save_ready(_config.cluster_id);
+}
+
+void node::report_stream_snapshot(protocol::rsm_task task) {
+  _snapshot_state.streaming = true;
+  _snapshot_state.stream_ready = std::move(task);
+  _engine.stream_ready(_config.cluster_id);
+}
+
+void node::report_recover_snapshot(protocol::rsm_task task) {
+  _snapshot_state.recovering = true;
+  _snapshot_state.recover_ready = std::move(task);
+  _engine.recover_ready(_config.cluster_id);
 }
 
 }  // namespace rafter

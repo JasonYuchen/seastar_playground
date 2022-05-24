@@ -20,6 +20,7 @@
 namespace rafter {
 
 class engine;
+class nodehost;
 
 class node {
  public:
@@ -28,14 +29,16 @@ class node {
       engine& engine,
       transport::registry& registry,
       storage::logdb& logdb,
-      core::log_reader& log_reader);
+      std::unique_ptr<rsm::snapshotter> snapshotter,
+      statemachine::factory&& sm_factory,
+      std::function<future<>(protocol::message)>&& sender,
+      std::function<future<>(protocol::group_id, bool)>&& snapshot_notifier);
   protocol::group_id id() const noexcept {
     return {_config.cluster_id, _config.node_id};
   }
   bool is_witness() const noexcept { return _config.witness; }
 
-  future<bool> start(
-      const std::map<uint64_t, std::string>& peers, bool initial);
+  future<> start(const protocol::member_map& peers, bool initial);
   future<> stop();
   future<std::optional<protocol::update>> step();
 
@@ -70,9 +73,11 @@ class node {
 
   bool is_busy_snapshotting() const;
   future<> handle_snapshot_task(protocol::rsm_task task);
-  future<bool> process_status_transition();
+  bool process_status_transition();
 
  private:
+  friend class nodehost;
+
   future<bool> replay_log();
   future<> remove_log();
 
@@ -85,10 +90,10 @@ class node {
   future<bool> handle_snapshot(uint64_t last_applied);
   future<bool> handle_compaction();
 
-  future<bool> process_save_status();
-  future<bool> process_stream_status();
-  future<bool> process_recover_status();
-  future<bool> process_unintialized_status();
+  bool process_save_status();
+  bool process_stream_status();
+  bool process_recover_status();
+  bool process_unintialized_status();
 
   future<> send_enter_quiesce_messages();
   // only send replicate messages
@@ -110,12 +115,13 @@ class node {
   raft_config _config;
   bool _stopped = true;
   bool _initialized = false;
-  bool _rate_limited = 0;
+  bool _new_node = false;
+  bool _rate_limited = false;
   cluster_info _cluster_info;
   engine& _engine;
   transport::registry& _node_registry;
   storage::logdb& _logdb;
-  core::log_reader& _log_reader;
+  core::log_reader _log_reader;
   pending_proposal _pending_proposal;
   pending_read_index _pending_read_index;
   pending_snapshot _pending_snapshot;
@@ -127,6 +133,7 @@ class node {
   std::function<future<>(protocol::group_id, bool)> _report_snapshot_status;
   core::quiesce _quiesce;
   std::unique_ptr<core::peer> _peer;
+  std::unique_ptr<rsm::snapshotter> _snapshotter;
   std::unique_ptr<rsm::statemachine_manager> _sm;
   protocol::snapshot_state _snapshot_state;
   uint64_t _current_tick = 0;
