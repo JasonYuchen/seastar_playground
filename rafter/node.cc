@@ -6,8 +6,8 @@
 
 #include <seastar/core/coroutine.hh>
 
-#include "rafter/engine.hh"
 #include "rafter/logger.hh"
+#include "rafter/nodehost.hh"
 #include "rsm/session_manager.hh"
 #include "rsm/snapshotter.hh"
 
@@ -17,7 +17,7 @@ using namespace protocol;
 
 node::node(
     raft_config cfg,
-    engine& engine,
+    nodehost& host,
     transport::registry& registry,
     storage::logdb& logdb,
     std::unique_ptr<rsm::snapshotter> snapshotter,
@@ -25,7 +25,7 @@ node::node(
     std::function<future<>(protocol::message)>&& sender,
     std::function<future<>(protocol::group_id, bool)>&& snapshot_notifier)
   : _config(std::move(cfg))
-  , _engine(engine)
+  , _nodehost(host)
   , _node_registry(registry)
   , _logdb(logdb)
   , _log_reader(id(), _logdb)
@@ -63,6 +63,7 @@ future<> node::stop() {
   _pending_config_change.close();
   _pending_snapshot.close();
   _pending_leader_transfer.close();
+  co_await _sm->stop();
 }
 
 future<std::optional<update>> node::step() {
@@ -213,8 +214,7 @@ future<> node::restore_remotes(protocol::snapshot_ptr ss) {
 }
 
 future<> node::apply_raft_update(const protocol::update& up) {
-  auto entries =
-      protocol::utils::entries_to_apply(up.committed_entries, _pushed_index);
+  auto entries = utils::entries_to_apply(up.committed_entries, _pushed_index);
   if (entries.empty()) {
     co_return;
   }
@@ -284,7 +284,7 @@ future<> node::process_snapshot(const protocol::update& up) {
     co_await _sm->push(rsm_task{.index = ssi, .recover = true});
     _snapshot_state.snapshot_index = ssi;
     _pushed_index = ssi;
-    _engine.apply_ready(_config.cluster_id);
+    //    _engine.apply_ready(_config.cluster_id);
   }
 }
 
@@ -431,7 +431,7 @@ future<bool> node::handle_received_messages() {
           switch (m.type) {
             case message_type::local_tick: {
               count++;
-              co_await tick(m.hint.low);
+              co_await tick();
               break;
             }
             case message_type::quiesce: {
@@ -619,7 +619,7 @@ void node::gc() {
   }
 }
 
-future<> node::tick(uint64_t tick) {
+future<> node::tick() {
   _current_tick++;
   _quiesce.tick();
   if (_quiesce.quiesced()) {
@@ -627,10 +627,10 @@ future<> node::tick(uint64_t tick) {
   } else {
     co_await _peer->tick();
   }
-  _pending_proposal.tick(tick);
-  _pending_read_index.tick(tick);
-  _pending_config_change.tick(tick);
-  _pending_snapshot.tick(tick);
+  _pending_proposal.tick();
+  _pending_read_index.tick();
+  _pending_config_change.tick();
+  _pending_snapshot.tick();
   co_return;
 }
 
@@ -694,19 +694,19 @@ void node::report_ignored_snapshot_request(uint64_t key) {
 void node::report_save_snapshot(protocol::rsm_task task) {
   _snapshot_state.saving = true;
   _snapshot_state.save_ready = std::move(task);
-  _engine.save_ready(_config.cluster_id);
+  //  _engine.save_ready(_config.cluster_id);
 }
 
 void node::report_stream_snapshot(protocol::rsm_task task) {
   _snapshot_state.streaming = true;
   _snapshot_state.stream_ready = std::move(task);
-  _engine.stream_ready(_config.cluster_id);
+  //  _engine.stream_ready(_config.cluster_id);
 }
 
 void node::report_recover_snapshot(protocol::rsm_task task) {
   _snapshot_state.recovering = true;
   _snapshot_state.recover_ready = std::move(task);
-  _engine.recover_ready(_config.cluster_id);
+  //  _engine.recover_ready(_config.cluster_id);
 }
 
 }  // namespace rafter

@@ -19,14 +19,13 @@
 
 namespace rafter {
 
-class engine;
 class nodehost;
 
 class node {
  public:
   node(
       raft_config cfg,
-      engine& engine,
+      nodehost& host,
       transport::registry& registry,
       storage::logdb& logdb,
       std::unique_ptr<rsm::snapshotter> snapshotter,
@@ -61,6 +60,8 @@ class node {
       bool notify_read);
   future<> apply_config_change(
       protocol::config_change cc, uint64_t key, bool rejected);
+  future<> apply_snapshot(
+      uint64_t key, bool ignored, bool aborted, uint64_t index);
   future<> restore_remotes(protocol::snapshot_ptr ss);
   future<> apply_raft_update(const protocol::update& up);
   future<> commit_raft_update(const protocol::update& up);
@@ -76,7 +77,9 @@ class node {
   bool process_status_transition();
 
  private:
+  // TODO(jyc): refine the interface and avoid friend
   friend class nodehost;
+  friend class rsm::statemachine_manager;
 
   future<bool> replay_log();
   future<> remove_log();
@@ -102,7 +105,7 @@ class node {
   future<> send_messages(protocol::message_vector& msgs);
 
   void gc();
-  future<> tick(uint64_t tick);
+  future<> tick();
   void record_message(const protocol::message& m);
   uint64_t update_applied_index();
   bool save_snapshot_required(uint64_t applied);
@@ -118,7 +121,7 @@ class node {
   bool _new_node = false;
   bool _rate_limited = false;
   cluster_info _cluster_info;
-  engine& _engine;
+  nodehost& _nodehost;
   transport::registry& _node_registry;
   storage::logdb& _logdb;
   core::log_reader _log_reader;

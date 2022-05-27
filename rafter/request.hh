@@ -84,7 +84,7 @@ class pending_proposal {
   future<request_result> propose(
       const protocol::session& session, std::string_view cmd, uint64_t timeout);
   void close();
-  void tick(uint64_t t) { _clock.tick = t; }
+  void tick() { _clock.tick++; }
   void gc();
 
   void commit(uint64_t key);
@@ -107,7 +107,7 @@ class pending_read_index {
   explicit pending_read_index(const raft_config& cfg);
   future<request_result> read(uint64_t timeout);
   void close();
-  void tick(uint64_t t) { _clock.tick = t; }
+  void tick() { _clock.tick++; }
   void gc();
 
   std::optional<protocol::hint> pack();
@@ -136,7 +136,7 @@ class pending_config_change {
   explicit pending_config_change(const raft_config& cfg);
   future<request_result> request(protocol::config_change cc, uint64_t timeout);
   void close();
-  void tick(uint64_t t) { _clock.tick = t; }
+  void tick() { _clock.tick++; }
   void gc();
 
   void commit(uint64_t key);
@@ -163,7 +163,7 @@ class pending_snapshot {
   future<request_result> request(
       protocol::snapshot_request request, uint64_t timeout);
   void close();
-  void tick(uint64_t t) { _clock.tick = t; }
+  void tick() { _clock.tick++; }
   void gc();
 
   void apply(uint64_t key, bool ignored, bool aborted, uint64_t index);

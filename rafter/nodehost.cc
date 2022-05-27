@@ -6,7 +6,6 @@
 
 #include <seastar/core/coroutine.hh>
 
-#include "rafter/engine.hh"
 #include "rafter/logger.hh"
 #include "rafter/node.hh"
 #include "rsm/session_manager.hh"
@@ -22,20 +21,22 @@ using namespace protocol;
 
 nodehost::nodehost(
     struct config cfg,
-    engine& ng,
     storage::logdb& logdb,
     transport::registry& registry,
     transport::rpc& rpc)
   : _config(std::move(cfg))
-  , _engine(ng)
   , _logdb(logdb)
   , _registry(registry)
   , _rpc(rpc)
+  , _persister("persister", 100, l)
   , _sender("sender", 100, l)
   , _receiver("receiver", 100, l)
   , _partitioner(server::environment::get_partition_func()) {}
 
 future<> nodehost::start() {
+  _persister.start([&](std::vector<storage::update_pack>& packs, bool stopped) {
+    return _logdb.save(packs);
+  });
   // FIXME(jyc): this starting procedure is just for demo
   auto groups = co_await _logdb.list_nodes();
   for (auto gid : groups) {
@@ -66,14 +67,14 @@ future<> nodehost::start() {
     for (auto [cluster_id, node] : self->_clusters) {
       message m{
           .type = message_type::local_tick,
-          .from = node->id().node,
-          .to = node->id().node};
+          .from = node->n->id().node,
+          .to = node->n->id().node};
       // FIXME(jyc): tolerate tick message lost?
-      bool pushed = node->_received_messages.push(m);
+      bool pushed = node->n->_received_messages.push(m);
       if (!pushed) {
-        l.debug("{} missed a tick", node->id());
+        l.debug("{} missed a tick", node->n->id());
       }
-      self->_engine.step_ready(cluster_id);
+      self->node_ready(cluster_id);
     }
   });
   _ticker.arm_periodic(std::chrono::milliseconds(_config.rtt_ms));
@@ -81,8 +82,15 @@ future<> nodehost::start() {
 }
 
 future<> nodehost::stop() {
+  _stopped = true;
   _ticker.cancel();
-  return make_exception_future<>(util::panic("not implemented"));
+  auto it = _clusters.begin();
+  while (it != _clusters.end()) {
+    co_await stop_cluster(it->first);
+    it = _clusters.begin();
+  }
+  co_await _persister.close();
+  uninitialize_handlers();
 }
 
 future<> nodehost::start_cluster(
@@ -133,7 +141,7 @@ future<> nodehost::start_cluster(
   };
   auto n = make_lw_shared<node>(
       std::move(cfg),
-      _engine,
+      container().local(),
       _registry,
       _logdb,
       std::move(snapshotter),
@@ -141,37 +149,23 @@ future<> nodehost::start_cluster(
       std::move(sender),
       std::move(snapshot_notifier));
   co_await n->start(peers, im);
-  _clusters[gid.cluster] = std::move(n);
+  auto r = make_lw_shared<ready>();
+  r->n = std::move(n);
+  r->main = node_main(r->n);
+  _clusters[gid.cluster] = std::move(r);
   // TODO(jyc): cluster change ready
-  _engine.apply_ready(gid.cluster);
+  node_ready(gid.cluster);
 }
 
 future<> nodehost::stop_cluster(uint64_t cluster_id) {
-  return stop_node({cluster_id, group_id::INVALID_NODE});
-}
-
-future<> nodehost::stop_node(group_id gid) {
   if (_stopped) [[unlikely]] {
     return make_exception_future<>(util::closed_error());
   }
-  auto shard = _partitioner(gid.cluster);
+  auto shard = _partitioner(cluster_id);
   if (shard != this_shard_id()) {
-    return container().invoke_on(shard, &nodehost::stop_node, gid);
+    return container().invoke_on(shard, &nodehost::stop_cluster, cluster_id);
   }
-  auto it = _clusters.find(gid.cluster);
-  if (it == _clusters.end()) [[unlikely]] {
-    return make_exception_future<>(
-        util::invalid_argument("cluster_id", "not_found"));
-  }
-  lw_shared_ptr<node> n{it->second};
-  _clusters.erase(it);
-  auto ret = n->stop();
-  // TODO(jyc): cluster change ready
-  _engine.step_ready(gid.cluster);
-  _engine.commit_ready(gid.cluster);
-  _engine.apply_ready(gid.cluster);
-  _engine.recover_ready(gid.cluster);
-  return ret;
+  return stop_node({cluster_id, group_id::INVALID_NODE});
 }
 
 future<membership> nodehost::get_membership(uint64_t cluster_id) {
@@ -189,7 +183,7 @@ future<membership> nodehost::get_membership(uint64_t cluster_id) {
   }
   return read_index(cluster_id).then([n = it->second](request_result r) {
     if (r.code == request_result::code::completed) {
-      return make_ready_future<membership>(n->_sm->get_membership());
+      return make_ready_future<membership>(n->n->_sm->get_membership());
     }
     l.error("failed to read index, code:{}", r.code);
     return make_exception_future<membership>(util::request_error("read index"));
@@ -282,8 +276,8 @@ future<request_result> nodehost::propose(session& s, std::string_view cmd) {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->propose(s, cmd, UINT64_MAX);
-  _engine.step_ready(s.cluster_id);
+  auto r = it->second->n->propose(s, cmd, UINT64_MAX);
+  node_ready(s.cluster_id);
   return r;
 }
 
@@ -301,12 +295,12 @@ future<request_result> nodehost::propose_session(session& s) {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  if (it->second->is_witness()) {
+  if (it->second->n->is_witness()) {
     return make_exception_future<request_result>(
         util::invalid_argument("witness", "invalid operation on witness"));
   }
-  auto r = it->second->propose_session(s, UINT64_MAX);
-  _engine.step_ready(s.cluster_id);
+  auto r = it->second->n->propose_session(s, UINT64_MAX);
+  node_ready(s.cluster_id);
   return r;
 }
 
@@ -323,8 +317,8 @@ future<request_result> nodehost::read_index(uint64_t cluster_id) {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto ret = it->second->read(UINT64_MAX);
-  _engine.step_ready(cluster_id);
+  auto ret = it->second->n->read(UINT64_MAX);
+  node_ready(cluster_id);
   return ret;
 }
 
@@ -345,7 +339,7 @@ future<request_result> nodehost::linearizable_read(
   }
   return read_index(cluster_id).then([query, n = it->second](request_result r) {
     if (r.code == request_result::code::completed) {
-      return n->_sm->lookup(query).then([](rsm_result result) {
+      return n->n->_sm->lookup(query).then([](rsm_result result) {
         return make_ready_future<request_result>(
             request_result{request_result::code::completed, std::move(result)});
       });
@@ -369,11 +363,11 @@ future<request_result> nodehost::stale_read(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  if (it->second->is_witness()) {
+  if (it->second->n->is_witness()) {
     return make_exception_future<request_result>(
         util::invalid_argument("witness", "invalid operation on witness"));
   }
-  return it->second->_sm->lookup(query).then([](rsm_result r) {
+  return it->second->n->_sm->lookup(query).then([](rsm_result r) {
     return make_ready_future<request_result>(
         request_result{request_result::code::completed, std::move(r)});
   });
@@ -394,8 +388,8 @@ future<request_result> nodehost::request_snapshot(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_snapshot(option, UINT64_MAX);
-  _engine.step_ready(cluster_id);
+  auto r = it->second->n->request_snapshot(option, UINT64_MAX);
+  node_ready(cluster_id);
   return r;
 }
 
@@ -422,14 +416,14 @@ future<request_result> nodehost::request_add_node(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_config_change(
+  auto r = it->second->n->request_config_change(
       config_change{
           .config_change_id = config_change_index,
           .type = config_change_type::add_node,
           .node = gid.node,
           .address = target},
       UINT64_MAX);
-  _engine.step_ready(gid.cluster);
+  node_ready(gid.cluster);
   return r;
 }
 
@@ -452,14 +446,14 @@ future<request_result> nodehost::request_add_observer(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_config_change(
+  auto r = it->second->n->request_config_change(
       config_change{
           .config_change_id = config_change_index,
           .type = config_change_type::add_observer,
           .node = gid.node,
           .address = target},
       UINT64_MAX);
-  _engine.step_ready(gid.cluster);
+  node_ready(gid.cluster);
   return r;
 }
 
@@ -482,14 +476,14 @@ future<request_result> nodehost::request_add_witness(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_config_change(
+  auto r = it->second->n->request_config_change(
       config_change{
           .config_change_id = config_change_index,
           .type = config_change_type::add_witness,
           .node = gid.node,
           .address = target},
       UINT64_MAX);
-  _engine.step_ready(gid.cluster);
+  node_ready(gid.cluster);
   return r;
 }
 
@@ -508,13 +502,13 @@ future<request_result> nodehost::request_delete_node(
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_config_change(
+  auto r = it->second->n->request_config_change(
       config_change{
           .config_change_id = config_change_index,
           .type = config_change_type::remove_node,
           .node = gid.node},
       UINT64_MAX);
-  _engine.step_ready(gid.cluster);
+  node_ready(gid.cluster);
   return r;
 }
 
@@ -532,8 +526,8 @@ future<request_result> nodehost::request_leader_transfer(group_id gid) {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->request_leader_transfer(gid.node);
-  _engine.step_ready(gid.cluster);
+  auto r = it->second->n->request_leader_transfer(gid.node);
+  node_ready(gid.cluster);
   // TODO(jyc): when to apply the leader transfer?
   return r;
 }
@@ -566,6 +560,77 @@ void nodehost::uninitialize_handlers() {
       [](auto gid, auto from) { return make_ready_future<>(); });
 }
 
+void nodehost::node_ready(uint64_t cluster_id) {
+  if (auto it = _clusters.find(cluster_id); it != _clusters.end()) {
+    if (it->second->event == 0 && it->second->gate.has_value()) {
+      it->second->gate->set_value();
+    }
+    it->second->event = 1;
+  }
+}
+
+future<> nodehost::stop_node(group_id gid) {
+  auto it = _clusters.find(gid.cluster);
+  if (it == _clusters.end()) [[unlikely]] {
+    return make_exception_future<>(
+        util::invalid_argument("cluster_id", "not_found"));
+  }
+  auto ready_node = it->second;
+  auto ret = ready_node->n->stop().then([ready_node, s = shared_from_this()] {
+    return ready_node->main.value().then(
+        [ready_node, s] { s->_clusters.erase(ready_node->n->id().cluster); });
+  });
+  node_ready(gid.cluster);
+  return ret;
+}
+
+future<> nodehost::node_main(lw_shared_ptr<node> n) {
+  auto self = shared_from_this();
+  while (!n->_stopped) {
+    {
+      assert(_clusters.contains(n->id().cluster));
+      auto ready_node = _clusters.find(n->id().cluster)->second;
+      if (ready_node->event == 0) {
+        ready_node->gate = promise<>();
+        co_await ready_node->gate->get_future();
+        ready_node->gate.reset();
+      }
+      ready_node->event = 0;
+    }
+    if (n->_stopped) {
+      break;
+    }
+    auto up = co_await n->step();
+    if (!up.has_value()) {
+      continue;
+    }
+    if (up->fast_apply) {
+      co_await n->process_snapshot(*up);
+      co_await n->apply_raft_update(*up);
+      node_ready(n->id().cluster);
+    }
+    co_await n->send_replicate_messages(up->messages);
+    co_await n->process_ready_to_read(*up);
+    co_await n->process_dropped_entries(*up);
+    co_await n->process_dropped_read_indexes(*up);
+    storage::update_pack pack{*up};
+    auto fut = pack.done.get_future();
+    co_await _persister.push_eventually(std::move(pack));
+    co_await fut.discard_result();
+    // TODO(jyc): co_await engine.onSnapshotSaved
+    if (!up->fast_apply) {
+      co_await n->process_snapshot(*up);
+      co_await n->apply_raft_update(*up);
+      node_ready(n->id().cluster);
+    }
+    co_await n->process_raft_update(*up);
+    if (up->has_more_committed_entries) {
+      node_ready(n->id().cluster);
+    }
+    co_await n->commit_raft_update(*up);
+  }
+}
+
 future<> nodehost::handle_unreachable(group_id gid) {
   l.debug("unreachable called on {}", gid);
   if (_stopped) [[unlikely]] {
@@ -577,15 +642,15 @@ future<> nodehost::handle_unreachable(group_id gid) {
     return make_ready_future<>();
   }
   if (auto it = _clusters.find(gid.cluster); it != _clusters.end()) {
-    (void)it->second->_received_messages
+    (void)it->second->n->_received_messages
         .push_eventually(message{
             .type = message_type::unreachable,
             .from = gid.node,
-            .to = it->second->id().node})
+            .to = it->second->n->id().node})
         .handle_exception([](std::exception_ptr ex) {
           l.error("failed to push unreachable to node: {}", ex);
         });
-    it->second->_engine.step_ready(gid.cluster);
+    node_ready(gid.cluster);
   }
   return make_ready_future<>();
 }
@@ -603,35 +668,35 @@ future<> nodehost::handle_message(message m) {
     return make_ready_future<>();
   }
   if (auto it = _clusters.find(m.cluster); it != _clusters.end()) {
-    if (it->second->id().node != m.to) {
+    if (it->second->n->id().node != m.to) {
       l.warn(
           "nodehost::handle_message: ignored a {} message sent to {} but "
           "received by {}",
           m.type,
           group_id{m.cluster, m.to},
-          group_id{m.cluster, it->second->id().node});
+          group_id{m.cluster, it->second->n->id().node});
       return make_ready_future<>();
     }
     // TODO(jyc): since we are blindly push_eventually for snapshot related
     //  messages, shall we check for the number of existing awaiters?
     if (m.type == message_type::install_snapshot) {
-      (void)it->second->_received_messages.push_eventually(std::move(m))
+      (void)it->second->n->_received_messages.push_eventually(std::move(m))
           .handle_exception([](std::exception_ptr ex) {
             l.error("failed to push install snapshot to node: {}", ex);
           });
     } else if (m.type == message_type::snapshot_received) {
-      (void)it->second->_received_messages
+      (void)it->second->n->_received_messages
           .push_eventually(
               message{.type = message_type::snapshot_status, .from = m.from})
           .handle_exception([](std::exception_ptr ex) {
             l.error("failed to push snapshot status to node: {}", ex);
           });
     } else {
-      if (!it->second->_received_messages.push(m)) {
+      if (!it->second->n->_received_messages.push(m)) {
         l.warn("nodehost::handle_message: dropped a {} message", m.type);
       }
     }
-    it->second->_engine.step_ready(m.cluster);
+    node_ready(m.cluster);
   }
   return make_ready_future<>();
 }
@@ -663,7 +728,7 @@ future<> nodehost::handle_snapshot_status(group_id gid, bool failed) {
   }
   if (auto it = _clusters.find(gid.cluster); it != _clusters.end()) {
     // TODO(jyc): delay snapshot status
-    (void)it->second->_received_messages
+    (void)it->second->n->_received_messages
         .push_eventually(message{
             .type = message_type::snapshot_status,
             .from = gid.node,
@@ -671,7 +736,7 @@ future<> nodehost::handle_snapshot_status(group_id gid, bool failed) {
         .handle_exception([](std::exception_ptr ex) {
           l.error("failed to push snapshot status to node: {}", ex);
         });
-    it->second->_engine.step_ready(gid.cluster);
+    node_ready(gid.cluster);
   }
   return make_ready_future<>();
 }

@@ -45,8 +45,6 @@ set(SOURCES
     protocol/serializer.hh
     rafter/config.cc
     rafter/config.hh
-    rafter/engine.cc
-    rafter/engine.hh
     rafter/info.hh
     rafter/logger.cc
     rafter/logger.hh

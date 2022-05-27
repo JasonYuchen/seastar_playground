@@ -50,6 +50,7 @@ class registry
 
   void remove_cluster(uint64_t cluster_id);
 
+  future<> start() { return make_ready_future<>(); }
   future<> stop() { return make_ready_future<>(); }
 
  private:

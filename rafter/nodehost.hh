@@ -20,8 +20,6 @@
 
 namespace rafter {
 
-class engine;
-
 // TODO(jyc): provide a detail doc
 class nodehost
   : public async_sharded_service<nodehost>
@@ -29,7 +27,6 @@ class nodehost
  public:
   nodehost(
       struct config cfg,
-      engine& ng,
       storage::logdb& logdb,
       transport::registry& registry,
       transport::rpc& rpc);
@@ -45,8 +42,6 @@ class nodehost
       statemachine::factory&& factory);
 
   future<> stop_cluster(uint64_t cluster_id);
-
-  future<> stop_node(protocol::group_id gid);
 
   // TODO(jyc): support timeout parameter
   future<protocol::membership> get_membership(uint64_t cluster_id);
@@ -98,14 +93,27 @@ class nodehost
   //  specific node in the cluster map of nodehost
 
  private:
+  // TODO(jyc): ready map granularity
+  struct ready {
+    uint64_t event = 0;
+    std::optional<promise<>> gate;
+    std::optional<future<>> main;
+    lw_shared_ptr<node> n;
+  };
+
   void initialize_handlers();
   void uninitialize_handlers();
+  void node_ready(uint64_t cluster_id);
 
   future<std::pair<protocol::member_map, bool>> bootstrap_cluster(
       const raft_config& cfg,
       const protocol::member_map& initial_members,
       bool join,
       protocol::state_machine_type type);
+
+  future<> stop_node(protocol::group_id gid);
+
+  future<> node_main(lw_shared_ptr<node> n);
 
   future<> handle_unreachable(protocol::group_id gid);
 
@@ -121,15 +129,16 @@ class nodehost
   struct config _config;
   bool _stopped = false;
   timer<> _ticker;
-  engine& _engine;
   storage::logdb& _logdb;
   transport::registry& _registry;
   transport::rpc& _rpc;
+  util::worker<storage::update_pack> _persister;
+
   [[maybe_unused]] util::worker<protocol::message> _sender;
   [[maybe_unused]] util::worker<protocol::message> _receiver;
   std::function<unsigned(uint64_t)> _partitioner;
   uint64_t _cluster_change_index = 0;
-  std::unordered_map<uint64_t, lw_shared_ptr<node>> _clusters;
+  std::unordered_map<uint64_t, lw_shared_ptr<ready>> _clusters;
   // TODO(jyc): event
   // TODO(jyc): request pool ?
 };
