@@ -28,6 +28,14 @@ rafter is deeply inspired by
 TBD
 ```
 
+## Roadmap
+
+1. finalize all modules with extensive tests
+2. provide detail docs and notes
+3. prepare a docker image for build and demo
+4. chaos tests (maybe jepsen tests)
+5. benchmark and performance optimization
+
 ## Module
 
 ### Execution
