@@ -43,6 +43,8 @@ set(SOURCES
     protocol/raft.hh
     protocol/serializer.cc
     protocol/serializer.hh
+    rafter/api_server.cc
+    rafter/api_server.hh
     rafter/config.cc
     rafter/config.hh
     rafter/info.hh
@@ -83,8 +85,6 @@ set(SOURCES
     storage/segment.hh
     storage/segment_manager.cc
     storage/segment_manager.hh
-    #    storage/snapshot.cc
-    #    storage/snapshot.hh
     storage/stats.cc
     storage/stats.hh
     transport/exchanger.cc

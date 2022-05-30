@@ -4,6 +4,7 @@
 
 #include <seastar/core/app-template.hh>
 
+#include "rafter/api_server.hh"
 #include "rafter/logger.hh"
 #include "rafter/nodehost.hh"
 #include "rsm/session_manager.hh"
@@ -28,6 +29,7 @@ static int rafter_main(int argc, char** argv, char** env) {
   sharded<rafter::transport::registry> registry;
   sharded<rafter::transport::exchanger> rpc;
   sharded<rafter::nodehost> nodehost;
+  sharded<rafter::api_server> server;
 
   return app.run(argc, argv, [&]() -> future<int> {
     rafter::l.info("rafter initializing...");
@@ -55,17 +57,21 @@ static int rafter_main(int argc, char** argv, char** env) {
     co_await rpc.start(std::ref(registry), std::move(snapshot_dir));
     co_await nodehost.start(
         std::move(config), std::ref(logdb), std::ref(registry), std::ref(rpc));
+    co_await server.start(std::ref(nodehost));
     co_await logdb.invoke_on_all(&rafter::storage::segment_manager::start);
     co_await registry.invoke_on_all(&rafter::transport::registry::start);
     co_await rpc.invoke_on_all(&rafter::transport::exchanger::start);
     // TODO(jyc): list and reload existing clusters in nodehost::start
     co_await nodehost.invoke_on_all(&rafter::nodehost::start);
-
-    // TODO(jyc): tiny web service for http request/response and metrics
+    co_await server.invoke_on_all(&rafter::api_server::initialize_handlers);
+    socket_address l_addr{uint16_t{30615}};
+    listen_options l_opt{.reuse_address = true};
+    co_await server.invoke_on_all(&rafter::api_server::listen, l_addr, l_opt);
 
     auto signum = co_await stop_signal.wait();
     rafter::l.info("rafter exiting... with {}:{}", signum, ::strsignal(signum));
     // TODO(jyc): stop and close all existing clusters in nodehost::stop
+    co_await server.stop();
     co_await nodehost.stop();
     co_await rpc.stop();
     co_await registry.stop();
