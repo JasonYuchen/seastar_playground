@@ -131,6 +131,15 @@
 #define GTEST_SKIP_(message)                                                   \
   co_return GTEST_MESSAGE_(message, ::testing::TestPartResult::kSkip)
 
+#define PUBLISH_METHOD(_TYPE_, _NAME_)                                         \
+  template <typename... Args>                                                  \
+  static decltype(auto) _NAME_(_TYPE_& ins, Args&&... args) {                  \
+    return ins._NAME_(std::forward<Args>(args)...);                            \
+  }
+
+#define PUBLISH_VARIABLE(_TYPE_, _NAME_)                                       \
+  static auto& _NAME_(_TYPE_& ins) { return ins._NAME_; }
+
 namespace rafter::test {
 
 class base : public ::testing::Environment {

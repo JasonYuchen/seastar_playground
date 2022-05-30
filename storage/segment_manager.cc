@@ -108,15 +108,18 @@ future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
       });
 }
 
-future<> segment_manager::save(std::span<protocol::update> updates) {
+future<> segment_manager::save(std::span<update_pack> updates) {
   return with_lock(_mtx, [=]() -> future<> {
     bool need_sync = false;
     for (const auto& up : updates) {
-      bool sync = co_await append(up);
+      bool sync = co_await append(up.update);
       need_sync = need_sync || sync;
     }
     if (need_sync) {
       co_await sync();
+    }
+    for (auto& up : updates) {
+      up.done.set_value();
     }
   });
 }

@@ -15,6 +15,12 @@
 #include "util/seastarx.hh"
 #include "util/types.hh"
 
+namespace rafter::test {
+
+class helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class raft {
@@ -32,10 +38,16 @@ class raft {
   future<> handle(protocol::message& m);
   future<> handle(protocol::message&& m) { return handle(m); }
 
+  auto& messages() { return _messages; }
+  auto& ready_to_reads() { return _ready_to_reads; }
+  auto& dropped_entries() { return _dropped_entries; }
+  auto& dropped_read_indexes() { return _dropped_read_indexes; }
+
  private:
   DISALLOW_COPY_MOVE_AND_ASSIGN(raft);
 
   friend class peer;
+  friend class test::helper;
   friend std::ostream& operator<<(std::ostream& os, const raft& r);
   using role = protocol::raft_role;
 

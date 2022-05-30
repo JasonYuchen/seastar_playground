@@ -61,6 +61,7 @@ class log_reader {
   void set_range(protocol::hint range);
   protocol::snapshot_ptr get_snapshot() const noexcept;
   void apply_snapshot(protocol::snapshot_ptr snapshot);
+  void create_snapshot(protocol::snapshot_ptr snapshot);
   void apply_entries(protocol::log_entry_span entries);
   future<> apply_compaction(uint64_t index);
 

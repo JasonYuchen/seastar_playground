@@ -23,6 +23,12 @@ struct raft_state {
   }
 };
 
+struct update_pack {
+  explicit update_pack(const protocol::update& update) : update(update) {}
+  promise<> done;
+  const protocol::update& update;
+};
+
 class logdb {
  public:
   virtual ~logdb() = default;
@@ -32,7 +38,7 @@ class logdb {
       protocol::group_id id, const protocol::bootstrap& info) = 0;
   virtual future<std::optional<protocol::bootstrap>> load_bootstrap(
       protocol::group_id id) = 0;
-  virtual future<> save(std::span<protocol::update> updates) = 0;
+  virtual future<> save(std::span<update_pack> updates) = 0;
   virtual future<size_t> query_entries(
       protocol::group_id id,
       protocol::hint range,

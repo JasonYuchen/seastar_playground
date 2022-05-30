@@ -34,7 +34,7 @@ class segment_manager final
       protocol::group_id id, const protocol::bootstrap& info) override;
   future<std::optional<protocol::bootstrap>> load_bootstrap(
       protocol::group_id id) override;
-  future<> save(std::span<protocol::update> updates) override;
+  future<> save(std::span<update_pack> updates) override;
   future<size_t> query_entries(
       protocol::group_id id,
       protocol::hint range,

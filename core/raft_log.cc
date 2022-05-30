@@ -300,12 +300,26 @@ protocol::snapshot_ptr log_reader::get_snapshot() const noexcept {
 
 void log_reader::apply_snapshot(protocol::snapshot_ptr snapshot) {
   if (_snapshot->log_id.index >= snapshot->log_id.index) {
-    throw util::out_of_date_error(
-        "snapshot", _snapshot->log_id.index, snapshot->log_id.index);
+    l.warn(
+        "trying to apply out-of-date snapshot with:{}, exiting:{}",
+        snapshot->log_id,
+        _snapshot->log_id);
+    throw util::snapshot_out_of_date();
   }
   _snapshot = snapshot;
   _marker = snapshot->log_id;
   _length = 1;
+}
+
+void log_reader::create_snapshot(protocol::snapshot_ptr snapshot) {
+  if (_snapshot->log_id.index >= snapshot->log_id.index) {
+    l.warn(
+        "trying to create out-of-date snapshot with:{}, exiting:{}",
+        snapshot->log_id,
+        _snapshot->log_id);
+    throw util::snapshot_out_of_date();
+  }
+  _snapshot = snapshot;
 }
 
 void log_reader::apply_entries(protocol::log_entry_span entries) {

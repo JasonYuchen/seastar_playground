@@ -20,4 +20,9 @@ using namespace seastar;
 using seastar::make_shared;
 using seastar::shared_ptr;
 
+template <typename T = void>
+future<T> not_implemented() {
+  throw_with_backtrace<std::runtime_error>("not implemented");
+}
+
 }  // namespace rafter
