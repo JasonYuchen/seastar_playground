@@ -47,14 +47,16 @@ raft::raft(const raft_config& cfg, log_reader& lr)
   , _randomized_election_timeout(0) {
   auto st = lr.get_state();
   auto member = lr.get_membership();
-  for (const auto& [id, address] : member->addresses) {
-    _remotes[id].next = 1;
-  }
-  for (const auto& [id, address] : member->observers) {
-    _observers[id].next = 1;
-  }
-  for (const auto& [id, address] : member->witnesses) {
-    _witnesses[id].next = 1;
+  if (member) {
+    for (const auto& [id, address] : member->addresses) {
+      _remotes[id].next = 1;
+    }
+    for (const auto& [id, address] : member->observers) {
+      _observers[id].next = 1;
+    }
+    for (const auto& [id, address] : member->witnesses) {
+      _witnesses[id].next = 1;
+    }
   }
   reset_matched();
   set_state(st);
@@ -88,7 +90,10 @@ future<> raft::handle(protocol::message& m) {
     assert(role < static_cast<uint8_t>(role::num_of_role));
     auto type = static_cast<uint8_t>(m.type);
     assert(type < static_cast<uint8_t>(message_type::num_of_type));
-    return (this->*_handlers[role][type])(m);
+    if (_handlers[role][type] != nullptr) {
+      return (this->*_handlers[role][type])(m);
+    }
+    return make_ready_future<>();
   }
   l.info("{}: dropped {} with term:{} from:{}", *this, m.type, m.term, m.from);
   return make_ready_future<>();
@@ -107,6 +112,7 @@ void raft::initialize_handlers() {
 
   D_(leader, election, node_election);
   D_(leader, request_vote, node_request_vote);
+  D_(leader, request_prevote, node_request_prevote);
   D_(leader, config_change, node_config_change);
   D_(leader, local_tick, node_local_tick);
   D_(leader, snapshot_received, node_restore_remote);
@@ -145,7 +151,6 @@ void raft::initialize_handlers() {
   D_(pre_candidate, read_index, candidate_read_index);
   D_(pre_candidate, replicate, candidate_replicate);
   D_(pre_candidate, install_snapshot, candidate_install_snapshot);
-  D_(pre_candidate, request_vote_resp, candidate_request_vote_resp);
   D_(pre_candidate, request_prevote_resp, pre_candidate_request_prevote_resp);
 
   D_(follower, election, node_election);
@@ -163,7 +168,6 @@ void raft::initialize_handlers() {
   D_(follower, install_snapshot, follower_install_snapshot);
   D_(follower, timeout_now, follower_timeout_now);
 
-  D_(observer, election, node_election);
   D_(observer, request_vote, node_request_vote);
   D_(observer, request_prevote, node_request_prevote);
   D_(observer, config_change, node_config_change);
@@ -176,7 +180,6 @@ void raft::initialize_handlers() {
   D_(observer, replicate, follower_replicate);
   D_(observer, install_snapshot, follower_install_snapshot);
 
-  D_(witness, election, node_election);
   D_(witness, request_vote, node_request_vote);
   D_(witness, request_prevote, node_request_prevote);
   D_(witness, config_change, node_config_change);

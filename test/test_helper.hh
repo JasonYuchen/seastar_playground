@@ -16,6 +16,9 @@ class helper {
  public:
   // core::raft
   PUBLISH_METHOD(core::raft, reset);
+  PUBLISH_VARIABLE(core::raft, _role);
+  PUBLISH_VARIABLE(core::raft, _leader_id);
+  PUBLISH_VARIABLE(core::raft, _leader_transfer_target);
   PUBLISH_VARIABLE(core::raft, _term);
   PUBLISH_VARIABLE(core::raft, _remotes);
   PUBLISH_VARIABLE(core::raft, _observers);

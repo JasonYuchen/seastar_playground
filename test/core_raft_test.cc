@@ -2,6 +2,9 @@
 // Created by jason on 2022/5/28.
 //
 
+#include <fmt/format.h>
+
+#include <seastar/core/coroutine.hh>
 #include <typeinfo>
 
 #include "core/raft.hh"
@@ -18,6 +21,7 @@ using namespace rafter;
 using namespace rafter::protocol;
 
 using rafter::test::helper;
+using rafter::test::l;
 
 std::unique_ptr<raft_config> new_test_config(
     uint64_t node_id,
@@ -100,7 +104,7 @@ struct node_pair {
 };
 
 struct network {
-  explicit network(std::vector<std::unique_ptr<sm>>&& peers) {
+  explicit network(std::vector<sm*>&& peers) {
     for (size_t i = 0; i < peers.size(); ++i) {
       uint64_t node_id = i + 1;
       if (!peers[i]) {
@@ -134,9 +138,9 @@ struct network {
           }
         }
         helper::reset(p.raft(), helper::_term(p.raft()), true);
-        sms[node_id] = std::move(peers[i]);
+        sms[node_id] = std::unique_ptr<sm>(peers[i]);
       } else if (auto& bh = *peers[i]; typeid(bh) == typeid(black_hole)) {
-        sms[node_id] = std::move(peers[i]);
+        sms[node_id] = std::unique_ptr<sm>(peers[i]);
       } else {
         throw rafter::util::panic("unexpected sm");
       }
@@ -144,13 +148,19 @@ struct network {
   }
 
   future<> send(message_vector msgs) {
-    filter(msgs);
-    for (auto& m : msgs) {
+    while (!msgs.empty()) {
+      auto& m = msgs.front();
       if (!sms.contains(m.to)) {
         continue;
       }
       auto& p = sms[m.to];
       co_await p->handle(std::move(m));
+      msgs.erase(msgs.begin());
+      auto next = filter(p->read_messages());
+      msgs.insert(
+          msgs.end(),
+          std::make_move_iterator(next.begin()),
+          std::make_move_iterator(next.end()));
     }
   }
 
@@ -178,23 +188,25 @@ struct network {
     ignore_msg.clear();
   }
 
-  void filter(message_vector& msgs) {
+  message_vector filter(message_vector msgs) {
     static std::mt19937_64 rnd(
         std::chrono::system_clock::now().time_since_epoch().count());
     static std::uniform_real_distribution<double> dist(0.0, 1.0);
-    auto should_filter = [this](message& m) {
+    message_vector ret;
+    auto should_filter = [this, &ret](message& m) {
       if (ignore_msg.contains(m.type)) {
-        return true;
+        return;
       }
       if (m.type == message_type::election) {
         throw rafter::util::panic("unexpected election");
       }
       if (dist(rnd) < drop_msg[{m.from, m.to}]) {
-        return true;
+        return;
       }
-      return false;
+      ret.emplace_back(std::move(m));
     };
-    std::erase_if(msgs, should_filter);
+    std::for_each(msgs.begin(), msgs.end(), should_filter);
+    return ret;
   }
 
   std::unordered_map<uint64_t, std::unique_ptr<sm>> sms;
@@ -208,7 +220,48 @@ class raft_test : public ::testing::Test {
   void SetUp() override {}
   void TearDown() override {}
 
-  std::unique_ptr<core::raft> _raft;
+  static sm* null() { return nullptr; }
+  static sm* noop() { return new black_hole; }
+  static core::raft& raft_cast(sm* s) {
+    if (auto* rs = dynamic_cast<raft_sm*>(s); rs != nullptr) {
+      return rs->raft();
+    }
+    throw rafter::util::panic("not a raft_sm");
+  }
+  static bool check_leader_transfer_state(
+      core::raft& r, raft_role role, uint64_t leader) {
+    EXPECT_EQ(helper::_role(r), role);
+    EXPECT_EQ(helper::_leader_id(r), leader);
+    EXPECT_EQ(helper::_leader_transfer_target(r), group_id::INVALID_NODE);
+    return !HasFailure();
+  }
 };
+
+RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send(
+      {message{.type = message_type::election, .from = 1, .to = 1}});
+  auto& lead = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_leader_id(lead), 1) << "unexpected leader after election";
+  // transfer leadership to 2
+  co_await nt.send({message{
+      .type = message_type::leader_transfer,
+      .from = 2,
+      .to = 1,
+      .hint = {.low = 2}}});
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
+  co_await nt.send({message{
+      .type = message_type::propose,
+      .from = 1,
+      .to = 1,
+      .entries = {make_lw_shared<log_entry>()}}});
+  // transfer leadership back to 1 after replication
+  co_await nt.send({message{
+      .type = message_type::leader_transfer,
+      .from = 1,
+      .to = 2,
+      .hint = {.low = 1}}});
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
 
 }  // namespace

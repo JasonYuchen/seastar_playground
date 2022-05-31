@@ -44,7 +44,7 @@ size_t in_memory_log::query(
           entries.back()->lid.index,
           (*it)->lid.index));
     }
-    entries.emplace_back(*it);
+    entries.emplace_back(*it++);
     max_bytes -= bytes;
   }
   return max_bytes;
@@ -421,7 +421,7 @@ bool raft_log::has_config_change_to_apply() const noexcept {
   // TODO(jyc): avoid entry vector
   protocol::log_entry_vector entries;
   _in_memory.query(
-      {.low = first_not_applied_index(), .high = UINT64_MAX},
+      {.low = first_not_applied_index(), .high = apply_index_limit()},
       entries,
       UINT64_MAX);
   for (const auto& ent : entries) {

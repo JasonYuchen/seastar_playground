@@ -3,9 +3,12 @@ project(rafter_test)
 set(SOURCES
     base.cc
     base.hh
+    core_raft_test.cc
     storage_index_test.cc
     storage_segment_manager_test.cc
     storage_segment_test.cc
+    test_helper.hh
+    test_logdb.hh
     transport_exchanger_test.cc
     util.cc
     util.hh
