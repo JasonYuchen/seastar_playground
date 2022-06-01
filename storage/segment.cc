@@ -194,10 +194,11 @@ future<size_t> segment::query(
             expected_index);
         co_return coroutine::make_exception(util::corruption_error());
       }
-      if (left_bytes < ent->bytes()) {
+      size_t entry_bytes = ent->bytes();
+      if (left_bytes < entry_bytes) {
         co_return 0;
       }
-      left_bytes -= ent->bytes();
+      left_bytes -= entry_bytes;
       expected_index++;
       entries.emplace_back(std::move(ent));
     }

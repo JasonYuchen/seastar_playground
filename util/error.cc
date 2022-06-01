@@ -10,6 +10,7 @@ std::string_view status_string(enum code e) {
   static std::string_view s[] = {
       "ok",
       "panic",
+      "aborted",
       "configuration",
       "serialization",
       "short_read",

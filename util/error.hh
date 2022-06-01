@@ -19,6 +19,7 @@ namespace rafter::util {
 enum class code : uint8_t {
   ok = 0,
   panic,
+  aborted,
   configuration,
   serialization,
   short_read,
@@ -216,6 +217,26 @@ class request_error : public base_error {
 class system_busy : public request_error {
  public:
   system_busy() : request_error(code::exhausted) {}
+};
+
+class snapshot_error : public base_error {
+ public:
+  using base_error::base_error;
+};
+
+class snapshot_aborted : public snapshot_error {
+ public:
+  snapshot_aborted() : snapshot_error(code::aborted) {}
+};
+
+class snapshot_stopped : public snapshot_error {
+ public:
+  snapshot_stopped() : snapshot_error(code::aborted) {}
+};
+
+class snapshot_out_of_date : public snapshot_error {
+ public:
+  snapshot_out_of_date() : snapshot_error(code::out_of_date) {}
 };
 
 }  // namespace rafter::util

@@ -52,9 +52,7 @@ class raft_sm final : public sm {
   ~raft_sm() override = default;
   future<> handle(message m) override { return _r->handle(m); }
   message_vector read_messages() override {
-    auto msgs = _r->messages();
-    _r->messages().clear();
-    return msgs;
+    return std::exchange(_r->messages(), {});
   }
   raft_config& cfg() { return *_cfg; }
   core::raft& raft() { return *_r; }
@@ -82,7 +80,7 @@ std::unique_ptr<raft_sm> new_test_raft(
 class black_hole final : public sm {
  public:
   ~black_hole() override = default;
-  future<> handle(message m) override { return make_ready_future<>(); }
+  future<> handle(message) override { return make_ready_future<>(); }
   protocol::message_vector read_messages() override { return {}; }
 };
 
@@ -147,20 +145,18 @@ struct network {
     }
   }
 
-  future<> send(message_vector msgs) {
+  future<> send(message msg) {
+    std::queue<message> msgs;
+    msgs.emplace(std::move(msg));
     while (!msgs.empty()) {
-      auto& m = msgs.front();
+      auto m = std::move(msgs.front());
+      msgs.pop();
       if (!sms.contains(m.to)) {
         continue;
       }
       auto& p = sms[m.to];
       co_await p->handle(std::move(m));
-      msgs.erase(msgs.begin());
-      auto next = filter(p->read_messages());
-      msgs.insert(
-          msgs.end(),
-          std::make_move_iterator(next.begin()),
-          std::make_move_iterator(next.end()));
+      filter_to(msgs, p->read_messages());
     }
   }
 
@@ -188,25 +184,22 @@ struct network {
     ignore_msg.clear();
   }
 
-  message_vector filter(message_vector msgs) {
+  void filter_to(std::queue<message>& q, message_vector msgs) {
     static std::mt19937_64 rnd(
         std::chrono::system_clock::now().time_since_epoch().count());
     static std::uniform_real_distribution<double> dist(0.0, 1.0);
-    message_vector ret;
-    auto should_filter = [this, &ret](message& m) {
+    for (auto& m : msgs) {
       if (ignore_msg.contains(m.type)) {
-        return;
+        continue;
       }
       if (m.type == message_type::election) {
         throw rafter::util::panic("unexpected election");
       }
       if (dist(rnd) < drop_msg[{m.from, m.to}]) {
-        return;
+        continue;
       }
-      ret.emplace_back(std::move(m));
-    };
-    std::for_each(msgs.begin(), msgs.end(), should_filter);
-    return ret;
+      q.push(std::move(m));
+    }
   }
 
   std::unordered_map<uint64_t, std::unique_ptr<sm>> sms;
@@ -239,28 +232,27 @@ class raft_test : public ::testing::Test {
 
 RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node) {
   auto nt = network({null(), null(), null()});
-  co_await nt.send(
-      {message{.type = message_type::election, .from = 1, .to = 1}});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
   auto& lead = raft_cast(nt.sms[1].get());
   ASSERT_EQ(helper::_leader_id(lead), 1) << "unexpected leader after election";
   // transfer leadership to 2
-  co_await nt.send({message{
-      .type = message_type::leader_transfer,
-      .from = 2,
-      .to = 1,
-      .hint = {.low = 2}}});
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 2,
+       .to = 1,
+       .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
-  co_await nt.send({message{
-      .type = message_type::propose,
-      .from = 1,
-      .to = 1,
-      .entries = {make_lw_shared<log_entry>()}}});
+  co_await nt.send(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
   // transfer leadership back to 1 after replication
-  co_await nt.send({message{
-      .type = message_type::leader_transfer,
-      .from = 1,
-      .to = 2,
-      .hint = {.low = 1}}});
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 1,
+       .to = 2,
+       .hint = {.low = 1}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
 }
 

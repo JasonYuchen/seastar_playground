@@ -47,8 +47,14 @@ void base::SetUp() {
         .then([]() {
           return recursive_remove_directory(config::shard().data_dir);
         })
+        .handle_exception_type([](std::filesystem::filesystem_error& ex) {
+          // ignore nonexistent error
+          if (ex.code().value() != 2) {
+            l.warn("remove directory with exception: {}", ex);
+          }
+        })
         .handle_exception([](std::exception_ptr ex) {
-          l.warn("remove directory with exception:{}", ex);
+          l.warn("remove directory with exception: {}", ex);
         });
   });
 }
