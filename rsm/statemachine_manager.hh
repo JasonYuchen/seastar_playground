@@ -37,19 +37,16 @@ class statemachine_manager {
   bool busy() const;
 
   protocol::state_machine_type type() { return _managed->type(); }
-  const protocol::membership& get_membership() { return _members.get(); }
+  const protocol::membership& get_membership() const { return _members.get(); }
 
   uint64_t last_applied_index() const { return _last_applied.index; }
 
   future<rsm_result> lookup(std::string_view cmd);
   future<> sync();
-  future<server::snapshot> save(protocol::snapshot_request request);
-  future<uint64_t> recover(protocol::rsm_task task);
+  future<server::snapshot> save(const protocol::snapshot_request& request);
+  future<uint64_t> recover(const protocol::rsm_task& task);
 
  private:
-  // TODO(jyc): need rwlock to protect sm from being queried and updated
-  //  simultaneously
-
   class managed {
    public:
     managed(bool& stooped, bool witness, std::unique_ptr<statemachine> sm)
@@ -60,7 +57,7 @@ class statemachine_manager {
     future<> sync();
     future<std::any> prepare();
     future<bool> save(std::any ctx, output_stream<char>& writer, files& fs);
-    future<statemachine::snapshot_status> recover(
+    future<> recover(
         input_stream<char>& reader, const protocol::snapshot_files& fs);
     future<> close();
     protocol::state_machine_type type() { return _sm->type(); }
@@ -76,12 +73,17 @@ class statemachine_manager {
   future<> handle_entry(protocol::log_entry_ptr entry, bool last);
   future<> handle_config_change(protocol::log_entry_ptr entry);
   future<> handle_update(protocol::log_entry_ptr entry, bool last);
-  future<protocol::snapshot_metadata> prepare(protocol::snapshot_request req);
+  future<> handle_save(protocol::rsm_task task);
+  future<> handle_recover(protocol::rsm_task task);
+  future<> handle_stream(protocol::rsm_task task);
+
+  future<protocol::snapshot_metadata> prepare(
+      const protocol::snapshot_request& req);
   future<server::snapshot> do_save(protocol::snapshot_metadata meta);
   future<> do_recover(protocol::snapshot_ptr ss, bool init);
 
   protocol::snapshot_metadata get_snapshot_meta(
-      std::any ctx, protocol::snapshot_request req);
+      std::any ctx, const protocol::snapshot_request& req);
   void apply(const protocol::snapshot& ss, bool init);
   void set_last_applied(const protocol::log_entry_vector& entries);
   void set_applied(protocol::log_id lid);

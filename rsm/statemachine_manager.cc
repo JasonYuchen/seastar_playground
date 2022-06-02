@@ -4,6 +4,8 @@
 
 #include "statemachine_manager.hh"
 
+#include <seastar/core/coroutine.hh>
+
 #include "protocol/serializer.hh"
 #include "rafter/config.hh"
 #include "rafter/node.hh"
@@ -65,16 +67,16 @@ future<> statemachine_manager::sync() {
   return make_ready_future<>();
 }
 
-future<server::snapshot> statemachine_manager::save(snapshot_request request) {
+future<server::snapshot> statemachine_manager::save(
+    const snapshot_request& request) {
   // TODO(jyc): stream, witness, concurrent
-  return with_shared(_mtx, [=]() mutable {
-    return prepare(std::move(request)).then([=](snapshot_metadata meta) {
-      return do_save(std::move(meta));
-    });
+  return with_shared(_mtx, [this, &request]() mutable {
+    return prepare(request).then(
+        [=](snapshot_metadata meta) { return do_save(std::move(meta)); });
   });
 }
 
-future<uint64_t> statemachine_manager::recover(protocol::rsm_task task) {
+future<uint64_t> statemachine_manager::recover(const protocol::rsm_task& task) {
   auto ss = co_await _snapshotter.get_snapshot();
   if (!ss) {
     co_return log_id::INVALID_INDEX;  // TODO(jyc): switch to other error?
@@ -90,8 +92,12 @@ future<> statemachine_manager::handle(
     std::vector<rsm_task>& tasks, bool& open) {
   for (auto& task : tasks) {
     if (task.save) {
-      // TODO(jyc): node save (but we can simplify this procedure as we do not
-      //  have a separate snapshot worker pool to coordinate)
+      co_await handle_save(std::move(task));
+      continue;
+    }
+    if (task.recover) {
+      co_await handle_recover(std::move(task));
+      continue;
     }
     for (auto e : task.entries) {
       if (e->type == entry_type::config_change) {
@@ -103,7 +109,8 @@ future<> statemachine_manager::handle(
     }
     set_last_applied(task.entries);
   }
-  // notify node step ready
+  // give the node a change to run when state machine complete a bunch of tasks
+  _node.node_ready();
 }
 
 future<> statemachine_manager::handle_entry(log_entry_ptr entry, bool last) {
@@ -157,13 +164,77 @@ future<> statemachine_manager::handle_update(log_entry_ptr entry, bool last) {
   }
 }
 
-future<snapshot_metadata> statemachine_manager::prepare(snapshot_request req) {
+future<> statemachine_manager::handle_save(protocol::rsm_task task) {
+  if (!task.ss_request.exported() &&
+      last_applied_index() <= _node._snapshot_state.snapshot_index) {
+    // a snapshot has been pushed to the sm but not applied yet
+    // or the snapshot has been applied and there is no further progress
+    co_await _node.apply_snapshot(task.ss_request.key, true, false, 0);
+    co_return;
+  }
+  uint64_t index = 0;
+  try {
+    auto snap = co_await save(task.ss_request);
+    l.info(
+        "{} saved snapshot with {} and {} files",
+        _node.id(),
+        snap.ss->log_id,
+        snap.ss->files.size());
+    co_await _snapshotter.commit(snap.ss, task.ss_request);
+    if (task.ss_request.exported()) {
+      co_await _node.apply_snapshot(
+          task.ss_request.key, false, false, snap.ss->log_id.index);
+      co_return;
+    }
+    _node._log_reader.create_snapshot(snap.ss);
+    _node.compact_log(snap.ss->log_id.index);
+    _node._snapshot_state.snapshot_index = snap.ss->log_id.index;
+    index = snap.ss->log_id.index;
+  } catch (util::snapshot_error& e) {
+    l.warn("failed to save snapshot due to {}", e);
+  }
+  if (index == 0) {
+    auto ctx = _snapshotter.get_snapshot_context(
+        _log_id.index, task.ss_request.exported(), task.ss_request.path);
+    // TODO(jyc): must remove remaining tmp dir when snapshotting failed
+    co_await ctx.remove_tmp_dir();
+  }
+  co_await _node.apply_snapshot(task.ss_request.key, index == 0, false, index);
+  co_return;
+}
+
+future<> statemachine_manager::handle_recover(protocol::rsm_task task) {
+  // TODO(jyc): if on disk statemachine
+  uint64_t index = 0;
+  try {
+    index = co_await recover(task);
+    l.info("{} recovered from snapshot with index:{}", _node.id(), index);
+    _node.compact_log(index);
+  } catch (util::snapshot_error& e) {
+    l.warn("failed to recover snapshot due to {}", e);
+  }
+  co_return;
+}
+
+future<snapshot_metadata> statemachine_manager::prepare(
+    const snapshot_request& req) {
   // TODO(jyc): check snapshot status
-  return _managed->prepare().then(
-      [this, req = std::move(req)](std::any ctx) mutable {
-        return make_ready_future<snapshot_metadata>(
-            get_snapshot_meta(std::move(ctx), std::move(req)));
-      });
+  if (_stopped) {
+    return make_exception_future<snapshot_metadata>(util::closed_error());
+  }
+  if (last_applied_index() < _snapshot_index) {
+    return make_exception_future<snapshot_metadata>(
+        util::panic("last_applied < snapshot_index"));
+  }
+  if (!req.exported() && last_applied_index() > 0 &&
+      last_applied_index() == _snapshot_index) {
+    return make_exception_future<snapshot_metadata>(
+        util::snapshot_out_of_date());
+  }
+  return _managed->prepare().then([this, &req](std::any ctx) mutable {
+    return make_ready_future<snapshot_metadata>(
+        get_snapshot_meta(std::move(ctx), req));
+  });
 }
 
 future<server::snapshot> statemachine_manager::do_save(snapshot_metadata meta) {
@@ -183,10 +254,10 @@ future<server::snapshot> statemachine_manager::do_save(snapshot_metadata meta) {
 
 future<> statemachine_manager::do_recover(snapshot_ptr ss, bool init) {
   if (last_applied_index() >= ss->log_id.index) {
-    // TODO(jyc): out of date error
+    throw util::snapshot_out_of_date();
   }
   if (_stopped) {
-    // TODO(jyc): stopped
+    return make_exception_future<>(util::closed_error());
   }
   // TODO(jyc): on disk statemachine is shrunk
   return _snapshotter.load(
@@ -203,13 +274,12 @@ future<> statemachine_manager::do_recover(snapshot_ptr ss, bool init) {
             {session_data.get(), session_data.size()},
             util::type<session_manager>());
         co_await _managed->recover(is, fs);
-        // TODO(jyc): handle status, throw or ?
       },
       std::move(ss));
 }
 
 snapshot_metadata statemachine_manager::get_snapshot_meta(
-    std::any ctx, snapshot_request req) {
+    std::any ctx, const snapshot_request& req) {
   if (_members.empty()) {
     throw util::panic("empty membership");
   }
@@ -218,7 +288,7 @@ snapshot_metadata statemachine_manager::get_snapshot_meta(
   return snapshot_metadata{
       .from = _node.id().node,
       .lid = _log_id,
-      .request = std::move(req),
+      .request = req,
       .membership = make_lw_shared<protocol::membership>(m),
       .smtype = state_machine_type::regular,
       .comptype = compression_type::no_compression,
@@ -240,7 +310,10 @@ void statemachine_manager::apply(const snapshot& ss, bool init) {
 }
 
 void statemachine_manager::set_last_applied(const log_entry_vector& entries) {
-  // TODO(jyc)
+  if (!entries.empty()) {
+    // TODO(jyc): various log continuity check
+    _last_applied = entries.back()->lid;
+  }
 }
 
 void statemachine_manager::set_applied(protocol::log_id lid) {
@@ -279,21 +352,26 @@ future<std::any> statemachine_manager::managed::prepare() {
 future<bool> statemachine_manager::managed::save(
     std::any ctx, output_stream<char>& writer, files& fs) {
   if (_witness) {
-    // TODO(jyc): witness snapshot
+    return make_ready_future<bool>(true);
   }
   return _sm->save_snapshot(std::move(ctx), writer, fs, _stopped)
       .then([](statemachine::snapshot_status s) {
         if (s != statemachine::snapshot_status::done) {
-          // TODO(jyc): handle errors
-          return make_exception_future<bool>(util::panic(""));
+          return make_exception_future<bool>(util::snapshot_aborted());
         }
-        return make_ready_future<bool>(true);
+        return make_ready_future<bool>(false);
       });
 }
 
-future<statemachine::snapshot_status> statemachine_manager::managed::recover(
+future<> statemachine_manager::managed::recover(
     input_stream<char>& reader, const snapshot_files& fs) {
-  return _sm->recover_from_snapshot(reader, fs, _stopped);
+  return _sm->recover_from_snapshot(reader, fs, _stopped)
+      .then([](statemachine::snapshot_status s) {
+        if (s != statemachine::snapshot_status::done) {
+          return make_exception_future<>(util::snapshot_aborted());
+        }
+        return make_ready_future<>();
+      });
 }
 
 future<> statemachine_manager::managed::close() { return _sm->close(); }
