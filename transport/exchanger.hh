@@ -51,6 +51,7 @@ class exchanger final
 
   future<> start_listen();
   future<> shutdown();
+  future<> start() { return start_listen(); }
   future<> stop() { return shutdown(); }
 
   template <typename Ret, typename... Args>

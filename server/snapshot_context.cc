@@ -9,6 +9,7 @@
 #include <seastar/util/file.hh>
 
 #include "protocol/serializer.hh"
+#include "util/error.hh"
 #include "util/file.hh"
 
 using std::filesystem::path;
@@ -90,7 +91,7 @@ future<bool> snapshot_context::has_flag_file() {
 
 future<> snapshot_context::finalize_snapshot(protocol::snapshot_ptr ss) {
   if (co_await file_exists(_final_dir)) {
-    // TODO(jyc): throw exist final dir
+    throw util::snapshot_out_of_date();
   }
   co_await create_flag_file(ss);
   co_await rename_file(_tmp_dir, _final_dir);

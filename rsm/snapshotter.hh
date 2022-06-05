@@ -6,6 +6,7 @@
 
 #include <seastar/core/reactor.hh>
 
+#include "rafter/statemachine.hh"
 #include "rsm/files.hh"
 #include "server/snapshot_context.hh"
 #include "storage/logdb.hh"
@@ -54,9 +55,9 @@ class snapshotter {
   server::snapshot_context get_snapshot_context(
       uint64_t index, bool exported, std::string_view path);
 
- private:
   future<> process_orphans();
 
+ private:
   future<bool> is_snapshot(std::string_view dir);
   future<bool> is_zombie(std::string_view dir);
   future<bool> is_orphan(std::string_view dir);

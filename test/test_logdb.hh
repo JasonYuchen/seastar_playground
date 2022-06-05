@@ -60,6 +60,9 @@ class test_logdb final : public storage::logdb {
         break;
       }
       if (ent->lid.index != next) {
+        continue;
+      }
+      if (!entries.empty() && entries.back()->lid.index + 1 != ent->lid.index) {
         return make_exception_future<size_t>(
             rafter::util::panic("inconsistent entry"));
       }

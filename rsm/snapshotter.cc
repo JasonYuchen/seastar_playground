@@ -118,7 +118,10 @@ future<> snapshotter::commit(snapshot_ptr ss, const snapshot_request &req) {
   co_await ctx.finalize_snapshot(ss);
   if (!req.exported()) {
     update up{.gid = _gid, .snapshot = ss};
-    co_await _logdb.save({&up, 1});
+    storage::update_pack pack{up};
+    auto fut = pack.done.get_future();
+    co_await _logdb.save({&pack, 1});
+    co_await fut.discard_result();
   }
   co_await ctx.remove_flag_file();
 }

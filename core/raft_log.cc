@@ -288,7 +288,7 @@ void log_reader::set_range(
   if (_length > offset) {
     _length = range.high - _marker.index;
   } else if (_length == offset) {
-    _length += offset;
+    _length += range.high - range.low;
   } else {
     throw util::failed_precondition_error("");
   }
