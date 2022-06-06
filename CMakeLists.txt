@@ -22,6 +22,7 @@ add_subdirectory(3rd)
 add_subdirectory(test)
 
 set(SOURCES
+
     core/logger.cc
     core/logger.hh
     core/peer.cc
@@ -37,12 +38,14 @@ set(SOURCES
     core/read_index.hh
     core/remote.cc
     core/remote.hh
+
     protocol/client.cc
     protocol/client.hh
     protocol/raft.cc
     protocol/raft.hh
     protocol/serializer.cc
     protocol/serializer.hh
+
     rafter/api_server.cc
     rafter/api_server.hh
     rafter/config.cc
@@ -57,6 +60,7 @@ set(SOURCES
     rafter/request.cc
     rafter/request.hh
     rafter/statemachine.hh
+
     rsm/files.cc
     rsm/files.hh
     rsm/logger.cc
@@ -71,10 +75,12 @@ set(SOURCES
     rsm/snapshotter.hh
     rsm/statemachine_manager.cc
     rsm/statemachine_manager.hh
+
     server/logger.cc
     server/logger.hh
     server/snapshot_context.cc
     server/snapshot_context.hh
+
     storage/index.cc
     storage/index.hh
     storage/logdb.cc
@@ -87,6 +93,7 @@ set(SOURCES
     storage/segment_manager.hh
     storage/stats.cc
     storage/stats.hh
+
     transport/exchanger.cc
     transport/exchanger.hh
     transport/express.cc
@@ -98,6 +105,7 @@ set(SOURCES
     transport/rpc.hh
     transport/snapshot_chunk_tracker.cc
     transport/snapshot_chunk_tracker.hh
+
     util/backoff.hh
     util/buffering_queue.hh
     util/circuit_breaker.hh
@@ -116,13 +124,15 @@ set(SOURCES
     util/signal.hh
     util/types.hh
     util/util.hh
-    util/worker.hh)
+    util/worker.hh
+    )
 
 add_library(${PROJECT_NAME} ${SOURCES})
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC Seastar::seastar
-    PUBLIC simdjson)
+    #    PUBLIC simdjson
+    )
 
 #add_executable(${PROJECT_NAME} ${SOURCES})
 #

@@ -2,15 +2,16 @@
 // Created by jason on 2022/5/28.
 //
 
+#include "core/raft.hh"
+
 #include <fmt/format.h>
 
 #include <seastar/core/coroutine.hh>
 #include <typeinfo>
 
-#include "core/raft.hh"
 #include "core/raft_log.hh"
+#include "helper.hh"
 #include "test/base.hh"
-#include "test/test_helper.hh"
 #include "test/test_logdb.hh"
 #include "util/error.hh"
 #include "util/seastarx.hh"
@@ -20,7 +21,7 @@ namespace {
 using namespace rafter;
 using namespace rafter::protocol;
 
-using rafter::test::helper;
+using helper = rafter::test::core_helper;
 using rafter::test::l;
 
 std::unique_ptr<raft_config> new_test_config(

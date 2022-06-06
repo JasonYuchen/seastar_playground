@@ -17,7 +17,7 @@
 
 namespace rafter::test {
 
-class helper;
+class core_helper;
 
 }  // namespace rafter::test
 
@@ -47,7 +47,7 @@ class raft {
   DISALLOW_COPY_MOVE_AND_ASSIGN(raft);
 
   friend class peer;
-  friend class test::helper;
+  friend class test::core_helper;
   friend std::ostream& operator<<(std::ostream& os, const raft& r);
   using role = protocol::raft_role;
 

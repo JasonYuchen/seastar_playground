@@ -10,6 +10,12 @@
 #include "storage/logdb.hh"
 #include "util/seastarx.hh"
 
+namespace rafter::test {
+
+class core_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class in_memory_log {
@@ -36,6 +42,7 @@ class in_memory_log {
 
  private:
   friend class raft_log;
+  friend class test::core_helper;
   void assert_marker() const;
 
   bool _shrunk = false;
@@ -67,6 +74,7 @@ class log_reader {
 
  private:
   friend class raft_log;
+  friend class test::core_helper;
   uint64_t first_index() const noexcept { return _marker.index + 1; }
   uint64_t last_index() const noexcept { return _marker.index + _length - 1; }
 
@@ -130,6 +138,7 @@ class raft_log {
   void restore(protocol::snapshot_ptr snapshot);
 
  private:
+  friend class test::core_helper;
   void check_range(protocol::hint range) const;
 
   protocol::group_id _gid;

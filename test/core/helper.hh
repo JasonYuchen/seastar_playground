@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/raft.hh"
+#include "core/raft_log.hh"
 #include "test/base.hh"
 
 namespace rafter::test {
@@ -12,8 +13,11 @@ namespace rafter::test {
 // This class is for testing private members of various classes.
 // Instead of adding a bunch of friend classes, the private members are
 // explicitly exposed via this helper.
-class helper {
+class core_helper {
  public:
+  // core::in_memory_log
+  PUBLISH_VARIABLE(core::in_memory_log, _snapshot);
+
   // core::raft
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
