@@ -610,6 +610,8 @@ future<> node::send_messages(protocol::message_vector& msgs) {
   co_return;
 }
 
+void node::node_ready() { _nodehost.node_ready(id().cluster); }
+
 void node::gc() {
   if (_gc_tick != _current_tick) {
     _pending_proposal.gc();

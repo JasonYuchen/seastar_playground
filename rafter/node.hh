@@ -83,6 +83,7 @@ class node {
 
   future<bool> replay_log();
   future<> remove_log();
+  void compact_log(uint64_t index);
 
   future<bool> handle_events();
   future<bool> handle_read_index();
@@ -104,6 +105,7 @@ class node {
   // only send non-replicate messages
   future<> send_messages(protocol::message_vector& msgs);
 
+  void node_ready();
   void gc();
   future<> tick();
   void record_message(const protocol::message& m);

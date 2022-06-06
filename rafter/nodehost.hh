@@ -92,6 +92,8 @@ class nodehost
   // TODO(jyc): support reusable node interface to avoid repeatedly locate a
   //  specific node in the cluster map of nodehost
 
+  void node_ready(uint64_t cluster_id);
+
  private:
   // TODO(jyc): ready map granularity
   struct ready {
@@ -103,7 +105,6 @@ class nodehost
 
   void initialize_handlers();
   void uninitialize_handlers();
-  void node_ready(uint64_t cluster_id);
 
   future<std::pair<protocol::member_map, bool>> bootstrap_cluster(
       const raft_config& cfg,
