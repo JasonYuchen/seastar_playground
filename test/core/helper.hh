@@ -16,7 +16,12 @@ namespace rafter::test {
 class core_helper {
  public:
   // core::in_memory_log
+  PUBLISH_VARIABLE(core::in_memory_log, _shrunk);
   PUBLISH_VARIABLE(core::in_memory_log, _snapshot);
+  PUBLISH_VARIABLE(core::in_memory_log, _entries);
+  PUBLISH_VARIABLE(core::in_memory_log, _marker);
+  PUBLISH_VARIABLE(core::in_memory_log, _saved);
+  PUBLISH_VARIABLE(core::in_memory_log, _applied);
 
   // core::raft
   PUBLISH_METHOD(core::raft, abort_leader_transfer);

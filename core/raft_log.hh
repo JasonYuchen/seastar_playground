@@ -48,8 +48,9 @@ class in_memory_log {
   bool _shrunk = false;
   protocol::snapshot_ptr _snapshot;
   protocol::log_entry_vector _entries;
-  uint64_t _marker;  // equal to the index of the first entry in _entries
-  uint64_t _saved;
+  // equal to the index of the first entry in _entries
+  uint64_t _marker = protocol::log_id::INVALID_INDEX;
+  uint64_t _saved = protocol::log_id::INVALID_INDEX;
   protocol::log_id _applied;
 };
 

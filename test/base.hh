@@ -140,6 +140,9 @@
 #define PUBLISH_VARIABLE(_TYPE_, _NAME_)                                       \
   static auto& _NAME_(_TYPE_& ins) { return ins._NAME_; }
 
+#define CASE_INDEX(test, tests)                                                \
+  "case " << (std::distance(std::begin(tests), &test) + 1) << " failed"
+
 namespace rafter::test {
 
 class base : public ::testing::Environment {

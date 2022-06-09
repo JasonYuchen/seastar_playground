@@ -30,6 +30,13 @@ class util {
       const protocol::update& lhs, const protocol::update& rhs) noexcept;
   static bool compare(
       const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept;
+  static protocol::log_entry_ptr new_entry(protocol::log_id lid);
+  // generate entry vector with continuous log entries
+  // first index = first term = range.low
+  // last index = last term = range.high - 1
+  static protocol::log_entry_vector new_entries(protocol::hint range);
+  static protocol::log_entry_vector new_entries(
+      const std::vector<protocol::log_id>& lids);
 };
 
 }  // namespace rafter::test

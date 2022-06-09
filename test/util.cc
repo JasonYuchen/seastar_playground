@@ -176,4 +176,30 @@ bool util::compare(
   return true;
 }
 
+protocol::log_entry_ptr util::new_entry(protocol::log_id lid) {
+  auto e = make_lw_shared<log_entry>();
+  e->lid = lid;
+  return e;
+}
+protocol::log_entry_vector util::new_entries(protocol::hint range) {
+  log_entry_vector entries;
+  entries.reserve(range.count());
+  for (uint64_t i = range.low; i < range.high; ++i) {
+    auto& e = entries.emplace_back(make_lw_shared<log_entry>());
+    e->lid = {i, i};
+  }
+  return entries;
+}
+
+protocol::log_entry_vector util::new_entries(
+    const std::vector<protocol::log_id>& lids) {
+  log_entry_vector entries;
+  entries.reserve(lids.size());
+  for (auto lid : lids) {
+    auto& e = entries.emplace_back(make_lw_shared<log_entry>());
+    e->lid = lid;
+  }
+  return entries;
+}
+
 }  // namespace rafter::test
