@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/quiesce.hh"
 #include "core/raft.hh"
 #include "core/raft_log.hh"
 #include "test/base.hh"
@@ -15,6 +16,14 @@ namespace rafter::test {
 // explicitly exposed via this helper.
 class core_helper {
  public:
+  // core:quiesce
+  PUBLISH_VARIABLE(core::quiesce, _enabled);
+  PUBLISH_VARIABLE(core::quiesce, _current_tick);
+  PUBLISH_VARIABLE(core::quiesce, _idle_since);
+
+  // core::rate_limiter
+  PUBLISH_VARIABLE(core::rate_limiter, _peers);
+
   // core::in_memory_log
   PUBLISH_VARIABLE(core::in_memory_log, _shrunk);
   PUBLISH_VARIABLE(core::in_memory_log, _snapshot);

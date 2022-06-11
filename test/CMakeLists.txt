@@ -7,6 +7,7 @@ set(SOURCES
     core/quiesce_test.cc
     core/raft_log_test.cc
     core/raft_test.cc
+    core/rate_limiter_test.cc
     core/read_index_test.cc
     core/remote_test.cc
 

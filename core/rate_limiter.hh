@@ -8,6 +8,12 @@
 
 #include "util/rate_limiter.hh"
 
+namespace rafter::test {
+
+class core_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class rate_limiter {
@@ -27,7 +33,7 @@ class rate_limiter {
   bool rate_limited() {
     auto l = limited();
     if (l != _limited) {
-      if (_tick_limited == 0 || _tick - _tick_limited > 10) {
+      if (_tick_limited == 0 || _tick - _tick_limited > CHANGE_INTERVAL) {
         _limited = l;
         _tick_limited = _tick;
       }
@@ -35,7 +41,12 @@ class rate_limiter {
     return _limited;
   }
 
+  static constexpr uint64_t GC_INTERVAL = 3;
+  static constexpr uint64_t CHANGE_INTERVAL = 10;
+
  private:
+  friend class test::core_helper;
+
   struct peer {
     uint64_t tick = 0;
     uint64_t in_memory_log_bytes = 0;
@@ -48,7 +59,7 @@ class rate_limiter {
     uint64_t max_bytes = 0;
     bool gc = false;
     for (auto [id, p] : _peers) {
-      if (_tick - p.tick > _gc_tick) {
+      if (_tick - p.tick > GC_INTERVAL) {
         gc = true;
         continue;
       }
@@ -56,8 +67,9 @@ class rate_limiter {
     }
     max_bytes = std::max(max_bytes, _limiter.get());
     if (gc) {
-      std::erase_if(
-          _peers, [this](auto p) { return _tick - p.second.tick > _gc_tick; });
+      std::erase_if(_peers, [this](auto p) {
+        return _tick - p.second.tick > GC_INTERVAL;
+      });
     }
     if (!_limited) {
       return max_bytes > _limiter.get_max();
@@ -67,7 +79,6 @@ class rate_limiter {
 
   uint64_t _tick = 1;
   uint64_t _tick_limited = 0;
-  uint64_t _gc_tick = 3;
   bool _limited = false;
   std::unordered_map<uint64_t, peer> _peers;
   util::rate_limiter _limiter;
