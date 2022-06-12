@@ -18,9 +18,11 @@ class core_helper;
 
 namespace rafter::core {
 
+class rate_limiter;
+
 class in_memory_log {
  public:
-  explicit in_memory_log(uint64_t last_index);
+  explicit in_memory_log(uint64_t last_index, rate_limiter* limiter = nullptr);
   size_t query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
@@ -40,6 +42,8 @@ class in_memory_log {
   void merge(protocol::log_entry_span entries);
   void restore(protocol::snapshot_ptr snapshot) noexcept;
 
+  bool rate_limited() const noexcept;
+
  private:
   friend class raft_log;
   friend class test::core_helper;
@@ -52,6 +56,7 @@ class in_memory_log {
   uint64_t _marker = protocol::log_id::INVALID_INDEX;
   uint64_t _saved = protocol::log_id::INVALID_INDEX;
   protocol::log_id _applied;
+  rate_limiter* _limiter = nullptr;
 };
 
 class log_reader {

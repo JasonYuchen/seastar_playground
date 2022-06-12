@@ -322,4 +322,96 @@ RAFTER_TEST_F(in_memory_log_test, advance_applied_log) {
   co_return;
 }
 
+RAFTER_TEST_F(in_memory_log_test, rate_limited) {
+  struct {
+    uint64_t rate_limit_bytes;
+    bool limited;
+  } tests[] = {
+      {0, false},
+      {UINT64_MAX, false},
+      {1, true},
+      {UINT64_MAX - 1, true},
+  };
+  auto im = core::in_memory_log{0};
+  ASSERT_FALSE(im.rate_limited());
+  for (auto& t : tests) {
+    auto rl = core::rate_limiter{t.rate_limit_bytes};
+    im = core::in_memory_log{0, &rl};
+    EXPECT_EQ(im.rate_limited(), t.limited);
+  }
+}
+
+RAFTER_TEST_F(in_memory_log_test, rate_limit_cleared_after_restoring) {
+  auto rl = core::rate_limiter{10000};
+  auto im = core::in_memory_log{0, &rl};
+  auto to_merge = test::util::new_entries({{1, 1}});
+  to_merge[0]->payload.resize(1024);
+  im.merge(to_merge);
+  ASSERT_GT(rl.get(), 0);
+  im.restore(make_lw_shared<snapshot>());
+  ASSERT_EQ(rl.get(), 0);
+}
+
+RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_merging) {
+  auto rl = core::rate_limiter{10000};
+  auto im = core::in_memory_log{0, &rl};
+  auto to_merge = test::util::new_entries({{1, 1}});
+  to_merge[0]->payload.resize(1024);
+  im.merge(to_merge);
+  auto old_bytes = rl.get();
+  to_merge = test::util::new_entries({{2, 2}, {3, 3}});
+  to_merge[0]->payload.resize(16);
+  to_merge[1]->payload.resize(64);
+  auto new_bytes = old_bytes + log_entry::in_memory_bytes(to_merge);
+  im.merge(to_merge);
+  ASSERT_EQ(rl.get(), new_bytes);
+}
+
+RAFTER_TEST_F(in_memory_log_test, rate_limit_decreased_after_applying) {
+  auto rl = core::rate_limiter{10000};
+  auto im = core::in_memory_log{2, &rl};
+  auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
+  to_merge[0]->payload.resize(16);
+  to_merge[1]->payload.resize(64);
+  to_merge[2]->payload.resize(128);
+  im.merge(to_merge);
+  ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(to_merge));
+  for (uint64_t i = 2; i < 5; ++i) {
+    im.advance_applied_log(i);
+    if (!helper::_entries(im).empty()) {
+      ASSERT_EQ(helper::_entries(im).front()->lid.index, i + 1);
+    }
+    ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
+  }
+}
+
+RAFTER_TEST_F(in_memory_log_test, rate_limit_reset_when_merging) {
+  auto rl = core::rate_limiter{10000};
+  auto im = core::in_memory_log{2, &rl};
+  auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
+  to_merge[0]->payload.resize(16);
+  to_merge[1]->payload.resize(64);
+  to_merge[2]->payload.resize(128);
+  im.merge(to_merge);
+  to_merge = test::util::new_entries({{1, 1}});
+  to_merge[0]->payload.resize(16);
+  im.merge(to_merge);
+  ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(to_merge));
+}
+
+RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_cut_merging) {
+  auto rl = core::rate_limiter{10000};
+  auto im = core::in_memory_log{2, &rl};
+  auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
+  to_merge[0]->payload.resize(16);
+  to_merge[1]->payload.resize(64);
+  to_merge[2]->payload.resize(128);
+  im.merge(to_merge);
+  to_merge = test::util::new_entries({{3, 3}, {4, 4}});
+  to_merge[0]->payload.resize(1024);
+  to_merge[1]->payload.resize(1024);
+  im.merge(to_merge);
+  ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
+}
+
 }  // namespace
