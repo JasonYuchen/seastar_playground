@@ -6,6 +6,12 @@
 
 #include "protocol/raft.hh"
 
+namespace rafter::test {
+
+class core_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class quiesce {
@@ -24,7 +30,9 @@ class quiesce {
   void exit_quiesce() noexcept;
 
  private:
-  const protocol::group_id _gid;
+  friend class test::core_helper;
+
+  protocol::group_id _gid;
   bool _enabled = false;
   uint64_t _election_tick = 0;
   uint64_t _current_tick = 0;
