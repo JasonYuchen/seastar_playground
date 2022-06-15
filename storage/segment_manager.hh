@@ -59,6 +59,8 @@ class segment_manager final
   future<> rolling();
   future<> gc_service(std::vector<uint64_t>& segs, bool& open);
   future<> compaction(protocol::group_id id);
+  void reference_segments(std::span<const index::entry> indexes);
+  future<> unreference_segments(std::span<const index::entry> indexes);
 
   // segments dir, e.g. <data_dir>
   std::string _log_dir;

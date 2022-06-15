@@ -245,6 +245,16 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
   co_return;
 }
 
+RAFTER_TEST_P(segment_manager_test, DISABLED_basic_read_write) { co_return; }
+
+RAFTER_TEST_P(segment_manager_test, DSIABLED_save_overlapping_entries) {
+  co_return;
+}
+
+RAFTER_TEST_P(segment_manager_test, DISABLED_empty_entry_update) { co_return; }
+
+RAFTER_TEST_P(segment_manager_test, DISABLED_snapshot_update) { co_return; }
+
 RAFTER_TEST_P(segment_manager_test, DISABLED_bootstrap_info) { co_return; }
 
 RAFTER_TEST_P(segment_manager_test, DISABLED_remove_node) { co_return; }

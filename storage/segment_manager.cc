@@ -4,8 +4,8 @@
 
 #include "segment_manager.hh"
 
-#include <charconv>
 #include <seastar/core/reactor.hh>
+#include <span>
 
 #include "protocol/serializer.hh"
 #include "rafter/config.hh"
@@ -135,10 +135,12 @@ future<size_t> segment_manager::query_entries(
   if (range.low <= compacted_to) {
     co_return max_bytes;
   }
-  auto indexes = ni->query(range);
+  auto indexes_vec = ni->query(range);
+  auto indexes = std::span<const index::entry>(indexes_vec);
   if (indexes.empty()) {
     co_return max_bytes;
   }
+  reference_segments(indexes);
   size_t start = 0;
   size_t count = 1;
   uint64_t prev_filename = indexes.front().filename;
@@ -161,6 +163,7 @@ future<size_t> segment_manager::query_entries(
     co_await _segments[prev_filename]->query(
         indexes.subspan(start, count), entries, max_bytes);
   }
+  co_await unreference_segments(indexes);
   co_return max_bytes;
 }
 
@@ -210,8 +213,10 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
         i.filename);
     co_return coroutine::make_exception(util::corruption_error());
   }
+  reference_segments({&i, 1});
   auto* segment = it->second.get();
   auto up = co_await segment->query(i);
+  co_await unreference_segments({&i, 1});
   if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
     l.error("{} segment_manager::query_snapshot: empty", id);
     co_return coroutine::make_exception(util::corruption_error());
@@ -404,6 +409,25 @@ future<> segment_manager::compaction(group_id id) {
   auto ni = _index_group.get_node_index(id);
   auto obsoletes = ni->compaction();
   for (auto file : obsoletes) {
+    assert(_segments_ref_count.contains(file));
+    if (--_segments_ref_count[file] == 0) {
+      _segments_ref_count.erase(file);
+      co_await _gc_worker.push_eventually(std::move(file));
+    }
+  }
+}
+
+void segment_manager::reference_segments(
+    std::span<const index::entry> indexes) {
+  for (const auto& idx : indexes) {
+    _segments_ref_count[idx.filename]++;
+  }
+}
+
+future<> segment_manager::unreference_segments(
+    std::span<const index::entry> indexes) {
+  for (const auto& idx : indexes) {
+    auto file = idx.filename;
     assert(_segments_ref_count.contains(file));
     if (--_segments_ref_count[file] == 0) {
       _segments_ref_count.erase(file);
