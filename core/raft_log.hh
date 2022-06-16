@@ -70,6 +70,8 @@ class log_reader {
       protocol::log_entry_vector& entries,
       size_t max_bytes);
   future<uint64_t> get_term(uint64_t index);
+  // FIXME(jyc): get_range will return first_index and last_index, but for
+  //  set_range, it requires first_index and last_index + 1
   protocol::hint get_range() const noexcept;
   void set_range(protocol::hint range);
   protocol::snapshot_ptr get_snapshot() const noexcept;

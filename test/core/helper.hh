@@ -16,6 +16,10 @@ namespace rafter::test {
 // explicitly exposed via this helper.
 class core_helper {
  public:
+  // core::read_index
+  PUBLISH_VARIABLE(core::read_index, _pending);
+  PUBLISH_VARIABLE(core::read_index, _queue);
+
   // core:quiesce
   PUBLISH_VARIABLE(core::quiesce, _enabled);
   PUBLISH_VARIABLE(core::quiesce, _current_tick);
@@ -31,6 +35,10 @@ class core_helper {
   PUBLISH_VARIABLE(core::in_memory_log, _marker);
   PUBLISH_VARIABLE(core::in_memory_log, _saved);
   PUBLISH_VARIABLE(core::in_memory_log, _applied);
+
+  // core::log_reader
+  PUBLISH_VARIABLE(core::log_reader, _marker);
+  PUBLISH_VARIABLE(core::log_reader, _length);
 
   // core::raft
   PUBLISH_METHOD(core::raft, abort_leader_transfer);

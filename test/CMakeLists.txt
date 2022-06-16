@@ -52,6 +52,7 @@ set(SOURCES
 
     base.cc
     base.hh
+    test_logdb.cc
     test_logdb.hh
     util.cc
     util.hh

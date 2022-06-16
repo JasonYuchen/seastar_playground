@@ -414,4 +414,79 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_cut_merging) {
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
 }
 
+class log_reader_test : public ::testing::Test {
+ protected:
+  static snapshot_ptr make_test_snapshot() {
+    auto ss = make_lw_shared<snapshot>();
+    ss->log_id = {124, 123};
+    ss->membership = make_lw_shared<membership>();
+    ss->membership->config_change_id = 1234;
+    ss->membership->addresses = {{123, "address123"}, {234, "address234"}};
+    return ss;
+  }
+
+  test::test_logdb _db;
+};
+
+RAFTER_TEST_F(log_reader_test, initial_state) {
+  auto lr = core::log_reader({1, 1}, _db);
+  ASSERT_EQ(helper::_length(lr), 1);
+  auto st = hard_state{.term = 100, .vote = 112, .commit = 123};
+  lr.set_state(st);
+  auto ss = make_test_snapshot();
+  lr.create_snapshot(ss);
+  ASSERT_EQ(lr.get_state(), st);
+  ASSERT_EQ(*lr.get_membership(), *ss->membership);
+}
+
+RAFTER_TEST_F(log_reader_test, apply_snapshot) {
+  auto lr = core::log_reader({1, 1}, _db);
+  auto ss = make_test_snapshot();
+  lr.apply_snapshot(ss);
+  log_id expected_marker{124, 123};
+  ASSERT_EQ(helper::_marker(lr), expected_marker);
+  ASSERT_EQ(helper::_length(lr), 1);
+  ASSERT_EQ(*lr.get_snapshot()->membership, *ss->membership);
+}
+
+RAFTER_TEST_F(log_reader_test, index_range) {
+  auto lr = core::log_reader({1, 1}, _db);
+  auto ss = make_test_snapshot();
+  lr.apply_snapshot(ss);
+  auto range = lr.get_range();
+  // for only a snapshot available, last_index + 1 = first_index
+  ASSERT_EQ(range.low, 124);
+  ASSERT_EQ(range.high, 123);
+}
+
+RAFTER_TEST_F(log_reader_test, set_range) {
+  struct {
+    uint64_t marker;
+    uint64_t length;
+    uint64_t index;
+    uint64_t idx_len;
+    uint64_t exp_len;
+  } tests[] = {
+      {1, 10, 1, 1, 10},
+      {1, 10, 1, 0, 10},
+      {10, 10, 8, 10, 8},
+      {10, 10, 20, 10, 20},
+  };
+  for (auto& t : tests) {
+    auto lr = core::log_reader({1, 1}, _db);
+    helper::_marker(lr) = {1, t.marker};
+    helper::_length(lr) = t.length;
+    lr.set_range({t.index, t.index + t.length});
+    EXPECT_EQ(helper::_length(lr), t.exp_len);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(log_reader_test, panic_when_gap) {
+  auto lr = core::log_reader({1, 1}, _db);
+  helper::_marker(lr) = {1, 10};
+  helper::_length(lr) = 10;
+  ASSERT_THROW(lr.set_range({50, 60}), rafter::util::failed_precondition_error);
+}
+
 }  // namespace
