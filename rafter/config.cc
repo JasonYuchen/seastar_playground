@@ -7,7 +7,6 @@
 #include <seastar/core/smp.hh>
 
 #include "protocol/raft.hh"
-#include "rafter/logger.hh"
 #include "util/error.hh"
 
 namespace rafter {
@@ -84,7 +83,9 @@ std::ostream& operator<<(std::ostream& os, config cfg) {
      << "listen_port: " << cfg.listen_port << ", "
      << "snapshot_chunk_size: " << cfg.snapshot_chunk_size << ", "
      << "in_memory_gc_timeout: " << cfg.in_memory_gc_timeout << ", "
-     << "max_entry_size: " << cfg.max_entry_size << ", "
+     << "max_entry_bytes: " << cfg.max_entry_bytes << ", "
+     << "max_replicate_entry_bytes: " << cfg.max_replicate_entry_bytes << ", "
+     << "max_apply_entry_bytes: " << cfg.max_apply_entry_bytes << ", "
      << "incoming_proposal_queue_length: " << cfg.incoming_proposal_queue_length
      << ", "
      << "incoming_read_index_queue_length: "

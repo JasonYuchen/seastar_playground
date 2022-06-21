@@ -160,7 +160,7 @@ future<size_t> segment_manager::query_entries(
     }
   }
   if (max_bytes != 0) {
-    co_await _segments[prev_filename]->query(
+    max_bytes = co_await _segments[prev_filename]->query(
         indexes.subspan(start, count), entries, max_bytes);
   }
   co_await unreference_segments(indexes);

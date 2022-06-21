@@ -224,6 +224,16 @@ bool log_entry::is_noop_session() const noexcept {
   return series_id == session::NOOP_SERIES_ID;
 }
 
+uint64_t log_entry::in_memory_bytes(
+    std::span<const seastar::lw_shared_ptr<log_entry>> entries) noexcept {
+  // pointer to hold the entry is not counted
+  uint64_t s = entries.size() * sizeof(log_entry);
+  for (const auto& e : entries) {
+    s += e->payload.size();
+  }
+  return s;
+}
+
 bool hard_state::empty() const noexcept {
   return term == log_id::INVALID_TERM && vote == group_id::INVALID_NODE &&
          commit == log_id::INVALID_INDEX;

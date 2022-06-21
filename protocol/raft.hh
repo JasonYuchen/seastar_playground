@@ -243,6 +243,9 @@ struct log_entry {
   bool is_empty() const noexcept;
   bool is_regular() const noexcept;
 
+  static uint64_t in_memory_bytes(
+      std::span<const seastar::lw_shared_ptr<log_entry>> entries) noexcept;
+
   std::strong_ordering operator<=>(const log_entry &) const = default;
 };
 

@@ -120,13 +120,21 @@ struct config {
   uint64_t in_memory_gc_timeout = 10;
 
   // soft
-  // the max bytes of a single entry
-  uint64_t max_entry_size = 10UL * MB;
+  // the max bytes of a single entry including entry's metadata.
+  uint64_t max_entry_bytes = 8UL * MB;
 
-  // the number of allowed pending proposals for a raft instance
+  // the max bytes of entries that can be included in a single replicate message
+  // should be greater than max_entry_bytes.
+  uint64_t max_replicate_entry_bytes = 64UL * MB;
+
+  // the max bytes of entries that can be applied at once
+  // should be greater than max_entry_bytes.
+  uint64_t max_apply_entry_bytes = 64UL * MB;
+
+  // the number of allowed pending proposals for a raft instance.
   uint64_t incoming_proposal_queue_length = 2048;
 
-  // the number of allowed pending reads for a raft instance
+  // the number of allowed pending reads for a raft instance.
   uint64_t incoming_read_index_queue_length = 4096;
 
   // the number of allowed tasks in the task queue (e.g. rsm apply queue)
@@ -137,7 +145,7 @@ struct config {
   uint64_t max_send_queue_bytes = 0;
 
   // max_receive_queue_bytes is the maximum size in bytes of each receive queue.
-  // When set to 0, it means the receive queue size is unlimited.
+  // When set to 0, it means the receiving queue's size is unlimited.
   uint64_t max_receive_queue_bytes = 0;
 
   // hard

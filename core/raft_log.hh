@@ -96,10 +96,12 @@ class log_reader {
 
 class raft_log {
  public:
-  raft_log(protocol::group_id gid, log_reader& log);
+  raft_log(
+      protocol::group_id gid, log_reader& log, rate_limiter* limiter = nullptr);
   uint64_t committed() const noexcept { return _committed; }
   void set_committed(uint64_t index) noexcept { _committed = index; }
   uint64_t processed() const noexcept { return _processed; }
+  void set_processed(uint64_t index) noexcept { _processed = index; }
   uint64_t first_index() const noexcept;
   uint64_t last_index() const noexcept;
   future<uint64_t> term(uint64_t index) const;

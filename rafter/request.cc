@@ -17,7 +17,8 @@ pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
 
 future<request_result> pending_proposal::propose(
     const session& session, std::string_view cmd, uint64_t timeout) {
-  if (cmd.size() > config::shard().max_entry_size) [[unlikely]] {
+  if (cmd.size() + log_entry{}.bytes() > config::shard().max_entry_bytes)
+      [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cmd", "too big"));
   }

@@ -9,6 +9,7 @@
 
 #include "core/logger.hh"
 #include "core/rate_limiter.hh"
+#include "rafter/config.hh"
 #include "util/error.hh"
 
 namespace rafter::core {
@@ -247,8 +248,12 @@ future<size_t> log_reader::query(
     co_return coroutine::make_exception(
         util::unavailable_error(range.high, last_index() + 1));
   }
+  // TODO(jyc): consider limiting the max number of entries even not exceeds the
+  //  max_bytes
+  auto before_size = entries.size();
   max_bytes = co_await _logdb.query_entries(_gid, range, entries, max_bytes);
-  if (entries.size() == range.high - range.low) {
+  if (max_bytes == 0 || entries.size() - before_size == range.count()) {
+    // if max_bytes == 0, then the next entry cannot fill in the max_bytes limit
     co_return max_bytes;
   }
   if (!entries.empty()) {
@@ -357,8 +362,8 @@ future<> log_reader::apply_compaction(uint64_t index) {
   _marker.term = term;
 }
 
-raft_log::raft_log(group_id gid, log_reader& log)
-  : _gid(gid), _in_memory(log.get_range().high), _logdb(log) {
+raft_log::raft_log(group_id gid, log_reader& log, rate_limiter* limiter)
+  : _gid(gid), _in_memory(log.get_range().high, limiter), _logdb(log) {
   auto [first, _] = log.get_range();
   _committed = first - 1;
   _processed = first - 1;
@@ -367,7 +372,7 @@ raft_log::raft_log(group_id gid, log_reader& log)
 uint64_t raft_log::first_index() const noexcept {
   auto index = _in_memory.get_snapshot_index();
   if (index) {
-    return *index;
+    return *index + 1;
   }
   auto [first, _] = _logdb.get_range();
   return first;
@@ -452,9 +457,10 @@ void raft_log::get_entries_to_save(log_entry_vector& entries) {
 
 future<> raft_log::get_entries_to_apply(log_entry_vector& entries) {
   if (has_entries_to_apply()) {
-    // TODO(jyc): configurable max_bytes for entries to apply
     co_await query(
-        {first_not_applied_index(), apply_index_limit()}, entries, UINT64_MAX);
+        {first_not_applied_index(), apply_index_limit()},
+        entries,
+        config::shard().max_apply_entry_bytes);
   }
   co_return;
 }
@@ -532,9 +538,8 @@ future<uint64_t> raft_log::pending_config_change_count() {
   uint64_t start_index = _committed + 1;
   log_entry_vector entries;
   while (true) {
-    // TODO(jyc): refine max_bytes
     entries.clear();
-    co_await query(start_index, entries, UINT64_MAX);
+    co_await query(start_index, entries, config::shard().max_apply_entry_bytes);
     if (entries.empty()) {
       co_return count;
     }

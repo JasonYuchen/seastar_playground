@@ -15,6 +15,7 @@ using namespace rafter;
 using namespace rafter::protocol;
 
 using helper = rafter::test::core_helper;
+using rafter::test::base;
 using rafter::test::l;
 
 class in_memory_log_test : public ::testing::Test {
@@ -487,6 +488,126 @@ RAFTER_TEST_F(log_reader_test, panic_when_gap) {
   helper::_marker(lr) = {1, 10};
   helper::_length(lr) = 10;
   ASSERT_THROW(lr.set_range({50, 60}), rafter::util::failed_precondition_error);
+}
+
+class raft_log_test : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    base::submit([this]() -> future<> {
+      _db = std::make_unique<test::test_logdb>();
+      _lr = std::make_unique<core::log_reader>(group_id{1, 1}, *_db);
+      co_return;
+    });
+  }
+
+  void TearDown() override {
+    base::submit([this]() -> future<> {
+      _lr.reset();
+      _db.reset();
+      co_return;
+    });
+  }
+
+  future<> append_to_test_logdb(const log_entry_vector& entries) {
+    update up{
+        .gid = {1, 1},
+        .entries_to_save = entries,
+    };
+    storage::update_pack pack(up);
+    co_await _db->save({&pack, 1});
+    _lr->apply_entries(entries);
+  }
+
+  std::unique_ptr<test::test_logdb> _db;
+  std::unique_ptr<core::log_reader> _lr;
+};
+
+RAFTER_TEST_F(raft_log_test, create) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}}));
+  auto expected_range = hint{.low = 1, .high = 3};
+  ASSERT_EQ(_lr->get_range(), expected_range);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  ASSERT_EQ(rl.committed(), 0);
+  ASSERT_EQ(rl.processed(), 0);
+  ASSERT_EQ(helper::_marker(helper::_in_memory(rl)), 4);
+}
+
+RAFTER_TEST_F(raft_log_test, snapshot_index_as_first_index) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto ss = make_lw_shared<snapshot>();
+  ss->log_id = {3, 100};
+  helper::_in_memory(rl).restore(ss);
+  ASSERT_EQ(rl.first_index(), 101);
+}
+
+RAFTER_TEST_F(raft_log_test, log_with_in_memory_snapshot_only) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto ss = make_lw_shared<snapshot>();
+  ss->log_id = {3, 100};
+  rl.restore(ss);
+  ASSERT_EQ(rl.first_index(), 101);
+  ASSERT_EQ(rl.last_index(), 100);
+  for (uint64_t i = 0; i < 110; ++i) {
+    log_entry_vector e;
+    ASSERT_THROW(
+        co_await rl.query({i, i + 1}, e, UINT64_MAX),
+        rafter::util::compacted_error);
+    ASSERT_TRUE(e.empty());
+  }
+}
+
+RAFTER_TEST_F(raft_log_test, no_entries_to_apply_after_restored) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto ss = make_lw_shared<snapshot>();
+  ss->log_id = {3, 100};
+  rl.restore(ss);
+  ASSERT_FALSE(rl.has_entries_to_apply());
+}
+
+RAFTER_TEST_F(raft_log_test, first_not_applied_index_after_restored) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto ss = make_lw_shared<snapshot>();
+  ss->log_id = {3, 100};
+  rl.restore(ss);
+  ASSERT_EQ(rl.first_not_applied_index(), 101);
+  ASSERT_EQ(rl.apply_index_limit(), 101);
+}
+
+RAFTER_TEST_F(raft_log_test, iterate_ready_to_be_applied) {
+  auto entries = test::util::new_entries({.low = 1, .high = 129});
+  for (int i = 1; i <= 10; ++i) {
+    // no greater than max_entry_bytes = 8MB
+    entries[i * 10]->payload.resize(7UL * MB);
+  }
+  co_await append_to_test_logdb(entries);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.set_committed(128);
+  rl.set_processed(0);
+  entries.clear();
+  int count = 0;
+  while (true) {
+    co_await rl.get_entries_to_apply(entries);
+    ASSERT_FALSE(entries.empty());
+    if (rl.processed() == entries.back()->lid.index) {
+      break;
+    }
+    count++;
+    // for default config
+    // (max_entry_bytes = 8MB, max_apply_entry_bytes = 64MB)
+    if (count == 1) {
+      ASSERT_EQ(entries.back()->lid.index, 100);
+    }
+    if (count == 2) {
+      ASSERT_EQ(entries.back()->lid.index, 128);
+    }
+    rl.set_processed(entries.back()->lid.index);
+  }
+  ASSERT_EQ(entries.size(), 128);
+  for (uint64_t i = 0; i < 128; ++i) {
+    ASSERT_EQ(entries[i]->lid.index, i + 1);
+  }
+  ASSERT_EQ(count, 2);
 }
 
 }  // namespace

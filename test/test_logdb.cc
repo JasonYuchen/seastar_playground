@@ -58,6 +58,7 @@ future<size_t> test_logdb::query_entries(
       break;
     }
     if (max_bytes < ent->bytes()) {
+      max_bytes = 0;
       break;
     }
     if (ent->lid.index != next) {
