@@ -10,6 +10,12 @@
 #include "protocol/raft.hh"
 #include "util/util.hh"
 
+namespace rafter::test {
+
+class core_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class read_index {
@@ -35,6 +41,8 @@ class read_index {
   }
 
  private:
+  friend class test::core_helper;
+
   std::unordered_map<protocol::hint, status, util::pair_hasher> _pending;
   std::deque<protocol::hint> _queue;
 };
