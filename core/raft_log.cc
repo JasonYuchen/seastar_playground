@@ -497,7 +497,7 @@ future<size_t> raft_log::query_logdb(
   auto before_query = entries.size();
   auto high = std::min(range.high, _in_memory._marker);
   max_bytes = co_await _logdb.query({range.low, high}, entries, max_bytes);
-  if (entries.size() - before_query == high - range.low) {
+  if (entries.size() - before_query == range.count()) {
     // we have enough logs, avoid redundant searching in memory
     max_bytes = 0;
   }
