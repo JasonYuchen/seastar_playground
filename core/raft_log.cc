@@ -455,6 +455,14 @@ void raft_log::get_entries_to_save(log_entry_vector& entries) {
   entries.insert(entries.end(), ents.begin(), ents.end());
 }
 
+void raft_log::get_uncommitted_entries(log_entry_vector& entries) {
+  (void)_in_memory.query(
+      {.low = _committed + 1,
+       .high = _in_memory._marker + _in_memory._entries.size()},
+      entries,
+      UINT64_MAX);
+}
+
 future<> raft_log::get_entries_to_apply(log_entry_vector& entries) {
   if (has_entries_to_apply()) {
     co_await query(
@@ -598,7 +606,7 @@ future<bool> raft_log::try_commit(log_id lid) {
 }
 
 void raft_log::commit(uint64_t index) {
-  if (index == _committed) {
+  if (index <= _committed) {
     return;
   }
   if (index < _committed) {

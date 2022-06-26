@@ -118,6 +118,7 @@ class raft_log {
   bool has_config_change_to_apply() const noexcept;
   bool has_entries_to_save() const noexcept;
   void get_entries_to_save(protocol::log_entry_vector& entries);
+  void get_uncommitted_entries(protocol::log_entry_vector& entries);
   future<> get_entries_to_apply(protocol::log_entry_vector& entries);
   future<size_t> query(
       uint64_t start,

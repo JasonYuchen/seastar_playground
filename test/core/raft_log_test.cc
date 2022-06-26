@@ -723,4 +723,173 @@ RAFTER_TEST_F(raft_log_test, query_inmemory_and_logdb) {
   ASSERT_EQ(entries.size(), 6);
 }
 
+RAFTER_TEST_F(raft_log_test, get_snapshot) {
+  auto inmemory_s = make_lw_shared<snapshot>();
+  inmemory_s->log_id = {2, 123};
+  auto logdb_s = make_lw_shared<snapshot>();
+  logdb_s->log_id = {3, 234};
+  auto rl = core::raft_log({1, 1}, *_lr);
+  helper::_in_memory(rl).restore(inmemory_s);
+  _lr->apply_snapshot(logdb_s);
+  auto ss = rl.get_snapshot();
+  ASSERT_EQ(ss->log_id, inmemory_s->log_id);
+  helper::_in_memory(rl).advance_saved_snapshot(inmemory_s->log_id.index);
+  ss = rl.get_snapshot();
+  ASSERT_EQ(ss->log_id, logdb_s->log_id);
+}
+
+RAFTER_TEST_F(raft_log_test, restore_snapshot) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto s = make_lw_shared<snapshot>();
+  s->log_id = {10, 100};
+  rl.restore(s);
+  ASSERT_EQ(rl.committed(), 100);
+  ASSERT_EQ(rl.processed(), 100);
+  ASSERT_EQ(helper::_marker(helper::_in_memory(rl)), 101);
+  ASSERT_EQ(helper::_in_memory(rl).get_snapshot()->log_id.index, 100);
+}
+
+RAFTER_TEST_F(raft_log_test, log_match_term) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
+  struct {
+    log_id id;
+    bool match;
+  } tests[] = {
+      {{1, 1}, true},
+      {{2, 1}, false},
+      {{4, 4}, false},
+      {{3, 4}, true},
+      {{3, 5}, true},
+      {{4, 5}, false},
+      {{4, 7}, true},
+      {{5, 8}, false},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.term_index_match(t.id), t.match)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, log_up_to_date) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
+  struct {
+    log_id id;
+    bool up_to_date;
+  } tests[] = {
+      {{2, 1}, false},
+      {{2, 8}, false},
+      {{4, 1}, false},
+      {{4, 7}, true},
+      {{4, 8}, true},
+      {{5, 8}, true},
+      {{5, 2}, true},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.up_to_date(t.id), t.up_to_date)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, get_conflict_index) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
+  struct {
+    log_entry_vector entries;
+    uint64_t conflict_index;
+  } tests[] = {
+      {{}, log_id::INVALID_INDEX},
+      {test::util::new_entries({{2, 1}}), 1},
+      {test::util::new_entries({{1, 1}, {1, 2}}), log_id::INVALID_INDEX},
+      {test::util::new_entries({{1, 1}, {2, 2}}), 2},
+      {test::util::new_entries({{3, 6}, {4, 7}}), log_id::INVALID_INDEX},
+      {test::util::new_entries({{3, 6}, {5, 7}}), 7},
+      {test::util::new_entries({{4, 7}, {4, 8}}), 8},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.get_conflict_index(t.entries), t.conflict_index)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, commit_to) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
+  rl.commit(3);
+  ASSERT_EQ(rl.committed(), 3);
+  rl.commit(2);
+  ASSERT_EQ(rl.committed(), 3);
+}
+
+RAFTER_TEST_F(raft_log_test, panic_when_commit_to_unavailable_index) {
+  co_await append_to_test_logdb(
+      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
+  ASSERT_THROW(rl.commit(8), rafter::util::failed_precondition_error);
+}
+
+RAFTER_TEST_F(raft_log_test, commit_update) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.set_committed(10);
+  update_commit uc{.processed = 5};
+  rl.commit_update(uc);
+  ASSERT_EQ(rl.processed(), 5);
+}
+
+RAFTER_TEST_F(raft_log_test, commit_update_twice_will_throw) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.set_processed(6);
+  rl.set_committed(10);
+  update_commit uc{.processed = 5};
+  ASSERT_THROW(rl.commit_update(uc), rafter::util::failed_precondition_error);
+}
+
+RAFTER_TEST_F(raft_log_test, panic_when_commit_update_has_not_committed_entry) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.set_processed(6);
+  rl.set_committed(10);
+  update_commit uc{.processed = 12};
+  ASSERT_THROW(rl.commit_update(uc), rafter::util::failed_precondition_error);
+}
+
+RAFTER_TEST_F(raft_log_test, get_uncommitted_entries) {
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  struct {
+    uint64_t committed;
+    uint64_t length;
+    uint64_t first_index;
+  } tests[] = {
+      {0, 4, 1},
+      {1, 3, 2},
+      {2, 2, 3},
+      {3, 1, 4},
+      {4, 0, 0},
+  };
+  for (auto& t : tests) {
+    rl.set_committed(t.committed);
+    log_entry_vector entries;
+    rl.get_uncommitted_entries(entries);
+    EXPECT_EQ(entries.size(), t.length) << CASE_INDEX(t, tests);
+    if (!entries.empty()) {
+      EXPECT_EQ(entries[0]->lid.index, t.first_index) << CASE_INDEX(t, tests);
+    }
+  }
+  co_return;
+}
+
 }  // namespace
