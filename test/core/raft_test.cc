@@ -447,4 +447,163 @@ RAFTER_TEST_F(raft_test, leader_transfer_after_snapshot) {
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 3));
 }
 
+RAFTER_TEST_F(raft_test, leader_transfer_to_self) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  auto& lead = raft_cast(nt.sms[1].get());
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 1,
+       .to = 1,
+       .hint = {.low = 1}});
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_to_non_existing_node) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  auto& lead = raft_cast(nt.sms[1].get());
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 4,
+       .to = 1,
+       .hint = {.low = 4}});
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_timeout) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  auto& lead = raft_cast(nt.sms[1].get());
+  // Transfer leadership to isolated node, wait for timeout.
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  for (uint64_t i = 0; i < helper::_heartbeat_timeout(lead); ++i) {
+    co_await helper::tick(lead);
+  }
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  for (uint64_t i = 0; i < helper::_election_timeout(lead); ++i) {
+    co_await helper::tick(lead);
+  }
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_ignore_proposal) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  auto& lead = raft_cast(nt.sms[1].get());
+  // Transfer leadership to isolated node to let transfer pending, then propose.
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  co_await nt.send(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
+  uint64_t matched = helper::_remotes(lead)[2].match;
+  co_await nt.send(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
+  ASSERT_EQ(helper::_remotes(lead)[2].match, matched);
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_receive_higher_term_vote) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  auto& lead = raft_cast(nt.sms[1].get());
+  // Transfer leadership to isolated node to let transfer pending.
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  co_await nt.send(
+      {.type = message_type::election,
+       .from = 2,
+       .to = 2,
+       .term = 2,
+       .lid = {.index = 1}});
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_remove_node) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.ignore(message_type::timeout_now);
+  auto& lead = raft_cast(nt.sms[1].get());
+  // The leadTransferee is removed when leadership transferring.
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  co_await helper::remove_node(lead, 3);
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_cannot_override_existing_one) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  auto& lead = raft_cast(nt.sms[1].get());
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  uint64_t election_tick = helper::_election_tick(lead);
+  // should be ignored due to ongoing leader transfer
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 1,
+       .to = 1,
+       .hint = {.low = 1}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  ASSERT_EQ(helper::_election_tick(lead), election_tick);
+}
+
+RAFTER_TEST_F(raft_test, leader_transfer_second_transfer_to_same_node) {
+  auto nt = network({null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  auto& lead = raft_cast(nt.sms[1].get());
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
+  for (uint64_t i = 0; i < helper::_heartbeat_timeout(lead); ++i) {
+    co_await helper::tick(lead);
+  }
+  // second leader transfer request targeting same node
+  co_await nt.send(
+      {.type = message_type::leader_transfer,
+       .from = 3,
+       .to = 1,
+       .hint = {.low = 3}});
+  // should not extend the timeout while the first one is pending.
+  auto t = helper::_election_timeout(lead) - helper::_heartbeat_timeout(lead);
+  for (uint64_t i = 0; i < t; ++i) {
+    co_await helper::tick(lead);
+  }
+  ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
 }  // namespace
