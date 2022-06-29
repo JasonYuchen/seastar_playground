@@ -415,6 +415,171 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_cut_merging) {
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
 }
 
+RAFTER_TEST_F(in_memory_log_test, unstable_maybe_first_index) {
+  struct {
+    uint64_t marker;
+    log_id ss_lid;
+    std::vector<log_id> entries;
+    std::optional<uint64_t> index;
+  } tests[] = {
+      {0, {}, {}, std::nullopt},
+      {5, {}, {{1, 5}}, std::nullopt},
+      {5, {1, 4}, {{1, 5}}, 4},
+      {5, {1, 4}, {}, 4},
+  };
+  for (auto& t : tests) {
+    auto im = core::in_memory_log{0};
+    helper::_marker(im) = t.marker;
+    fill_entries(im, t.entries);
+    fill_snapshot(im, t.ss_lid);
+    EXPECT_EQ(im.get_snapshot_index(), t.index) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(in_memory_log_test, maybe_last_index) {
+  struct {
+    uint64_t marker;
+    log_id ss_lid;
+    std::vector<log_id> entries;
+    std::optional<uint64_t> index;
+  } tests[] = {
+      {0, {}, {}, std::nullopt},
+      {5, {}, {{1, 5}}, 5},
+      {5, {1, 4}, {{1, 5}}, 5},
+      {5, {1, 4}, {}, 4},
+  };
+  for (auto& t : tests) {
+    auto im = core::in_memory_log{0};
+    helper::_marker(im) = t.marker;
+    fill_entries(im, t.entries);
+    fill_snapshot(im, t.ss_lid);
+    EXPECT_EQ(im.get_last_index(), t.index) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(in_memory_log_test, unstable_maybe_term) {
+  struct {
+    uint64_t marker;
+    log_id ss_lid;
+    std::vector<log_id> entries;
+    uint64_t index;
+    std::optional<uint64_t> term;
+  } tests[] = {
+      {0, {}, {}, 5, std::nullopt},
+      {5, {}, {{1, 5}}, 5, 1},
+      {5, {}, {{1, 5}}, 6, std::nullopt},
+      {5, {}, {{1, 5}}, 4, std::nullopt},
+      {5, {1, 4}, {{1, 5}}, 5, 1},
+      {5, {1, 4}, {{1, 5}}, 6, std::nullopt},
+      {5, {1, 4}, {{1, 5}}, 4, 1},
+      {5, {1, 4}, {{1, 5}}, 3, std::nullopt},
+      {5, {1, 4}, {}, 5, std::nullopt},
+      {5, {1, 4}, {}, 4, 1},
+  };
+  for (auto& t : tests) {
+    auto im = core::in_memory_log{0};
+    helper::_marker(im) = t.marker;
+    fill_entries(im, t.entries);
+    fill_snapshot(im, t.ss_lid);
+    EXPECT_EQ(im.get_term(t.index), t.term) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(in_memory_log_test, unstable_restore) {
+  auto im = core::in_memory_log{4};
+  fill_entries(im, {{1, 5}});
+  fill_snapshot(im, {1, 4});
+  auto ss = test::util::new_snapshot({2, 6});
+  im.restore(ss);
+  ASSERT_EQ(helper::_marker(im), ss->log_id.index + 1);
+  ASSERT_TRUE(helper::_entries(im).empty());
+  ASSERT_EQ(helper::_snapshot(im)->log_id, ss->log_id);
+}
+
+RAFTER_TEST_F(in_memory_log_test, unstable_truncate_append) {
+  struct {
+    uint64_t marker;
+    std::vector<log_id> entries;
+    std::vector<log_id> to_append;
+    uint64_t exp_marker;
+    std::vector<log_id> exp_entries;
+  } tests[] = {
+      // append to end
+      {5, {{1, 5}}, {{1, 6}, {1, 7}}, 5, {{1, 5}, {1, 6}, {1, 7}}},
+      // replace all
+      {5, {{1, 5}}, {{2, 5}, {2, 6}}, 5, {{2, 5}, {2, 6}}},
+      {5, {{1, 5}}, {{2, 4}, {2, 5}, {2, 6}}, 4, {{2, 4}, {2, 5}, {2, 6}}},
+      // truncate and append
+      {5, {{1, 5}, {1, 6}, {1, 7}}, {{2, 6}}, 5, {{1, 5}, {2, 6}}},
+      {5,
+       {{1, 5}, {1, 6}, {1, 7}},
+       {{2, 7}, {2, 8}},
+       5,
+       {{1, 5}, {1, 6}, {2, 7}, {2, 8}}},
+  };
+  for (auto& t : tests) {
+    auto im = core::in_memory_log{0};
+    helper::_marker(im) = t.marker;
+    fill_entries(im, t.entries);
+    im.merge(test::util::new_entries(t.to_append));
+    EXPECT_EQ(helper::_marker(im), t.exp_marker) << CASE_INDEX(t, tests);
+    EXPECT_TRUE(test::util::compare(
+        helper::_entries(im), test::util::new_entries(t.exp_entries)))
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(in_memory_log_test, unstable_stable_to) {
+  struct {
+    uint64_t marker;
+    log_id ss_lid;
+    std::vector<log_id> entries;
+    log_id stable_to;
+    uint64_t exp_saved_to;
+    uint64_t exp_marker;
+    uint64_t exp_len;
+  } tests[] = {
+      // null
+      {0, {}, {}, {1, 5}, 0, 0, 0},
+      // stable to 1st entry
+      {5, {}, {{1, 5}}, {1, 5}, 5, 6, 0},
+      // stable to 1st entry
+      {5, {}, {{1, 5}, {1, 6}}, {1, 5}, 5, 6, 1},
+      // stable to 1st entry and term mismatch
+      {6, {}, {{2, 6}}, {1, 6}, 0, 7, 0},
+      // stable to old entry
+      {5, {}, {{1, 5}}, {1, 4}, 0, 5, 1},
+      // stable to old entry
+      {5, {}, {{1, 5}}, {2, 4}, 0, 5, 1},
+      // has snapshot, stable to 1st entry
+      {5, {1, 4}, {{1, 5}}, {1, 5}, 5, 6, 0},
+      // has snapshot, stable to 1st entry
+      {5, {1, 4}, {{1, 5}, {1, 6}}, {1, 5}, 5, 6, 1},
+      // has snapshot, stable to 1st entry and term mismatch
+      {6, {1, 5}, {{2, 6}}, {1, 6}, 0, 7, 0},
+      // has snapshot, stable to snapshot
+      {5, {1, 4}, {{1, 5}}, {1, 4}, 0, 5, 1},
+      // has snapshot, stable to old entry
+      {5, {2, 4}, {{2, 5}}, {1, 4}, 0, 5, 1},
+  };
+  for (auto& t : tests) {
+    auto im = core::in_memory_log{0};
+    helper::_marker(im) = t.marker;
+    fill_entries(im, t.entries);
+    fill_snapshot(im, t.ss_lid);
+    im.advance_saved_log(t.stable_to);
+    im.advance_applied_log(t.stable_to.index);
+    EXPECT_EQ(helper::_saved(im), t.exp_saved_to) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_marker(im), t.exp_marker) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_entries(im).size(), t.exp_len) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
 class log_reader_test : public ::testing::Test {
  protected:
   static snapshot_ptr make_test_snapshot() {
