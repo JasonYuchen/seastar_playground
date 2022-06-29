@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 #include <memory>
-#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -71,7 +70,7 @@ class index {
       uint64_t start, uint64_t end, uint64_t raft_index) const noexcept;
 
   // we follow the convention that low: inclusive, high: exclusive
-  std::span<const entry> query(protocol::hint range) const noexcept;
+  std::vector<entry> query(protocol::hint range) const noexcept;
 
   bool file_in_use(uint64_t filename) const noexcept;
 
@@ -107,7 +106,7 @@ class node_index {
 
   bool file_in_tracking(uint64_t filename) const noexcept;
 
-  std::span<const index::entry> query(protocol::hint range) const noexcept;
+  std::vector<index::entry> query(protocol::hint range) const noexcept;
 
   index::entry query_state() const noexcept;
 
@@ -140,7 +139,7 @@ class index_group {
 
   seastar::lw_shared_ptr<node_index> get_node_index(group_id id);
 
-  std::span<const index::entry> query(group_id id, protocol::hint range);
+  std::vector<index::entry> query(group_id id, protocol::hint range);
 
   index::entry query_state(group_id id);
 

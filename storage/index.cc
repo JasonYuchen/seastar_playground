@@ -109,7 +109,7 @@ pair<uint64_t, bool> index::binary_search(
   return binary_search(mid + 1, end, raft_index);
 }
 
-span<const index::entry> index::query(protocol::hint range) const noexcept {
+vector<index::entry> index::query(protocol::hint range) const noexcept {
   if (range.low <= _compacted_to) {
     return {};
   }
@@ -226,7 +226,7 @@ bool node_index::file_in_tracking(uint64_t filename) const noexcept {
   return _filenames.contains(filename);
 }
 
-span<const index::entry> node_index::query(
+std::vector<index::entry> node_index::query(
     protocol::hint range) const noexcept {
   return _index.query(range);
 }
@@ -302,7 +302,7 @@ lw_shared_ptr<node_index> index_group::get_node_index(group_id id) {
   return ni;
 }
 
-span<const index::entry> index_group::query(group_id id, protocol::hint range) {
+vector<index::entry> index_group::query(group_id id, protocol::hint range) {
   assert(id.valid());
   if (range.low > range.high) [[unlikely]] {
     throw util::failed_precondition_error("invalid query range");
