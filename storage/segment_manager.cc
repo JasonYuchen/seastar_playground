@@ -27,6 +27,7 @@ future<> segment_manager::start() {
   _log_dir = filesystem::path(config::shard().data_dir).append("wal");
   _boot_dir = filesystem::path(config::shard().data_dir).append("bootstrap");
   co_await recursive_touch_directory(_log_dir);
+  co_await recursive_touch_directory(_boot_dir);
   l.info(
       "segment_manager::start: dir:{}, rolling_size:{}, gc_queue_cap:{}",
       _log_dir,
@@ -56,42 +57,37 @@ future<> segment_manager::stop() {
 stats segment_manager::stats() const noexcept { return _stats; }
 
 future<vector<group_id>> segment_manager::list_nodes() {
-  return with_file(
-      open_directory(_boot_dir), [this](file f) -> future<vector<group_id>> {
-        vector<group_id> nodes;
-        co_await f
-            .list_directory([this, &nodes](directory_entry entry) {
-              do {
-                if (entry.type && entry.type != directory_entry_type::regular) {
-                  break;
-                }
-                group_id id;
-                auto c =
-                    util::parse_file_name(entry.name, '_', id.cluster, id.node);
-                if (c != 2) {
-                  break;
-                }
-                if (this_shard_id() == _partitioner(id.cluster)) {
-                  nodes.emplace_back(id);
-                }
-              } while (false);
-              l.warn(
-                  "segment_manager::list_nodes: invalid bootstrap file {}",
-                  entry.name);
-              return make_ready_future<>();
-            })
-            .done();
-        co_return nodes;
-      });
+  vector<group_id> nodes;
+  co_await with_file(open_directory(_boot_dir), [this, &nodes](file f) {
+    return f
+        .list_directory([this, &nodes](directory_entry entry) {
+          if (entry.type && entry.type != directory_entry_type::regular) {
+            l.warn("invalid bootstrap file type {}", entry.name);
+            return make_ready_future<>();
+          }
+          group_id id;
+          auto c = util::parse_file_name(entry.name, '_', id.cluster, id.node);
+          if (c != 2) {
+            l.warn("invalid bootstrap file format {}", entry.name);
+            return make_ready_future<>();
+          }
+          if (this_shard_id() == _partitioner(id.cluster)) {
+            nodes.emplace_back(id);
+          }
+          return make_ready_future<>();
+        })
+        .done();
+  });
+  co_return std::move(nodes);
 }
 
 future<> segment_manager::save_bootstrap(group_id id, const bootstrap& info) {
   auto name = fmt::format("{:020d}_{:020d}", id.cluster, id.node);
-  co_await util::create_file(_log_dir, name + ".tmp", write_to_string(info));
+  co_await util::create_file(_boot_dir, name + ".tmp", write_to_string(info));
   co_await rename_file(
       filesystem::path(_boot_dir).append(name + ".tmp").string(),
       filesystem::path(_boot_dir).append(name).string());
-  co_await sync_directory(_log_dir);
+  co_await sync_directory(_boot_dir);
 }
 
 future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {

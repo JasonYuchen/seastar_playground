@@ -36,12 +36,14 @@ future<temporary_buffer<char>> read_file(
   return open_file_dma(
              std::filesystem::path(dir).append(name).string(), open_flags::ro)
       .then([](file f) {
-        return f.size().then([&](size_t size) {
-          return do_with(
-              make_file_input_stream(f), [size](input_stream<char>& in) {
-                return in.read_exactly(size).finally(
-                    [&in] { return in.close(); });
-              });
+        return do_with(std::move(f), [](file& f) {
+          return f.size().then([&](size_t size) {
+            return do_with(
+                make_file_input_stream(f), [size](input_stream<char>& in) {
+                  return in.read_exactly(size).finally(
+                      [&in] { return in.close(); });
+                });
+          });
         });
       });
 }

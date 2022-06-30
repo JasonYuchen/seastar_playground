@@ -37,6 +37,7 @@ set(SOURCES
 
     storage/helper.hh
     storage/index_test.cc
+    storage/logdb_test.cc
     storage/segment_manager_test.cc
     storage/segment_test.cc
 
