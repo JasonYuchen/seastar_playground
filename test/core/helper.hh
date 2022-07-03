@@ -40,7 +40,13 @@ class core_helper {
   PUBLISH_VARIABLE(core::log_reader, _marker);
   PUBLISH_VARIABLE(core::log_reader, _length);
 
+  // core::raft_log
+  PUBLISH_VARIABLE(core::raft_log, _in_memory);
+
   // core::raft
+  PUBLISH_METHOD(core::raft, remove_node);
+  PUBLISH_METHOD(core::raft, become_leader);
+  PUBLISH_METHOD(core::raft, become_candidate);
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
   PUBLISH_METHOD(core::raft, tick);
@@ -53,7 +59,9 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft, _remotes);
   PUBLISH_VARIABLE(core::raft, _observers);
   PUBLISH_VARIABLE(core::raft, _witnesses);
+  PUBLISH_VARIABLE(core::raft, _election_tick);
   PUBLISH_VARIABLE(core::raft, _election_timeout);
+  PUBLISH_VARIABLE(core::raft, _heartbeat_timeout);
   PUBLISH_VARIABLE(core::raft, _randomized_election_timeout);
 };
 

@@ -170,6 +170,14 @@ std::ostream& operator<<(std::ostream& os, const hard_state& state) {
 
 uint64_t bootstrap::bytes() const noexcept { return sizer(*this); }
 
+bool bootstrap::operator==(const bootstrap& rhs) const noexcept {
+  return addresses == rhs.addresses && join == rhs.join && smtype == rhs.smtype;
+}
+
+bool bootstrap::operator!=(const bootstrap& rhs) const noexcept {
+  return !(*this == rhs);
+}
+
 uint64_t membership::bytes() const noexcept { return sizer(*this); }
 
 bool membership::operator==(const membership& rhs) const noexcept {

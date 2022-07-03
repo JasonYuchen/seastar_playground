@@ -204,6 +204,9 @@ struct bootstrap {
   state_machine_type smtype = state_machine_type::regular;
 
   uint64_t bytes() const noexcept;
+
+  bool operator==(const bootstrap &rhs) const noexcept;
+  bool operator!=(const bootstrap &rhs) const noexcept;
 };
 
 using bootstrap_ptr = seastar::lw_shared_ptr<bootstrap>;

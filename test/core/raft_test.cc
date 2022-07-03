@@ -13,6 +13,7 @@
 #include "helper.hh"
 #include "test/base.hh"
 #include "test/test_logdb.hh"
+#include "test/util.hh"
 #include "util/error.hh"
 #include "util/seastarx.hh"
 
@@ -46,11 +47,80 @@ class sm {
   virtual message_vector read_messages() = 0;
 };
 
+// a standalone logdb backed by an in-memory entries vector, should not be
+// shared among multiple raft nodes
+class db {
+ public:
+  explicit db() : _db(new test::test_logdb()), _reader({1, 1}, *_db) {}
+  core::log_reader& lr() { return _reader; }
+  future<> append(log_entry_vector entries) {
+    update up{.gid = {1, 1}, .entries_to_save = std::move(entries)};
+    storage::update_pack pack(up);
+    // FIXME(jyc): due to continuation threshold, not always ready here
+    EXPECT_TRUE(_db->save({&pack, 1}).available());
+    EXPECT_TRUE(pack.done.get_future().available());
+    _reader.apply_entries(up.entries_to_save);
+    return make_ready_future<>();
+  }
+
+  void set_state(hard_state state) { _reader.set_state(state); }
+
+ private:
+  std::unique_ptr<storage::logdb> _db;
+  core::log_reader _reader;
+};
+
 class raft_sm final : public sm {
  public:
-  raft_sm(std::unique_ptr<raft_config> cfg, core::log_reader& lr)
-    : _cfg(std::move(cfg)), _r(std::make_unique<core::raft>(*_cfg, lr)) {}
+  explicit raft_sm(std::unique_ptr<raft_config> cfg, std::unique_ptr<db> logdb)
+    : _cfg(std::move(cfg))
+    , _db(std::move(logdb))
+    , _r(std::make_unique<core::raft>(*_cfg, _db->lr())) {}
   ~raft_sm() override = default;
+
+  static std::unique_ptr<raft_sm> make(
+      uint64_t id,
+      const std::vector<uint64_t>& peers,
+      uint64_t election,
+      uint64_t heartbeat) {
+    return make(id, peers, election, heartbeat, std::make_unique<db>());
+  }
+
+  static std::unique_ptr<raft_sm> make(
+      uint64_t id,
+      const std::vector<uint64_t>& peers,
+      uint64_t election,
+      uint64_t heartbeat,
+      std::unique_ptr<db> logdb,
+      uint64_t limit_size = UINT64_MAX) {
+    auto config = new_test_config(id, election, heartbeat, limit_size);
+    auto r = std::make_unique<raft_sm>(std::move(config), std::move(logdb));
+    for (uint64_t peer : peers) {
+      helper::_remotes(r->raft()).emplace(peer, core::remote{.next = 1});
+    }
+    return r;
+  }
+
+  static std::unique_ptr<raft_sm> make_with_entries(
+      const std::vector<log_id>& log_ids) {
+    auto config = new_test_config(1, 5, 1);
+    auto logdb = std::make_unique<db>();
+    // test log db will not perform disk io
+    EXPECT_TRUE(logdb->append(test::util::new_entries(log_ids)).available());
+    auto r = std::make_unique<raft_sm>(std::move(config), std::move(logdb));
+    helper::reset(r->raft(), log_ids.back().term, true);
+    return r;
+  }
+
+  static std::unique_ptr<raft_sm> make_with_vote(uint64_t term, uint64_t vote) {
+    auto config = new_test_config(1, 5, 1);
+    auto logdb = std::make_unique<db>();
+    logdb->set_state({.term = term, .vote = vote});
+    auto r = std::make_unique<raft_sm>(std::move(config), std::move(logdb));
+    helper::reset(r->raft(), term, true);
+    return r;
+  }
+
   future<> handle(message m) override { return _r->handle(m); }
   message_vector read_messages() override {
     return std::exchange(_r->messages(), {});
@@ -58,48 +128,19 @@ class raft_sm final : public sm {
   raft_config& cfg() { return *_cfg; }
   core::raft& raft() { return *_r; }
 
+  std::unique_ptr<db> logdb() { return std::move(_db); }
+
  private:
   std::unique_ptr<raft_config> _cfg;
+  std::unique_ptr<db> _db;
   std::unique_ptr<core::raft> _r;
 };
-
-std::unique_ptr<raft_sm> new_test_raft(
-    uint64_t id,
-    const std::vector<uint64_t>& peers,
-    uint64_t election,
-    uint64_t heartbeat,
-    core::log_reader& lr,
-    uint64_t limit_size = UINT64_MAX) {
-  auto config = new_test_config(id, election, heartbeat, limit_size);
-  auto r = std::make_unique<raft_sm>(std::move(config), lr);
-  for (uint64_t peer : peers) {
-    helper::_remotes(r->raft()).emplace(peer, core::remote{.next = 1});
-  }
-  return r;
-}
 
 class black_hole final : public sm {
  public:
   ~black_hole() override = default;
   future<> handle(message) override { return make_ready_future<>(); }
-  protocol::message_vector read_messages() override { return {}; }
-};
-
-class db {
- public:
-  db() : _db(new test::test_logdb()), _reader({1, 1}, *_db) {}
-  core::log_reader& lr() { return _reader; }
-  future<> append(log_entry_vector entries) {
-    update up{.entries_to_save = std::move(entries)};
-    storage::update_pack pack(up);
-    co_await _db->save({&pack, 1});
-    co_await pack.done.get_future();
-    _reader.apply_entries(up.entries_to_save);
-  }
-
- private:
-  std::unique_ptr<storage::logdb> _db;
-  core::log_reader _reader;
+  message_vector read_messages() override { return {}; }
 };
 
 struct node_pair {
@@ -114,13 +155,14 @@ struct network {
       uint64_t node_id = i + 1;
       if (!peers[i]) {
         auto test_cfg = new_test_config(node_id, 10, 1);
-        dbs[node_id] = std::make_unique<db>();
+        auto logdb = std::make_unique<db>();
         auto sm =
-            std::make_unique<raft_sm>(std::move(test_cfg), dbs[node_id]->lr());
+            std::make_unique<raft_sm>(std::move(test_cfg), std::move(logdb));
         for (size_t j = 0; j < peers.size(); ++j) {
           // set test peers
           helper::_remotes(sm->raft()).emplace(j + 1, core::remote{.next = 1});
         }
+        dbs[node_id] = sm->logdb();
         sms[node_id] = std::move(sm);
       } else if (auto& rs = *peers[i]; typeid(rs) == typeid(raft_sm)) {
         auto& p = dynamic_cast<raft_sm&>(*peers[i]);
@@ -143,6 +185,7 @@ struct network {
           }
         }
         helper::reset(p.raft(), helper::_term(p.raft()), true);
+        dbs[node_id] = p.logdb();
         sms[node_id] = std::unique_ptr<sm>(peers[i]);
       } else if (auto& bh = *peers[i]; typeid(bh) == typeid(black_hole)) {
         sms[node_id] = std::unique_ptr<sm>(peers[i]);
@@ -604,6 +647,42 @@ RAFTER_TEST_F(raft_test, leader_transfer_second_transfer_to_same_node) {
     co_await helper::tick(lead);
   }
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1));
+}
+
+RAFTER_TEST_F(raft_test, remote_resume_by_heartbeat_resp) {
+  auto r = raft_sm::make(1, {1, 2}, 5, 1);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_remotes(r->raft())[2].retry_to_wait();
+  co_await r->raft().handle(
+      {.type = message_type::leader_heartbeat, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+  helper::_remotes(r->raft())[2].become_replicate();
+  co_await r->raft().handle(
+      {.type = message_type::heartbeat_resp, .from = 2, .to = 1});
+  ASSERT_NE(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+}
+
+RAFTER_TEST_F(raft_test, remote_paused) {
+  auto r = raft_sm::make(1, {1, 2}, 5, 1);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  co_await r->raft().handle(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
+  co_await r->raft().handle(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
+  co_await r->raft().handle(
+      {.type = message_type::propose,
+       .from = 1,
+       .to = 1,
+       .entries = {make_lw_shared<log_entry>()}});
+  ASSERT_EQ(r->read_messages().size(), 1);
 }
 
 }  // namespace
