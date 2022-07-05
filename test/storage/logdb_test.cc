@@ -73,4 +73,57 @@ RAFTER_TEST_F(logdb_test, save_and_load_bootstrap) {
   ASSERT_EQ(nodes.size(), 3);
 }
 
+RAFTER_TEST_F(logdb_test, DISABLED_snapshot_has_max_index_set) {
+  // TODO(jyc): add check
+  co_return;
+}
+
+RAFTER_TEST_F(
+    logdb_test, DISABLED_save_snapshot_with_unexpected_entries_will_panic) {
+  // TODO(jyc): add check
+  co_return;
+}
+
+RAFTER_TEST_F(logdb_test, save_snapshot) {
+  auto hs1 = hard_state{.term = 2, .vote = 3, .commit = 100};
+  auto e1 = test::util::new_entry({.term = 1, .index = 10});
+  e1->type = entry_type::application;
+  e1->payload = "test data";
+  auto sp1 = test::util::new_snapshot({.term = 1, .index = 5});
+  sp1->group_id = {3, 4};
+  sp1->file_path = "p1";
+  sp1->file_size = 100;
+  auto ud1 = update{
+      .gid = {3, 4}, .state = hs1, .entries_to_save = {e1}, .snapshot = sp1};
+  ud1.fill_meta();
+  auto hs2 = hard_state{.term = 2, .vote = 3, .commit = 100};
+  auto e2 = test::util::new_entry({.term = 1, .index = 20});
+  e2->type = entry_type::application;
+  e2->payload = "test data";
+  auto sp2 = test::util::new_snapshot({.term = 1, .index = 12});
+  sp2->group_id = {3, 3};
+  sp2->file_path = "p2";
+  sp2->file_size = 200;
+  auto ud2 = update{
+      .gid = {3, 3}, .state = hs2, .entries_to_save = {e2}, .snapshot = sp2};
+  ud2.fill_meta();
+  std::vector<update_pack> packs;
+  packs.emplace_back(ud1);
+  packs.emplace_back(ud2);
+  co_await _logdb->save(packs);
+  co_await packs[0].done.get_future();
+  co_await packs[1].done.get_future();
+  auto sp = co_await _logdb->query_snapshot({3, 4});
+  ASSERT_TRUE(sp);
+  ASSERT_EQ(sp->log_id, sp1->log_id);
+  ASSERT_EQ(sp->file_path, sp1->file_path);
+  ASSERT_EQ(sp->file_size, sp1->file_size);
+  sp = co_await _logdb->query_snapshot({3, 3});
+  ASSERT_TRUE(sp);
+  ASSERT_EQ(sp->log_id, sp2->log_id);
+  ASSERT_EQ(sp->file_path, sp2->file_path);
+  ASSERT_EQ(sp->file_size, sp2->file_size);
+  co_return;
+}
+
 }  // namespace

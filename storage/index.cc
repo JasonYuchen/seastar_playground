@@ -341,13 +341,13 @@ bool index_group::update(const protocol::update& u, index::entry e) {
     e.last_index = protocol::log_id::INVALID_INDEX;
     e.type = index::entry::type::state;
     _states[u.gid] = u.state;
-    new_tracking = new_tracking || i->update_state(e);
+    new_tracking = i->update_state(e) || new_tracking;
   }
   if (u.snapshot_index != protocol::log_id::INVALID_INDEX) {
     e.first_index = u.snapshot_index;
     e.last_index = protocol::log_id::INVALID_INDEX;
     e.type = index::entry::type::snapshot;
-    new_tracking = new_tracking || i->update_snapshot(e);
+    new_tracking = i->update_snapshot(e) || new_tracking;
   }
   return new_tracking;
 }

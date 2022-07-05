@@ -235,6 +235,7 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
     up_packs.emplace_back(up);
   }
   co_await _manager->save(up_packs);
+  co_await up_packs.back().done.get_future();
   co_await _manager->remove({4, 4}, ups.back().first_index);
   auto backoff = rafter::util::backoff<>::linear(3, 500ms);
   co_await backoff.attempt([this] {

@@ -106,15 +106,17 @@ future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
 
 future<> segment_manager::save(std::span<update_pack> updates) {
   return with_lock(_mtx, [=]() -> future<> {
+    // FIXME(jyc): must explicitly copy the span, compiler issue? clang++-12.0.1
+    std::span<update_pack> ups = updates;
     bool need_sync = false;
-    for (const auto& up : updates) {
+    for (const auto& up : ups) {
       bool sync = co_await append(up.update);
       need_sync = need_sync || sync;
     }
     if (need_sync) {
       co_await sync();
     }
-    for (auto& up : updates) {
+    for (auto& up : ups) {
       up.done.set_value();
     }
   });
@@ -199,6 +201,7 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
 
   auto i = _index_group.query_snapshot(id);
   if (i.empty()) {
+    l.warn("{} snapshot index not found", id);
     co_return snapshot_ptr{};
   }
   auto it = _segments.find(i.filename);
@@ -274,6 +277,9 @@ future<> segment_manager::import_snapshot(protocol::snapshot_ptr snapshot) {
 }
 
 future<bool> segment_manager::append(const update& up) {
+  if (up.snapshot && up.snapshot->group_id != up.gid) [[unlikely]] {
+    l.warn("snapshot's {} does not match update's {}", up.snapshot->group_id);
+  }
   if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
     co_return false;
   }
