@@ -27,6 +27,9 @@ class util {
   static size_t extract_entries(
       const protocol::update& up, protocol::log_entry_vector& entries);
   static bool compare(
+      const protocol::log_entry_vector& lhs,
+      const protocol::log_entry_vector& rhs) noexcept;
+  static bool compare(
       const protocol::update& lhs, const protocol::update& rhs) noexcept;
   static bool compare(
       const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept;
@@ -37,6 +40,7 @@ class util {
   static protocol::log_entry_vector new_entries(protocol::hint range);
   static protocol::log_entry_vector new_entries(
       const std::vector<protocol::log_id>& lids);
+  static protocol::snapshot_ptr new_snapshot(protocol::log_id lid);
 };
 
 }  // namespace rafter::test

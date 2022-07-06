@@ -89,6 +89,23 @@ size_t util::extract_entries(const update& up, log_entry_vector& entries) {
   return size;
 }
 
+// TODO(jyc): need log mismatched elements in following compare helpers
+bool util::compare(
+    const log_entry_vector& lhs, const log_entry_vector& rhs) noexcept {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    if (lhs[i].operator bool() ^ rhs[i].operator bool()) {
+      return false;
+    }
+    if (lhs[i] && *lhs[i] != *rhs[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool util::compare(const update& lhs, const update& rhs) noexcept {
   if (lhs.gid != rhs.gid) {
     return false;
@@ -105,18 +122,8 @@ bool util::compare(const update& lhs, const update& rhs) noexcept {
   if (lhs.snapshot_index != rhs.snapshot_index) {
     return false;
   }
-  if (lhs.entries_to_save.size() != rhs.entries_to_save.size()) {
+  if (!compare(lhs.entries_to_save, rhs.entries_to_save)) {
     return false;
-  }
-  for (size_t i = 0; i < lhs.entries_to_save.size(); ++i) {
-    if (lhs.entries_to_save[i].operator bool() ^
-        rhs.entries_to_save[i].operator bool()) {
-      return false;
-    }
-    if (lhs.entries_to_save[i] &&
-        *lhs.entries_to_save[i] != *rhs.entries_to_save[i]) {
-      return false;
-    }
   }
   if (lhs.snapshot.operator bool() ^ rhs.snapshot.operator bool()) {
     return false;
@@ -127,8 +134,7 @@ bool util::compare(const update& lhs, const update& rhs) noexcept {
   return true;
 }
 
-bool util::compare(
-    const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept {
+bool util::compare(const snapshot& lhs, const snapshot& rhs) noexcept {
   if (lhs.group_id != rhs.group_id) {
     return false;
   }
@@ -176,12 +182,13 @@ bool util::compare(
   return true;
 }
 
-protocol::log_entry_ptr util::new_entry(protocol::log_id lid) {
+log_entry_ptr util::new_entry(log_id lid) {
   auto e = make_lw_shared<log_entry>();
   e->lid = lid;
   return e;
 }
-protocol::log_entry_vector util::new_entries(protocol::hint range) {
+
+log_entry_vector util::new_entries(hint range) {
   log_entry_vector entries;
   entries.reserve(range.count());
   for (uint64_t i = range.low; i < range.high; ++i) {
@@ -191,8 +198,7 @@ protocol::log_entry_vector util::new_entries(protocol::hint range) {
   return entries;
 }
 
-protocol::log_entry_vector util::new_entries(
-    const std::vector<protocol::log_id>& lids) {
+log_entry_vector util::new_entries(const std::vector<log_id>& lids) {
   log_entry_vector entries;
   entries.reserve(lids.size());
   for (auto lid : lids) {
@@ -200,6 +206,12 @@ protocol::log_entry_vector util::new_entries(
     e->lid = lid;
   }
   return entries;
+}
+
+snapshot_ptr util::new_snapshot(log_id lid) {
+  auto ss = make_lw_shared<snapshot>();
+  ss->log_id = lid;
+  return ss;
 }
 
 }  // namespace rafter::test

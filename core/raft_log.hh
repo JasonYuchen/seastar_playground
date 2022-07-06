@@ -62,6 +62,7 @@ class in_memory_log {
 class log_reader {
  public:
   log_reader(protocol::group_id gid, storage::logdb& logdb);
+  protocol::group_id gid() const { return _gid; }
   protocol::hard_state get_state() const noexcept;
   void set_state(protocol::hard_state state) noexcept;
   protocol::membership_ptr get_membership() const noexcept;

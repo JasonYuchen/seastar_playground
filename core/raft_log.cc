@@ -433,6 +433,9 @@ bool raft_log::has_more_entries_to_apply(uint64_t applied_to) const noexcept {
 
 bool raft_log::has_config_change_to_apply() const noexcept {
   // TODO(jyc): avoid entry vector
+  if (!has_entries_to_apply()) {
+    return false;
+  }
   log_entry_vector entries;
   _in_memory.query(
       {.low = first_not_applied_index(), .high = apply_index_limit()},

@@ -37,6 +37,10 @@ class in_memory_log_test : public ::testing::Test {
   }
 };
 
+RAFTER_TEST_F(in_memory_log_test, DISABLED_assert_marker) { co_return; }
+
+RAFTER_TEST_F(in_memory_log_test, DISABLED_assert_marker_panic) { co_return; }
+
 RAFTER_TEST_F(in_memory_log_test, get_snapshot_index) {
   auto im = core::in_memory_log{0};
   ASSERT_FALSE(im.get_snapshot_index().has_value());
@@ -415,6 +419,13 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_cut_merging) {
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
 }
 
+RAFTER_TEST_F(in_memory_log_test, DISABLED_resize) {
+  // TestResize
+  // TestTryResize
+  // TestNewEntrySlice
+  co_return;
+}
+
 RAFTER_TEST_F(in_memory_log_test, unstable_maybe_first_index) {
   struct {
     uint64_t marker;
@@ -673,7 +684,12 @@ class raft_log_test : public ::testing::Test {
     });
   }
 
-  future<> append_to_test_logdb(const log_entry_vector& entries) {
+  future<> append_to_test_logdb(
+      const log_entry_vector& entries, bool reset = false) {
+    if (reset) {
+      _db = std::make_unique<test::test_logdb>();
+      _lr = std::make_unique<core::log_reader>(group_id{1, 1}, *_db);
+    }
     update up{
         .gid = {1, 1},
         .entries_to_save = entries,
@@ -1055,6 +1071,184 @@ RAFTER_TEST_F(raft_log_test, get_uncommitted_entries) {
     }
   }
   co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, find_conflict) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {2, 2}, {3, 3}});
+  struct {
+    std::vector<log_id> entries;
+    uint64_t exp_conflict;
+  } tests[] = {
+      // empty
+      {{}, 0},
+      // no conflict
+      {{{1, 1}, {2, 2}, {3, 3}}, 0},
+      {{{2, 2}, {3, 3}}, 0},
+      {{{3, 3}}, 0},
+      // no conflict with new entries
+      {{{1, 1}, {2, 2}, {3, 3}, {4, 4}, {4, 5}}, 4},
+      {{{2, 2}, {3, 3}, {4, 4}, {4, 5}}, 4},
+      {{{3, 3}, {4, 4}, {4, 5}}, 4},
+      // conflict
+      {{{4, 1}, {4, 2}}, 1},
+      {{{1, 2}, {4, 3}, {4, 4}}, 2},
+      {{{1, 3}, {2, 4}, {4, 5}, {4, 6}}, 3},
+  };
+  for (auto& t : tests) {
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(previous_entries);
+    EXPECT_EQ(
+        co_await rl.get_conflict_index(test::util::new_entries(t.entries)),
+        t.exp_conflict)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, is_up_to_date) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {2, 2}, {3, 3}});
+  auto rl = core::raft_log({1, 1}, *_lr);
+  rl.append(previous_entries);
+  struct {
+    log_id last_lid;
+    bool up_to_date;
+  } tests[] = {
+      // greater term, always up to date
+      {{4, rl.last_index() - 1}, true},
+      {{4, rl.last_index()}, true},
+      {{4, rl.last_index() + 1}, true},
+      // smaller term, always not up to date
+      {{2, rl.last_index() - 1}, false},
+      {{2, rl.last_index()}, false},
+      {{2, rl.last_index() + 1}, false},
+      // equal term, depends on index
+      {{3, rl.last_index() - 1}, false},
+      {{3, rl.last_index()}, true},
+      {{3, rl.last_index() + 1}, true},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.up_to_date(t.last_lid), t.up_to_date)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, append) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {2, 2}});
+  struct {
+    std::vector<log_id> entries;
+    std::vector<log_id> exp_entries;
+    uint64_t exp_index;
+    uint64_t exp_unstable;
+  } tests[] = {
+      // empty and append
+      {{}, {{1, 1}, {2, 2}}, 2, 3},
+      // normal append
+      {{{2, 3}}, {{1, 1}, {2, 2}, {2, 3}}, 3, 3},
+      // replace
+      {{{2, 1}}, {{2, 1}}, 1, 1},
+      // truncate and append
+      {{{3, 2}, {3, 3}}, {{1, 1}, {3, 2}, {3, 3}}, 3, 2},
+  };
+  for (auto& t : tests) {
+    co_await append_to_test_logdb(previous_entries, /*reset = */ true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(test::util::new_entries(t.entries));
+    EXPECT_EQ(rl.last_index(), t.exp_index) << CASE_INDEX(t, tests);
+    log_entry_vector queried;
+    co_await rl.query(1, queried, UINT64_MAX);
+    EXPECT_TRUE(
+        test::util::compare(queried, test::util::new_entries(t.exp_entries)))
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_marker(helper::_in_memory(rl)), t.exp_unstable)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, maybe_append) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {2, 2}, {3, 3}});
+  uint64_t li = 3;  // last index
+  uint64_t lt = 3;  // last term
+  uint64_t commit = 1;
+  struct {
+    log_id lid;
+    uint64_t committed;
+    std::vector<log_id> entries;
+    uint64_t exp_last_index;
+    bool exp_append;
+    uint64_t exp_commit;
+    bool exp_throw;
+  } tests[] = {
+      // not match: term is different
+      {{lt - 1, li}, li, {{4, li + 1}}, 0, false, commit, false},
+      // not match: index is out of range
+      {{lt, li + 1}, li, {{4, li + 2}}, 0, false, commit, false},
+      // match: match last entry
+      {{lt, li}, li, {}, li, true, li, false},
+      // match: commit cannot exceed last entry's index
+      {{lt, li}, li + 1, {}, li, true, li, false},
+      // match: commit to the specified index even we have a newer entry
+      {{lt, li}, li - 1, {}, li, true, li - 1, false},
+      // match: commit cannot move backward
+      {{lt, li}, 0, {}, li, true, commit, false},
+      // noop: commit cannot move backward
+      {{0, 0}, li, {}, 0, true, commit, false},
+      // match: append will advance last index but not commit index
+      {{lt, li}, li, {{4, li + 1}}, li + 1, true, li, false},
+      //
+      {{lt, li}, li + 1, {{4, li + 1}}, li + 1, true, li + 1, false},
+      //
+      {{lt, li}, li + 2, {{4, li + 1}}, li + 1, true, li + 1, false},
+      //
+      {{lt, li},
+       li + 2,
+       {{4, li + 1}, {4, li + 2}},
+       li + 2,
+       true,
+       li + 2,
+       false},
+      // match: match with entry in middle
+      {{lt - 1, li - 1}, li, {{4, li}}, li, true, li, false},
+      //
+      {{lt - 2, li - 2}, li, {{4, li - 1}}, li - 1, true, li - 1, false},
+      // conflict
+      {{lt - 3, li - 3}, li, {{4, li - 2}}, li - 2, true, li - 2, true},
+      //
+      {{lt - 2, li - 2}, li, {{4, li - 1}, {4, li}}, li, true, li, false},
+
+  };
+  for (auto& t : tests) {
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(previous_entries);
+    rl.set_committed(commit);
+    // refine exception flow
+    try {
+      uint64_t cur_last_index = 0;
+      bool cur_append = false;
+      if (co_await rl.term_index_match(t.lid)) {
+        cur_append = true;
+        co_await rl.try_append(t.lid.index, test::util::new_entries(t.entries));
+        cur_last_index = t.lid.index + t.entries.size();
+        rl.commit(std::min(cur_last_index, t.committed));
+      }
+      EXPECT_EQ(cur_last_index, t.exp_last_index) << CASE_INDEX(t, tests);
+      EXPECT_EQ(cur_append, t.exp_append) << CASE_INDEX(t, tests);
+      EXPECT_EQ(rl.committed(), t.exp_commit) << CASE_INDEX(t, tests);
+      if (cur_append && !t.entries.empty()) {
+        log_entry_vector e;
+        co_await rl.query(
+            {.low = rl.last_index() - t.entries.size() + 1,
+             .high = rl.last_index() + 1},
+            e,
+            UINT64_MAX);
+        EXPECT_TRUE(test::util::compare(e, test::util::new_entries(t.entries)))
+            << CASE_INDEX(t, tests);
+      }
+    } catch (rafter::util::failed_precondition_error& e) {
+      EXPECT_TRUE(t.exp_throw) << CASE_INDEX(t, tests);
+    }
+  }
 }
 
 }  // namespace
