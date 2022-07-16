@@ -50,6 +50,7 @@ class core_helper {
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
   PUBLISH_METHOD(core::raft, tick);
+  PUBLISH_VARIABLE(core::raft, _gid);
   PUBLISH_VARIABLE(core::raft, _role);
   PUBLISH_VARIABLE(core::raft, _leader_id);
   PUBLISH_VARIABLE(core::raft, _leader_transfer_target);

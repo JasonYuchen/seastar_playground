@@ -348,13 +348,13 @@ void utils::assert_continuous(log_entry_span left, log_entry_span right) {
     return;
   }
   if (left.back()->lid.index + 1 != right.front()->lid.index) {
-    throw util::failed_precondition_error(fmt::format(
+    util::panic::panic_with_backtrace(fmt::format(
         "gap found, left:{}, right:{}",
         left.back()->lid.index,
         right.front()->lid.index));
   }
   if (left.back()->lid.term > right.front()->lid.term) {
-    throw util::failed_precondition_error(fmt::format(
+    util::panic::panic_with_backtrace(fmt::format(
         "decreasing term, left:{}, right:{}",
         left.back()->lid.term,
         right.front()->lid.term));

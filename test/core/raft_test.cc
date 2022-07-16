@@ -78,7 +78,7 @@ class raft_sm final : public sm {
     , _r(std::make_unique<core::raft>(*_cfg, _db->lr())) {}
   ~raft_sm() override = default;
 
-  static std::unique_ptr<raft_sm> make(
+  static raft_sm* make(
       uint64_t id,
       const std::vector<uint64_t>& peers,
       uint64_t election,
@@ -86,7 +86,7 @@ class raft_sm final : public sm {
     return make(id, peers, election, heartbeat, std::make_unique<db>());
   }
 
-  static std::unique_ptr<raft_sm> make(
+  static raft_sm* make(
       uint64_t id,
       const std::vector<uint64_t>& peers,
       uint64_t election,
@@ -98,27 +98,26 @@ class raft_sm final : public sm {
     for (uint64_t peer : peers) {
       helper::_remotes(r->raft()).emplace(peer, core::remote{.next = 1});
     }
-    return r;
+    return r.release();
   }
 
-  static std::unique_ptr<raft_sm> make_with_entries(
-      const std::vector<log_id>& log_ids) {
+  static raft_sm* make_with_entries(const std::vector<log_id>& log_ids) {
     auto config = new_test_config(1, 5, 1);
     auto logdb = std::make_unique<db>();
     // test log db will not perform disk io
     EXPECT_TRUE(logdb->append(test::util::new_entries(log_ids)).available());
     auto r = std::make_unique<raft_sm>(std::move(config), std::move(logdb));
     helper::reset(r->raft(), log_ids.back().term, true);
-    return r;
+    return r.release();
   }
 
-  static std::unique_ptr<raft_sm> make_with_vote(uint64_t term, uint64_t vote) {
+  static raft_sm* make_with_vote(uint64_t term, uint64_t vote) {
     auto config = new_test_config(1, 5, 1);
     auto logdb = std::make_unique<db>();
     logdb->set_state({.term = term, .vote = vote});
     auto r = std::make_unique<raft_sm>(std::move(config), std::move(logdb));
     helper::reset(r->raft(), term, true);
-    return r;
+    return r.release();
   }
 
   future<> handle(message m) override { return _r->handle(m); }
@@ -174,7 +173,9 @@ struct network {
         for (auto& node : helper::_witnesses(p.raft())) {
           witnesses.insert(node.first);
         }
+        // manually overwrite the node id
         p.cfg().node_id = node_id;
+        helper::_gid(p.raft()) = {1, node_id};
         for (size_t j = 0; j < peers.size(); ++j) {
           if (observers.contains(j + 1)) {
             helper::_observers(p.raft()).emplace(j + 1, core::remote{});
@@ -650,7 +651,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_second_transfer_to_same_node) {
 }
 
 RAFTER_TEST_F(raft_test, remote_resume_by_heartbeat_resp) {
-  auto r = raft_sm::make(1, {1, 2}, 5, 1);
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
   helper::become_candidate(r->raft());
   co_await helper::become_leader(r->raft());
   helper::_remotes(r->raft())[2].retry_to_wait();
@@ -664,7 +665,7 @@ RAFTER_TEST_F(raft_test, remote_resume_by_heartbeat_resp) {
 }
 
 RAFTER_TEST_F(raft_test, remote_paused) {
-  auto r = raft_sm::make(1, {1, 2}, 5, 1);
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
   helper::become_candidate(r->raft());
   co_await helper::become_leader(r->raft());
   co_await r->raft().handle(
@@ -683,6 +684,54 @@ RAFTER_TEST_F(raft_test, remote_paused) {
        .to = 1,
        .entries = {make_lw_shared<log_entry>()}});
   ASSERT_EQ(r->read_messages().size(), 1);
+}
+
+RAFTER_TEST_F(raft_test, leader_election) {
+  struct {
+    network nt;
+    raft_role exp_role;
+    uint64_t exp_term;
+  } tests[] = {
+      {network{{null(), null(), null()}}, raft_role::leader, 1},
+      {network{{null(), null(), noop()}}, raft_role::leader, 1},
+
+      // FIXME(jyc): with prevote enabled, these tests will fail
+      // {network{{null(), noop(), noop()}}, raft_role::candidate, 1},
+      // {network{{null(), noop(), noop(), null()}}, raft_role::candidate, 1},
+
+      // with prevote disabled, these tests will fail
+      {network{{null(), noop(), noop()}}, raft_role::pre_candidate, 0},
+      {network{{null(), noop(), noop(), null()}}, raft_role::pre_candidate, 0},
+
+      {network{{null(), noop(), noop(), null(), null()}}, raft_role::leader, 1},
+
+      // logs not up to date, receive 3 rejections and become follower
+      {network{
+           {raft_sm::make_with_entries({{1, 1}}),
+            raft_sm::make_with_entries({{1, 1}, {1, 2}}),
+            raft_sm::make_with_entries({{1, 1}, {1, 2}}),
+            raft_sm::make_with_entries({{1, 1}, {1, 2}}),
+            null()}},
+       raft_role::follower,
+       1},
+
+      // receive higher term from peers, become follower
+      {network{
+           {null(),
+            raft_sm::make_with_entries({{1, 1}}),
+            raft_sm::make_with_entries({{1, 1}}),
+            raft_sm::make_with_entries({{1, 1}, {1, 2}}),
+            null()}},
+       raft_role::follower,
+       1},
+  };
+  for (auto& t : tests) {
+    co_await t.nt.send({.type = message_type::election, .from = 1, .to = 1});
+    auto& sm = raft_cast(t.nt.sms[1].get());
+    EXPECT_EQ(helper::_role(sm), t.exp_role) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_term(sm), t.exp_term) << CASE_INDEX(t, tests);
+  }
+  co_return;
 }
 
 }  // namespace

@@ -19,7 +19,7 @@ using namespace protocol;
 template <typename... Args>
 void throw_with_log(logger::format_info fmt, Args&&... args) {
   l.error(fmt, std::forward<Args>(args)...);
-  throw util::invalid_raft_state();
+  throw_with_backtrace<util::invalid_raft_state>();
 }
 
 raft::raft(const raft_config& cfg, log_reader& lr)
