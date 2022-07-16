@@ -4,6 +4,9 @@
 
 #include "error.hh"
 
+#include "seastar/util/backtrace.hh"
+#include "util/seastarx.hh"
+
 namespace rafter::util {
 
 std::string_view status_string(enum code e) {
@@ -34,6 +37,14 @@ std::string_view status_string(enum code e) {
   static_assert(
       sizeof(s) / sizeof(s[0]) == static_cast<int>(code::num_of_codes));
   return s[static_cast<uint8_t>(e)];
+}
+
+void panic::panic_with_backtrace(std::string_view msg) {
+  throw_with_backtrace<panic>(msg);
+}
+
+std::exception_ptr panic::panic_ptr_with_backtrace(std::string_view msg) {
+  return make_backtraced_exception_ptr<panic>(msg);
 }
 
 }  // namespace rafter::util

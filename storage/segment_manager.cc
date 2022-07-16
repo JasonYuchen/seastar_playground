@@ -278,7 +278,8 @@ future<> segment_manager::import_snapshot(protocol::snapshot_ptr snapshot) {
 
 future<bool> segment_manager::append(const update& up) {
   if (up.snapshot && up.snapshot->group_id != up.gid) [[unlikely]] {
-    l.warn("snapshot's {} does not match update's {}", up.snapshot->group_id);
+    l.warn(
+        "snapshot:{} does not match update:{}", up.snapshot->group_id, up.gid);
   }
   if (!up.snapshot && up.entries_to_save.empty() && up.state.empty()) {
     co_return false;

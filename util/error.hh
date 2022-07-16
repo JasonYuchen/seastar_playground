@@ -68,6 +68,8 @@ class panic : public base_error {
   using base_error::base_error;
   explicit panic(std::string_view msg)
     : base_error(code::panic, std::string(msg)) {}
+  static void panic_with_backtrace(std::string_view msg);
+  static std::exception_ptr panic_ptr_with_backtrace(std::string_view msg);
 };
 
 class configuration_error : public base_error {

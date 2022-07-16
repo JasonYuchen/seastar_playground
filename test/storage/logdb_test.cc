@@ -6,6 +6,7 @@
 #include "rafter/config.hh"
 #include "storage/segment_manager.hh"
 #include "test/base.hh"
+#include "test/test_logdb.hh"
 #include "test/util.hh"
 
 using namespace rafter;
@@ -18,8 +19,7 @@ using rafter::test::l;
 
 namespace {
 
-// TODO(jyc): test test_logdb and segment_manager
-class logdb_test : public ::testing::Test {
+class logdb_test : public ::testing::TestWithParam<std::string> {
  protected:
   void SetUp() override {
     base::submit([this]() -> future<> {
@@ -27,33 +27,53 @@ class logdb_test : public ::testing::Test {
       co_await recursive_remove_directory(config::shard().data_dir)
           .handle_exception([](auto) {});
       co_await recursive_touch_directory(config::shard().data_dir);
-      auto db = std::make_unique<segment_manager>(test::util::partition_func());
-      co_await db->start();
-      _logdb.reset(db.release());
+      if (GetParam() == "test_logdb") {
+        _logdb = std::make_unique<test::test_logdb>();
+      }
+      if (GetParam() == "segment_manager") {
+        auto* db = new segment_manager(test::util::partition_func());
+        co_await db->start();
+        _logdb.reset(db);
+      }
       co_return;
     });
   }
 
   void TearDown() override {
     base::submit([this]() -> future<> {
-      co_await dynamic_cast<segment_manager*>(_logdb.get())->stop();
+      if (GetParam() == "segment_manager") {
+        co_await dynamic_cast<segment_manager*>(_logdb.get())->stop();
+      }
       _logdb.reset();
       co_return;
     });
   }
+
+  // generate cluster ids that belong to the same shard
+  // with default partitioner (i.e. modulo)
+  static uint64_t generate_cluster_id(uint64_t sequence) {
+    return sequence * smp::count;
+  }
+
   std::unique_ptr<logdb> _logdb;
 };
 
-RAFTER_TEST_F(logdb_test, missing_bootstrap) {
+// test against all logdb implementations
+INSTANTIATE_TEST_SUITE_P(
+    storage,
+    logdb_test,
+    testing::Values(std::string("test_logdb"), std::string("segment_manager")));
+
+RAFTER_TEST_P(logdb_test, missing_bootstrap) {
   auto info = co_await _logdb->load_bootstrap({1, 1});
   ASSERT_FALSE(info.has_value());
 }
 
-RAFTER_TEST_F(logdb_test, save_and_load_bootstrap) {
+RAFTER_TEST_P(logdb_test, save_and_load_bootstrap) {
   // use special cluster id due to a naive modulo partitioner
-  uint64_t cluster_id_1 = 1 * smp::count;
-  uint64_t cluster_id_2 = 2 * smp::count;
-  uint64_t cluster_id_3 = 3 * smp::count;
+  auto cluster_id_1 = generate_cluster_id(1);
+  auto cluster_id_2 = generate_cluster_id(2);
+  auto cluster_id_3 = generate_cluster_id(3);
   member_map members{{100, "address1"}, {200, "address2"}, {300, "address3"}};
   bootstrap info{
       .addresses = members,
@@ -73,18 +93,18 @@ RAFTER_TEST_F(logdb_test, save_and_load_bootstrap) {
   ASSERT_EQ(nodes.size(), 3);
 }
 
-RAFTER_TEST_F(logdb_test, DISABLED_snapshot_has_max_index_set) {
+RAFTER_TEST_P(logdb_test, DISABLED_snapshot_has_max_index_set) {
   // TODO(jyc): add check
   co_return;
 }
 
-RAFTER_TEST_F(
+RAFTER_TEST_P(
     logdb_test, DISABLED_save_snapshot_with_unexpected_entries_will_panic) {
   // TODO(jyc): add check
   co_return;
 }
 
-RAFTER_TEST_F(logdb_test, save_snapshot) {
+RAFTER_TEST_P(logdb_test, save_snapshot) {
   auto hs1 = hard_state{.term = 2, .vote = 3, .commit = 100};
   auto e1 = test::util::new_entry({.term = 1, .index = 10});
   e1->type = entry_type::application;
@@ -124,6 +144,33 @@ RAFTER_TEST_F(logdb_test, save_snapshot) {
   ASSERT_EQ(sp->file_path, sp2->file_path);
   ASSERT_EQ(sp->file_size, sp2->file_size);
   co_return;
+}
+
+RAFTER_TEST_P(logdb_test, snapshot_read_raft_state) {
+  auto ss = test::util::new_snapshot({2, 100});
+  auto hs = hard_state{.term = 2, .vote = 3, .commit = 100};
+  auto ud = update{.gid = {3, 4}, .state = hs, .snapshot = ss};
+  ud.fill_meta();
+  update_pack pack{ud};
+  co_await _logdb->save({&pack, 1});
+  co_await pack.done.get_future();
+  auto rs = co_await _logdb->query_raft_state({3, 4}, 100);
+  // FIXME(jyc): snapshot is not included as first index
+  // ASSERT_EQ(rs.first_index, 100);
+  ASSERT_EQ(rs.entry_count, 0);
+  ASSERT_EQ(rs.hard_state, hs);
+}
+
+RAFTER_TEST_P(logdb_test, open_new_db) {
+  auto state = co_await _logdb->query_raft_state({2, 3}, 0);
+  ASSERT_TRUE(state.empty());
+  auto snap = co_await _logdb->query_snapshot({2, 3});
+  ASSERT_FALSE(snap);
+  log_entry_vector entries;
+  auto size =
+      co_await _logdb->query_entries({2, 3}, {0, 100}, entries, UINT64_MAX);
+  ASSERT_TRUE(entries.empty());
+  ASSERT_EQ(size, UINT64_MAX);
 }
 
 }  // namespace

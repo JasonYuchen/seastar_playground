@@ -4,6 +4,8 @@
 
 #include "test_logdb.hh"
 
+#include "test/base.hh"
+
 namespace rafter::test {
 
 using namespace protocol;
@@ -18,27 +20,42 @@ future<std::vector<group_id>> test_logdb::list_nodes() {
 }
 
 future<> test_logdb::save_bootstrap(group_id id, const bootstrap& info) {
+  if (!id.valid()) {
+    l.error("test_logdb::save: invalid {}", id);
+    rafter::util::panic::panic_with_backtrace("invalid gid");
+  }
   _clusters[id]._boot = info;
   return make_ready_future<>();
 }
 
 future<std::optional<bootstrap>> test_logdb::load_bootstrap(group_id id) {
   if (auto it = _clusters.find(id); it != _clusters.end()) {
+    l.warn("test_logdb::load_bootstrap: {} not found", id);
     return make_ready_future<std::optional<bootstrap>>(it->second._boot);
   }
+
   return make_ready_future<std::optional<bootstrap>>(std::nullopt);
 }
 
 future<> test_logdb::save(std::span<storage::update_pack> updates) {
   for (auto& up : updates) {
+    if (!up.update.gid.valid()) {
+      l.error("test_logdb::save: invalid {}", up.update.gid);
+      rafter::util::panic::panic_with_backtrace("invalid gid");
+    }
     auto& n = _clusters[up.update.gid];
     for (const auto& ent : up.update.entries_to_save) {
       if (!n._entries.empty() &&
           ent->lid.index != n._entries.back()->lid.index + 1) {
-        return make_exception_future<>(
-            rafter::util::panic("inconsistent entry"));
+        rafter::util::panic::panic_with_backtrace("inconsistent entry");
       }
       n._entries.push_back(ent);
+    }
+    if (up.update.snapshot) {
+      n._snap = up.update.snapshot;
+    }
+    if (!up.update.state.empty()) {
+      n._state = up.update.state;
     }
     up.done.set_value();
   }
@@ -65,8 +82,7 @@ future<size_t> test_logdb::query_entries(
       continue;
     }
     if (!entries.empty() && entries.back()->lid.index + 1 != ent->lid.index) {
-      return make_exception_future<size_t>(
-          rafter::util::panic("inconsistent entry"));
+      rafter::util::panic::panic_with_backtrace("inconsistent entry");
     }
     entries.push_back(ent);
     max_bytes -= ent->bytes();
