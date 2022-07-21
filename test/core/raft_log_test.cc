@@ -212,7 +212,7 @@ RAFTER_TEST_F(in_memory_log_test, merge_with_gap) {
   helper::_entries(im) = test::util::new_entries({5, 8});
   helper::_shrunk(im) = true;
   auto to_merge = test::util::new_entries({9, 11});
-  ASSERT_THROW(im.merge(to_merge), rafter::util::failed_precondition_error);
+  ASSERT_THROW(im.merge(to_merge), rafter::util::panic);
 }
 
 RAFTER_TEST_F(in_memory_log_test, merge) {
@@ -663,7 +663,7 @@ RAFTER_TEST_F(log_reader_test, panic_when_gap) {
   auto lr = core::log_reader({1, 1}, _db);
   helper::_marker(lr) = {1, 10};
   helper::_length(lr) = 10;
-  ASSERT_THROW(lr.set_range({50, 60}), rafter::util::failed_precondition_error);
+  ASSERT_THROW(lr.set_range({50, 60}), rafter::util::panic);
 }
 
 class raft_log_test : public ::testing::Test {
@@ -685,18 +685,28 @@ class raft_log_test : public ::testing::Test {
   }
 
   future<> append_to_test_logdb(
-      const log_entry_vector& entries, bool reset = false) {
+      const log_entry_vector& entries,
+      snapshot_ptr snap = {},
+      bool reset = false) {
     if (reset) {
       _db = std::make_unique<test::test_logdb>();
       _lr = std::make_unique<core::log_reader>(group_id{1, 1}, *_db);
     }
+    if (snap) {
+      snap->group_id = {1, 1};
+    }
     update up{
         .gid = {1, 1},
         .entries_to_save = entries,
+        .snapshot = snap,
     };
     storage::update_pack pack(up);
     co_await _db->save({&pack, 1});
+    co_await pack.done.get_future();
     _lr->apply_entries(entries);
+    if (snap) {
+      _lr->apply_snapshot(snap);
+    }
   }
 
   std::unique_ptr<test::test_logdb> _db;
@@ -805,7 +815,7 @@ RAFTER_TEST_F(raft_log_test, panic_if_append_committed_entries) {
   rl.set_committed(2);
   ASSERT_THROW(
       rl.append(test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}})),
-      rafter::util::failed_precondition_error);
+      rafter::util::panic);
 }
 
 RAFTER_TEST_F(raft_log_test, first_index_from_logdb) {
@@ -1020,7 +1030,7 @@ RAFTER_TEST_F(raft_log_test, panic_when_commit_to_unavailable_index) {
       test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
-  ASSERT_THROW(rl.commit(8), rafter::util::failed_precondition_error);
+  ASSERT_THROW(rl.commit(8), rafter::util::panic);
 }
 
 RAFTER_TEST_F(raft_log_test, commit_update) {
@@ -1036,7 +1046,7 @@ RAFTER_TEST_F(raft_log_test, commit_update_twice_will_throw) {
   rl.set_processed(6);
   rl.set_committed(10);
   update_commit uc{.processed = 5};
-  ASSERT_THROW(rl.commit_update(uc), rafter::util::failed_precondition_error);
+  ASSERT_THROW(rl.commit_update(uc), rafter::util::panic);
 }
 
 RAFTER_TEST_F(raft_log_test, panic_when_commit_update_has_not_committed_entry) {
@@ -1044,7 +1054,7 @@ RAFTER_TEST_F(raft_log_test, panic_when_commit_update_has_not_committed_entry) {
   rl.set_processed(6);
   rl.set_committed(10);
   update_commit uc{.processed = 12};
-  ASSERT_THROW(rl.commit_update(uc), rafter::util::failed_precondition_error);
+  ASSERT_THROW(rl.commit_update(uc), rafter::util::panic);
 }
 
 RAFTER_TEST_F(raft_log_test, get_uncommitted_entries) {
@@ -1151,7 +1161,8 @@ RAFTER_TEST_F(raft_log_test, append) {
       {{{3, 2}, {3, 3}}, {{1, 1}, {3, 2}, {3, 3}}, 3, 2},
   };
   for (auto& t : tests) {
-    co_await append_to_test_logdb(previous_entries, /*reset = */ true);
+    co_await append_to_test_logdb(
+        previous_entries, /* snapshot = */ {}, /*reset = */ true);
     auto rl = core::raft_log({1, 1}, *_lr);
     rl.append(test::util::new_entries(t.entries));
     EXPECT_EQ(rl.last_index(), t.exp_index) << CASE_INDEX(t, tests);
@@ -1245,8 +1256,97 @@ RAFTER_TEST_F(raft_log_test, maybe_append) {
         EXPECT_TRUE(test::util::compare(e, test::util::new_entries(t.entries)))
             << CASE_INDEX(t, tests);
       }
-    } catch (rafter::util::failed_precondition_error& e) {
+    } catch (rafter::util::panic& e) {
       EXPECT_TRUE(t.exp_throw) << CASE_INDEX(t, tests);
+    }
+  }
+}
+
+RAFTER_TEST_F(raft_log_test, next_entries) {
+  auto snap = test::util::new_snapshot({1, 3});
+  auto entries = test::util::new_entries({{1, 4}, {1, 5}, {1, 6}});
+  struct {
+    uint64_t applied;
+    bool exp_has_next;
+    std::vector<log_id> exp_entries;
+  } tests[] = {
+      {0, true, {{1, 4}, {1, 5}}},
+      {3, true, {{1, 4}, {1, 5}}},
+      {4, true, {{1, 5}}},
+      {5, false, {}},
+  };
+  for (auto& t : tests) {
+    co_await append_to_test_logdb({}, snap, true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(entries);
+    co_await rl.try_commit({1, 5});
+    rl.commit_update({.processed = t.applied});
+    EXPECT_EQ(rl.has_entries_to_apply(), t.exp_has_next)
+        << CASE_INDEX(t, tests);
+    log_entry_vector queried;
+    co_await rl.get_entries_to_apply(queried);
+    EXPECT_TRUE(
+        test::util::compare(queried, test::util::new_entries(t.exp_entries)))
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, commit_to_2) {
+  auto entries = test::util::new_entries({{1, 1}, {2, 2}, {3, 3}});
+  uint64_t commit = 2;
+  struct {
+    uint64_t commit;
+    uint64_t exp_commit;
+    bool exp_throw;
+  } tests[] = {
+      {3, 3, false}, {1, 2, false}, {4, 0, true},  // commit out-of-range
+  };
+  for (auto& t : tests) {
+    co_await append_to_test_logdb({}, {}, true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(entries);
+    rl.set_committed(commit);
+    if (t.exp_throw) {
+      EXPECT_THROW(rl.commit(t.commit), rafter::util::panic)
+          << CASE_INDEX(t, tests);
+    } else {
+      rl.commit(t.commit);
+      EXPECT_EQ(rl.committed(), t.exp_commit) << CASE_INDEX(t, tests);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, compaction) {
+  struct {
+    uint64_t last_index;
+    std::vector<uint64_t> compact;
+    std::vector<uint64_t> exp_left;
+    bool exp_throw;
+  } tests[] = {
+      // beyond upper bound
+      {1000, {1001}, {1000}, true},
+      // within range
+      {1000, {300, 500, 800, 900, 1000}, {700, 500, 200, 100, 0}, false},
+      // below lower bound
+      {1000, {300, 299}, {700, 700}, true},
+  };
+  for (auto& t : tests) {
+    auto to_append = test::util::new_entries({1, t.last_index + 1});
+    co_await append_to_test_logdb(to_append, {}, true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    co_await rl.try_commit({t.last_index, t.last_index});
+    rl.commit_update({.processed = rl.committed()});
+    for (uint64_t j = 0; j < t.compact.size(); ++j) {
+      try {
+        co_await _lr->apply_compaction(t.compact[j]);
+      } catch (rafter::util::raft_error& e) {
+        EXPECT_TRUE(t.exp_throw) << CASE_INDEX(t, tests);
+      }
+      log_entry_vector entries;
+      co_await rl.query(rl.first_index(), entries, UINT64_MAX);
+      EXPECT_EQ(entries.size(), t.exp_left[j]);
     }
   }
 }

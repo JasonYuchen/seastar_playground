@@ -41,8 +41,8 @@ size_t in_memory_log::query(
       break;
     }
     if (!entries.empty() && entries.back()->lid.index + 1 != (*it)->lid.index) {
-      throw util::failed_precondition_error(fmt::format(
-          "gap found, left:{}, right:{}",
+      util::panic::panic_with_backtrace(fmt::format(
+          "log hole found, left:{}, right:{}",
           entries.back()->lid.index,
           (*it)->lid.index));
     }
@@ -128,7 +128,11 @@ void in_memory_log::advance_applied_log(uint64_t applied_index) {
     return;
   }
   if (_entries[applied_index - _marker]->lid.index != applied_index) {
-    throw util::failed_precondition_error("mismatch last applied index");
+    util::panic::panic_with_backtrace(fmt::format(
+        "mismatch last applied index, applied_index:{}, expect:{}, marker:{}",
+        _entries[applied_index - _marker]->lid.index,
+        applied_index,
+        _marker));
   }
   _applied = _entries[applied_index - _marker]->lid;
   auto new_marker = applied_index + 1;
@@ -216,7 +220,7 @@ void in_memory_log::restore(snapshot_ptr snapshot) noexcept {
 
 void in_memory_log::assert_marker() const {
   if (!_entries.empty() && _entries.front()->lid.index != _marker) {
-    throw util::failed_precondition_error(fmt::format(
+    util::panic::panic_with_backtrace(fmt::format(
         "mismatch marker:{}, first index:{}",
         _marker,
         _entries.front()->lid.index));
@@ -265,9 +269,9 @@ future<size_t> log_reader::query(
       co_return coroutine::make_exception(
           util::unavailable_error(entries.back()->lid.index, last_index() + 1));
     }
-    co_return coroutine::make_exception(
-        util::failed_precondition_error(fmt::format(
-            "log hole found in [{}:{}) at {}",
+    co_return coroutine::exception(
+        util::panic::panic_ptr_with_backtrace(fmt::format(
+            "log hole found in [{}: {}) at {}",
             range.low,
             range.high,
             entries.back()->lid.index + 1)));
@@ -306,7 +310,8 @@ void log_reader::set_range(hint range) {  // range.high = range.low + length
   } else if (_length == offset) {
     _length += range.high - range.low;
   } else {
-    throw util::failed_precondition_error("");
+    util::panic::panic_with_backtrace(
+        fmt::format("log_reader length:{} < offset:{}", _length, offset));
   }
 }
 
@@ -342,7 +347,7 @@ void log_reader::apply_entries(log_entry_span entries) {
   }
   if (entries.front()->lid.index + entries.size() - 1 !=
       entries.back()->lid.index) {
-    throw util::failed_precondition_error("log hole found");
+    util::panic::panic_with_backtrace("log hole found");
   }
   set_range({entries.front()->lid.index, entries.back()->lid.index + 1});
 }
@@ -491,7 +496,8 @@ future<size_t> raft_log::query(
   if (range.low == range.high) {
     co_return max_bytes;
   }
-  entries.reserve(range.count());
+  // FIXME(jyc): rely on dynamic allocation ?
+  // entries.reserve(range.count());
   max_bytes = co_await query_logdb(range, entries, max_bytes);
   if (max_bytes > 0) {
     max_bytes = co_await query_memory(range, entries, max_bytes);
@@ -544,7 +550,7 @@ future<uint64_t> raft_log::get_conflict_index(log_entry_span entries) const {
   co_return log_id::INVALID_INDEX;
 }
 
-future<uint64_t> raft_log::pending_config_change_count() {
+future<uint64_t> raft_log::pending_config_change_count() const {
   uint64_t count = 0;
   uint64_t start_index = _committed + 1;
   log_entry_vector entries;
@@ -561,7 +567,7 @@ future<uint64_t> raft_log::pending_config_change_count() {
         [](uint64_t count, const auto& entry) {
           return count + (entry->type == entry_type::config_change);
         });
-    start_index = entries.back()->lid.index;
+    start_index = entries.back()->lid.index + 1;
   }
 }
 
@@ -569,9 +575,9 @@ future<bool> raft_log::try_append(uint64_t index, log_entry_span entries) {
   auto conflict_index = co_await get_conflict_index(entries);
   if (conflict_index != log_id::INVALID_INDEX) {
     if (conflict_index <= _committed) {
-      co_return coroutine::make_exception(
-          util::failed_precondition_error(fmt::format(
-              "conflict {} <= committed {}", conflict_index, _committed)));
+      co_return coroutine::exception(
+          util::panic::panic_ptr_with_backtrace(fmt::format(
+              "conflict:{} <= committed:{}", conflict_index, _committed)));
     }
     append(entries.subspan(conflict_index - index - 1));
     co_return true;
@@ -584,8 +590,8 @@ void raft_log::append(log_entry_span entries) {
     return;
   }
   if (entries.front()->lid.index <= _committed) {
-    throw util::failed_precondition_error(fmt::format(
-        "append first {} <= committed {}",
+    util::panic::panic_with_backtrace(fmt::format(
+        "append first index:{} <= committed:{}",
         entries.front()->lid.index,
         _committed));
   }
@@ -613,12 +619,12 @@ void raft_log::commit(uint64_t index) {
     return;
   }
   if (index < _committed) {
-    throw util::failed_precondition_error(
-        fmt::format("commit index {} < committed {}", index, _committed));
+    util::panic::panic_with_backtrace(
+        fmt::format("commit index:{} < committed:{}", index, _committed));
   }
   if (index > last_index()) {
-    throw util::failed_precondition_error(
-        fmt::format("commit index {} > last index {}", index, last_index()));
+    util::panic::panic_with_backtrace(
+        fmt::format("commit index:{} > last_index:{}", index, last_index()));
   }
   _committed = index;
 }
@@ -627,8 +633,8 @@ void raft_log::commit_update(const update_commit& uc) {
   _in_memory.advance(uc.stable_log_id, uc.stable_snapshot_to);
   if (uc.processed > 0) {
     if (uc.processed < _processed || uc.processed > _committed) {
-      throw util::failed_precondition_error(fmt::format(
-          "processed {} out of range [{},{}]",
+      util::panic::panic_with_backtrace(fmt::format(
+          "processed:{} out of range [{}, {}]",
           uc.processed,
           _processed,
           _committed));
@@ -636,13 +642,12 @@ void raft_log::commit_update(const update_commit& uc) {
     _processed = uc.processed;
   }
   if (uc.last_applied > 0) {
-    if (uc.last_applied > _committed) {
-      throw util::failed_precondition_error(fmt::format(
-          "last_applied {} > committed {}", uc.last_applied, _committed));
-    }
-    if (uc.last_applied > _processed) {
-      throw util::failed_precondition_error(fmt::format(
-          "last_applied {} > processed {}", uc.last_applied, _processed));
+    if (uc.last_applied > _committed || uc.last_applied > _processed) {
+      util::panic::panic_with_backtrace(fmt::format(
+          "last_applied:{} > committed:{}, processed:{}",
+          uc.last_applied,
+          _committed,
+          _processed));
     }
     _in_memory.advance_applied_log(uc.last_applied);
   }
@@ -657,8 +662,8 @@ future<bool> raft_log::up_to_date(log_id lid) {
 void raft_log::restore(snapshot_ptr snapshot) {
   _in_memory.restore(snapshot);
   if (snapshot->log_id.index < _committed) {
-    throw util::failed_precondition_error(fmt::format(
-        "restore snapshot index {} < committed {}",
+    util::panic::panic_with_backtrace(fmt::format(
+        "restore snapshot index:{} < committed:{}",
         snapshot->log_id.index,
         _committed));
   }
@@ -668,8 +673,8 @@ void raft_log::restore(snapshot_ptr snapshot) {
 
 void raft_log::check_range(hint range) const {
   if (range.low > range.high) {
-    throw util::failed_precondition_error(
-        fmt::format("invalid range [{},{})", range.low, range.high));
+    util::panic::panic_with_backtrace(
+        fmt::format("invalid range [{}, {})", range.low, range.high));
   }
   auto r = entry_range();
   if (r == hint{} || range.low < r.low) {

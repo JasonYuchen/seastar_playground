@@ -140,7 +140,7 @@ class raft_log {
   protocol::snapshot_ptr get_snapshot() const noexcept;
   protocol::snapshot_ptr get_memory_snapshot() const noexcept;
   future<uint64_t> get_conflict_index(protocol::log_entry_span entries) const;
-  future<uint64_t> pending_config_change_count();
+  future<uint64_t> pending_config_change_count() const;
   future<bool> try_append(uint64_t index, protocol::log_entry_span entries);
   void append(protocol::log_entry_span entries);
   future<bool> try_commit(protocol::log_id lid);
