@@ -299,6 +299,16 @@ class raft_test : public ::testing::Test {
     co_return std::move(to_apply);
   }
 
+  static future<log_entry_vector> get_all_entries(sm* s) {
+    if (auto* rs = dynamic_cast<raft_sm*>(s); rs != nullptr) {
+      log_entry_vector entries;
+      auto fi = helper::_log(rs->raft()).first_index();
+      co_await helper::_log(rs->raft()).query(fi, entries, UINT64_MAX);
+      co_return entries;
+    }
+    throw rafter::util::panic("not a raft_sm");
+  }
+
   static membership_ptr test_membership(sm* s) {
     auto members = make_lw_shared<membership>();
     auto& r = raft_cast(s);
@@ -730,6 +740,54 @@ RAFTER_TEST_F(raft_test, leader_election) {
     auto& sm = raft_cast(t.nt.sms[1].get());
     EXPECT_EQ(helper::_role(sm), t.exp_role) << CASE_INDEX(t, tests);
     EXPECT_EQ(helper::_term(sm), t.exp_term) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, leader_cycle) {
+  // each node can campaign and be elected in turn. the elections work when not
+  // starting from a clean state as they do in leader_election tests
+  auto nt = network({null(), null(), null()});
+  for (uint64_t campaigner = 1; campaigner <= 3; campaigner++) {
+    co_await nt.send(
+        {.type = message_type::election, .from = campaigner, .to = campaigner});
+    for (auto& [id, peer] : nt.sms) {
+      auto& r = raft_cast(peer.get());
+      if (helper::_gid(r).node == campaigner) {
+        EXPECT_EQ(helper::_role(r), raft_role::leader) << campaigner;
+      } else {
+        EXPECT_EQ(helper::_role(r), raft_role::follower) << campaigner;
+      }
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, election_overwrite_newer_logs) {
+  auto nt = network({
+      raft_sm::make_with_entries({{1, 1}}),
+      raft_sm::make_with_entries({{1, 1}}),
+      raft_sm::make_with_entries({{1, 1}, {2, 2}}),
+      raft_sm::make_with_vote(2, 3),
+      raft_sm::make_with_vote(2, 3),
+  });
+  // node 1 campaigns but fails due to a quorum of nodes knows about the
+  // election that already happened at term 2
+  // node 1 is pushed to term 2
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  auto& r1 = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_role(r1), raft_role::follower);
+  ASSERT_EQ(helper::_term(r1), 2);
+  // node 1 campaigns again with higher term, succeeds
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(r1), raft_role::leader);
+  ASSERT_EQ(helper::_term(r1), 3);
+  // all nodes agree on a raft log with ids: [{1, 1}, {3, 2}]
+  for (auto& [id, peer] : nt.sms) {
+    auto entries = co_await get_all_entries(peer.get());
+    EXPECT_EQ(entries.size(), 2) << id;
+    EXPECT_EQ(entries[0]->lid.term, 1);
+    EXPECT_EQ(entries[1]->lid.term, 3);
   }
   co_return;
 }
