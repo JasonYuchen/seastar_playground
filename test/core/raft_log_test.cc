@@ -1351,4 +1351,114 @@ RAFTER_TEST_F(raft_log_test, compaction) {
   }
 }
 
+RAFTER_TEST_F(raft_log_test, restore) {
+  auto lid = log_id{1000, 1000};
+  auto snap = test::util::new_snapshot(lid);
+  co_await append_to_test_logdb({}, snap);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  log_entry_vector entries;
+  co_await rl.query(rl.first_index(), entries, UINT64_MAX);
+  ASSERT_TRUE(entries.empty());
+  ASSERT_EQ(rl.first_index(), lid.index + 1);
+  ASSERT_EQ(rl.committed(), lid.index);
+  ASSERT_EQ(helper::_marker(helper::_in_memory(rl)), lid.index + 1);
+  ASSERT_EQ(co_await rl.term(lid.index), lid.term);
+}
+
+RAFTER_TEST_F(raft_log_test, out_of_bounds) {
+  uint64_t offset = 100;
+  uint64_t num = 100;
+  auto snap = test::util::new_snapshot({1, offset});
+  co_await append_to_test_logdb({}, snap);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto to_append = test::util::new_entries({1, 101});
+  for (auto& e : to_append) {
+    e->lid = {1, e->lid.index + offset};
+  }
+  rl.append(to_append);
+  uint64_t first = offset + 1;
+  struct {
+    hint range;
+    bool panic;
+    bool compacted;
+    bool unavailable;
+  } tests[] = {
+      {{first - 2, first + 1}, false, true, false},
+      {{first - 1, first + 1}, false, true, false},
+      {{first, first}, false, false, false},
+      {{first + num / 2, first + num / 2}, false, false, false},
+      {{first + num - 1, first + num - 1}, false, false, false},
+      {{first + num, first + num}, false, false, false},
+      {{first + num, first + num + 1}, false, false, true},
+      {{first + num + 1, first + num + 1}, false, false, true},
+  };
+  for (auto& t : tests) {
+    if (t.panic) {
+      EXPECT_THROW(helper::check_range(rl, t.range), rafter::util::panic)
+          << CASE_INDEX(t, tests);
+    } else if (t.compacted) {
+      EXPECT_THROW(
+          helper::check_range(rl, t.range), rafter::util::compacted_error)
+          << CASE_INDEX(t, tests);
+    } else if (t.unavailable) {
+      EXPECT_THROW(
+          helper::check_range(rl, t.range), rafter::util::unavailable_error)
+          << CASE_INDEX(t, tests);
+    } else {
+      helper::check_range(rl, t.range);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, term) {
+  uint64_t offset = 100;
+  uint64_t num = 100;
+  auto snap = test::util::new_snapshot({1, offset});
+  co_await append_to_test_logdb({}, snap);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto to_append = test::util::new_entries({1, 100});
+  for (auto& e : to_append) {
+    e->lid = {e->lid.term, e->lid.index + offset};
+  }
+  rl.append(to_append);
+  struct {
+    uint64_t index;
+    uint64_t exp_term;
+  } tests[] = {
+      {offset - 1, 0},
+      {offset, 1},
+      {offset + num / 2, num / 2},
+      {offset + num - 1, num - 1},
+      {offset + num, 0},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.term(t.index), t.exp_term) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, term_with_unstable_snapshot) {
+  uint64_t storage_snap_index = 100;
+  uint64_t unstable_snap_index = storage_snap_index + 5;
+  auto snap = test::util::new_snapshot({1, storage_snap_index});
+  co_await append_to_test_logdb({}, snap);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  auto unstable_snap = test::util::new_snapshot({1, unstable_snap_index});
+  rl.restore(unstable_snap);
+  struct {
+    uint64_t index;
+    uint64_t exp_term;
+  } tests[] = {
+      {storage_snap_index, 0},
+      {storage_snap_index + 1, 0},
+      {unstable_snap_index - 1, 0},
+      {unstable_snap_index, 1},
+  };
+  for (auto& t : tests) {
+    EXPECT_EQ(co_await rl.term(t.index), t.exp_term) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
 }  // namespace

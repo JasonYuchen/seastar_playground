@@ -41,6 +41,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::log_reader, _length);
 
   // core::raft_log
+  PUBLISH_METHOD(core::raft_log, check_range);
   PUBLISH_VARIABLE(core::raft_log, _in_memory);
 
   // core::raft
