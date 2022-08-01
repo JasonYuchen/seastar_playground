@@ -1,5 +1,8 @@
 # rafter
 
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/JasonYuchen/seastar_playground/tree/circleci-project-setup.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/JasonYuchen/seastar_playground/tree/circleci-project-setup)
+[![License: Apache2](https://img.shields.io/github/license/JasonYuchen/seastar_playground)](https://github.com/JasonYuchen/seastar_playground/blob/master/LICENSE)
+
 ## Introduction
 
 rafter (*in progress*) is a pipelined asynchronous multi-raft group library with an in-memory key-value replicated state
@@ -19,10 +22,10 @@ rafter is deeply inspired by
 ## Build & Setup
 
 - prerequisite
-    - Compiler with C++20 support, tested with clang-12
-    - Seastar, *the installation of Seastar is not trivial, please refer to
+  - Compiler with C++20 support, tested with clang-12
+  - Seastar, *the installation of Seastar is not trivial, please refer to
       this [post](https://github.com/JasonYuchen/notes/blob/master/seastar/Setup.md)*
-    - GoogleTest, taken care of by rafter's cmake configuration
+  - GoogleTest, taken care of by rafter's cmake configuration
 
 ```shell
 TBD
