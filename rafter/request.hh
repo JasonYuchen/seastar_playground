@@ -17,7 +17,7 @@
 namespace rafter {
 
 struct request_result {
-  enum class code {
+  enum class code : uint8_t {
     timeout,
     committed,
     terminated,
@@ -25,7 +25,10 @@ struct request_result {
     dropped,
     rejected,
     completed,
+    num_of_code,
   };
+  static std::string_view name(enum code c);
+  friend std::ostream& operator<<(std::ostream& os, enum code c);
 
   static void timeout(promise<request_result>& promise) {
     promise.set_value(request_result{.code = code::timeout});

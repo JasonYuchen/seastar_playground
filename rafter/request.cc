@@ -11,6 +11,25 @@ namespace rafter {
 
 using namespace protocol;
 
+std::string_view request_result::name(enum code c) {
+  static std::string_view names[] = {
+      "timeout",
+      "committed",
+      "terminated",
+      "aborted",
+      "dropped",
+      "rejected",
+      "completed",
+  };
+  static_assert(std::size(names) == static_cast<uint8_t>(code::num_of_code));
+  assert(static_cast<uint8_t>(c) < static_cast<uint8_t>(code::num_of_code));
+  return names[static_cast<uint8_t>(c)];
+}
+
+std::ostream& operator<<(std::ostream& os, enum request_result::code c) {
+  return os << request_result::name(c);
+}
+
 pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
   _proposal_queue.reserve(config::shard().incoming_proposal_queue_length);
 }

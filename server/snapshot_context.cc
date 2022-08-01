@@ -91,7 +91,7 @@ future<bool> snapshot_context::has_flag_file() {
 
 future<> snapshot_context::finalize_snapshot(protocol::snapshot_ptr ss) {
   if (co_await file_exists(_final_dir)) {
-    throw util::snapshot_out_of_date();
+    co_await coroutine::return_exception(util::snapshot_out_of_date());
   }
   co_await create_flag_file(ss);
   co_await rename_file(_tmp_dir, _final_dir);

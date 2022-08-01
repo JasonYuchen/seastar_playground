@@ -100,7 +100,7 @@ future<> nodehost::start_cluster(
     state_machine_type type,
     statemachine::factory&& factory) {
   if (_stopped) [[unlikely]] {
-    throw util::closed_error();
+    co_await coroutine::return_exception(util::closed_error());
   }
   auto gid = group_id{cfg.cluster_id, cfg.node_id};
   auto shard = _partitioner(gid.cluster);
@@ -115,10 +115,12 @@ future<> nodehost::start_cluster(
         std::move(factory));
   }
   if (_clusters.contains(gid.cluster)) {
-    throw util::invalid_argument("cluster_id", "already exist");
+    co_await coroutine::return_exception(
+        util::invalid_argument("cluster_id", "already exist"));
   }
   if (join && !initial_members.empty()) {
-    throw util::invalid_argument("join", "initial_members not empty");
+    co_await coroutine::return_exception(
+        util::invalid_argument("join", "initial_members not empty"));
   }
   auto [peers, im] =
       co_await bootstrap_cluster(cfg, initial_members, join, type);
@@ -201,7 +203,7 @@ future<uint64_t> nodehost::get_leader(uint64_t cluster_id) {
 
 future<session> nodehost::get_session(uint64_t cluster_id) {
   if (_stopped) [[unlikely]] {
-    co_return coroutine::make_exception(util::closed_error());
+    co_await coroutine::return_exception(util::closed_error());
   }
   auto shard = _partitioner(cluster_id);
   if (shard != this_shard_id()) {
@@ -210,14 +212,14 @@ future<session> nodehost::get_session(uint64_t cluster_id) {
   }
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
-    co_return coroutine::make_exception(
+    co_await coroutine::return_exception(
         util::invalid_argument("cluster_id", "not_found"));
   }
   session s{cluster_id};
   s.prepare_for_register();
   auto r = co_await propose_session(s);
   if (r.result.value != s.client_id) [[unlikely]] {
-    co_return coroutine::make_exception(util::panic("unexpected result"));
+    co_await coroutine::return_exception(util::panic("unexpected result"));
   }
   s.prepare_for_propose();
   co_return s;
@@ -242,7 +244,7 @@ future<session> nodehost::get_noop_session(uint64_t cluster_id) {
 
 future<> nodehost::close_session(session& s) {
   if (_stopped) [[unlikely]] {
-    throw util::closed_error();
+    co_await coroutine::return_exception(util::closed_error());
   }
   auto shard = _partitioner(s.cluster_id);
   if (shard != this_shard_id()) {
@@ -251,7 +253,8 @@ future<> nodehost::close_session(session& s) {
   }
   auto it = _clusters.find(s.cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
-    throw util::invalid_argument("cluster_id", "not_found");
+    co_await coroutine::return_exception(
+        util::invalid_argument("cluster_id", "not_found"));
   }
   if (s.is_noop()) {
     co_return;
@@ -259,7 +262,7 @@ future<> nodehost::close_session(session& s) {
   s.prepare_for_unregister();
   auto r = co_await propose_session(s);
   if (r.result.value != s.client_id) [[unlikely]] {
-    throw util::panic("unexpected result");
+    co_await coroutine::return_exception(util::panic("unexpected result"));
   }
 }
 
@@ -660,7 +663,7 @@ future<> nodehost::handle_message(message m) {
     return make_exception_future<>(util::closed_error());
   }
   if (m.to == group_id::INVALID_NODE) [[unlikely]] {
-    throw util::panic("invalid to");
+    return make_exception_future<>(util::panic("invalid to"));
   }
   auto shard = _partitioner(m.cluster);
   if (shard != this_shard_id()) {
@@ -781,7 +784,7 @@ future<std::pair<member_map, bool>> nodehost::bootstrap_cluster(
   auto info = co_await _logdb.load_bootstrap({cfg.cluster_id, cfg.node_id});
   if (!info.has_value()) {
     if (!join && initial_members.empty()) {
-      co_return coroutine::make_exception(util::panic("cluster not booted"));
+      co_await coroutine::return_exception(util::panic("cluster not booted"));
     }
     member_map members;
     if (!join) {

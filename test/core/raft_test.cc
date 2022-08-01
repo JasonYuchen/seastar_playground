@@ -306,7 +306,7 @@ class raft_test : public ::testing::Test {
       co_await helper::_log(rs->raft()).query(fi, entries, UINT64_MAX);
       co_return entries;
     }
-    throw rafter::util::panic("not a raft_sm");
+    co_await coroutine::return_exception(rafter::util::panic("not a raft_sm"));
   }
 
   static membership_ptr test_membership(sm* s) {
@@ -327,13 +327,15 @@ class raft_test : public ::testing::Test {
       db* logdb, uint64_t index, membership_ptr members) {
     auto snap = logdb->lr().get_snapshot();
     if (snap && snap->log_id.index >= index) {
-      throw rafter::util::snapshot_out_of_date();
+      co_await coroutine::return_exception(
+          rafter::util::snapshot_out_of_date());
     }
     // the range is [marker + 1, marker + len - 1]
     auto range = logdb->lr().get_range();
     if (index > range.high) {
       l.error("snapshot index out of bound {} > {}", index, range.high);
-      throw rafter::util::panic("snapshot index out of bound");
+      co_await coroutine::return_exception(
+          rafter::util::panic("snapshot index out of bound"));
     }
     auto s = make_lw_shared<snapshot>();
     s->log_id = {.term = co_await logdb->lr().get_term(index), .index = index};

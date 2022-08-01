@@ -7,6 +7,7 @@
 #include <fmt/ostream.h>
 
 #include <any>
+#include <optional>
 #include <seastar/core/shared_ptr.hh>
 #include <span>
 #include <string>

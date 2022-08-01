@@ -52,7 +52,8 @@ class base_error : public std::exception {
   template <typename... Args>
   base_error(std::string_view s, enum code e, Args&&... args)
     : _e(e)
-    , _msg(fmt::format(s, status_string(e), std::forward<Args>(args)...)) {}
+    , _msg(fmt::format(
+          fmt::runtime(s), status_string(e), std::forward<Args>(args)...)) {}
 
   code error_code() const noexcept { return _e; }
 

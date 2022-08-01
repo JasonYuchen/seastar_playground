@@ -47,14 +47,14 @@ future<message> snapshot_chunk_tracker::finalize(
     server::snapshot_context& ctx) {
   if (_first.id != 0) {
     l.error("invalid chunk with id:{}", _first.id);
-    co_return coroutine::make_exception(util::panic("invalid chunk"));
+    co_await coroutine::return_exception(util::panic("invalid chunk"));
   }
   if (!have_all_chunks()) {
     l.error(
         "finalize called on incomplete chunks, expected:{}, only:{}",
         _first.count,
         _expected_next_id + 1);
-    co_return coroutine::make_exception(util::panic("incomplete chunks"));
+    co_await coroutine::return_exception(util::panic("incomplete chunks"));
   }
   auto snap = make_lw_shared<snapshot>();
   snap->log_id = _first.log_id;

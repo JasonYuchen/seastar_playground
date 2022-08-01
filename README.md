@@ -28,6 +28,9 @@ rafter is deeply inspired by
 TBD
 ```
 
+*it is recommended to use [ninja](https://github.com/ninja-build/ninja), [mold](https://github.com/rui314/mold) (
+and [ccache](https://github.com/ccache/ccache) if you want to play with the source code) to accelerate build.*
+
 ## Roadmap
 
 1. finalize all modules with extensive tests
@@ -38,9 +41,9 @@ TBD
 
 ## Module
 
-### Execution
+### Node Host
 
-The execution module manages and schedules all raft groups, storage, transport and replicated state machines.
+The nodehost manages and schedules all raft groups, storage, transport and replicated state machines.
 
 TBD
 
@@ -49,17 +52,17 @@ TBD
 The [core](core/README.md) module implements the raft algorithm based on the etcd's design.
 
 1. ⭕design doc
-2. ⚠️election with prevote
-3. ⚠️leader lease
-4. ⚠️leadership transfer
+2. ✔️election with prevote
+3. ✔️leader lease
+4. ✔️leadership transfer
 5. ⚠️log compaction
 6. ⚠️snapshot
-7. ⚠️single membership change
+7. ✔️single membership change
 8. ⭕joint consensus
-9. ⚠️observer
-10. ⚠️witness
-11. ⚠️quiesce
-12. ⚠️linearizable semantics
+9. ✔️observer
+10. ✔️witness
+11. ✔️quiesce
+12. ✔️linearizable semantics
 
 ### Storage
 
@@ -68,11 +71,8 @@ as the snapshots and the configurations of the clusters.
 
 1. ✔️design doc (lack in-memory log explanation)
 2. ✔️segment, a WAL unit
-3. ✔️segment test
-4. ✔️index, for indexing raft logs (lack dump&load)
-5. ⚠️index test (lack group index test)
-6. ✔️segment_manager, for managing raft persistent logs
-7. ⚠️segment_manager test
+3. ✔️index, for indexing raft logs (lack dump&load)
+4. ✔️segment_manager, implementation of logdb interface for managing raft persistent logs
 
 ### Transport
 
@@ -81,11 +81,8 @@ clusters.
 
 1. ⚠️design doc
 2. ✔️exchanger, for exchanging raft messages
-3. ⚠️exchanger test
-4. ✔️registry, for group discovery and peer addresses management
-5. ⭕registry test
-6. ⚠️express, for sending/receiving replicated state machine's snapshot
-7. ⭕express test
+3. ✔️registry, for group discovery and peer addresses management
+4. ⚠️express, for sending/receiving replicated state machine's snapshot
 
 ### Replicated State Machine
 
@@ -107,11 +104,13 @@ defined replicated state machine and the underlying framework.
 Various utilities to support different modules of the rafter.
 
 1. ✔️backoff, retry in coroutine style
-2. ⚠️circuit_breaker
-3. ✔️fragmented_temporary_buffer, for aligned (de)serialization
-4. ⚠️rate limiter
-5. ✔️serializer, for raft message's (de)serialization
-6. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
+2. ✔️buffering_queue, double-buffering queue
+3. ⚠️circuit_breaker
+4. ✔️fragmented_temporary_buffer, for aligned (de)serialization
+5. ✔️lru, lru cache
+6. ⚠️rate_limiter
+7. ✔️serializer, for raft message's (de)serialization
+8. ✔️worker, double-buffering multi-producer single-consumer worker coroutine, building block for pipelined service in
    rafter
 
 ### Test
@@ -132,4 +131,4 @@ in progress
 
 ## License
 
-TBD
+[Apache License 2.0](LICENSE)

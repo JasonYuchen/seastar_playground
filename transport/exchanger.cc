@@ -66,7 +66,7 @@ future<> exchanger::send_message(message m) {
     // TODO(jyc): just drop the message should be fine but remember to notify
     //  the peer is unreachable
     _dropped_messages[static_cast<int32_t>(messaging_verb::message)]++;
-    throw util::peer_not_found_error(gid);
+    return make_exception_future<>(util::peer_not_found_error(gid));
   }
   return send<srpc::no_wait_type>(
       messaging_verb::message, *address, std::move(m));
@@ -74,7 +74,8 @@ future<> exchanger::send_message(message m) {
 
 future<> exchanger::send_snapshot(message m) {
   if (!m.snapshot) {
-    throw util::invalid_argument("snapshot", "empty snapshot in message");
+    return make_exception_future<>(
+        util::invalid_argument("snapshot", "empty snapshot in message"));
   }
   return _express.send(std::move(m));
 }
@@ -86,7 +87,7 @@ future<srpc::sink<snapshot_chunk>> exchanger::make_sink_for_snapshot_chunk(
   auto address = _registry.resolve(remote);
   if (!address) {
     // TODO(jyc): group unreachable
-    co_return coroutine::make_exception(util::peer_not_found_error(remote));
+    co_await coroutine::return_exception(util::peer_not_found_error(remote));
   }
   auto client = get_rpc_client(messaging_verb::message, *address);
   auto sink = co_await client->make_stream_sink<serializer, snapshot_chunk>();

@@ -103,7 +103,8 @@ future<> peer::report_snapshot_status(uint64_t node, bool reject) {
 
 future<> peer::handle(message m) {
   if (is_local(m.type)) [[unlikely]] {
-    throw util::failed_precondition_error("peer received local message");
+    return make_exception_future<>(
+        util::failed_precondition_error("peer received local message"));
   }
   if (_raft._remotes.contains(m.from) || _raft._observers.contains(m.from) ||
       _raft._witnesses.contains(m.from) || !is_response(m.type)) {
@@ -155,7 +156,6 @@ future<update> peer::get_update(bool more_to_apply, uint64_t last_applied) {
   }
   if (more_to_apply) {
     co_await _raft._log.get_entries_to_apply(up.committed_entries);
-    ;
   }
   if (!up.committed_entries.empty()) {
     auto last = up.committed_entries.back()->lid.index;
@@ -173,6 +173,7 @@ future<update> peer::get_update(bool more_to_apply, uint64_t last_applied) {
   up.validate();
   up.set_fast_apply();
   up.set_update_commit();
+  up.fill_meta();
   co_return std::move(up);
 }
 

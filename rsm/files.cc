@@ -33,10 +33,12 @@ future<> files::prepare_files(
     if (fi.type == directory_entry_type::directory) {
       // TODO(jyc): shall we support a directory ? and shall we move the check
       //  to the files::add_file
-      throw util::invalid_argument("file", "rsm file is a directory");
+      co_await coroutine::return_exception(
+          util::invalid_argument("file", "rsm file is a directory"));
     }
     if (fi.size == 0) {
-      throw util::invalid_argument("file", "empty rsm file");
+      co_await coroutine::return_exception(
+          util::invalid_argument("file", "empty rsm file"));
     }
     f->file_path = std::filesystem::path(final_dir).append(fn).string();
     f->file_size = fi.size;

@@ -34,8 +34,7 @@ std::string_view status_string(enum code e) {
       "no_data",
       "exhausted",
       "unknown"};
-  static_assert(
-      sizeof(s) / sizeof(s[0]) == static_cast<int>(code::num_of_codes));
+  static_assert(std::size(s) == static_cast<int>(code::num_of_codes));
   return s[static_cast<uint8_t>(e)];
 }
 

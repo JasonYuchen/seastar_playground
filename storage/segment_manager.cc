@@ -186,7 +186,7 @@ future<raft_state> segment_manager::query_raft_state(
             "{} segment_manager::query_raft_state: missing index:{}",
             id,
             prev_idx + 1);
-        co_return coroutine::make_exception(util::corruption_error());
+        co_await coroutine::return_exception(util::corruption_error());
       }
       prev_idx = e.last_index;
     }
@@ -210,7 +210,7 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
         "{} segment_manager::query_snapshot: segment:{} not found",
         id,
         i.filename);
-    co_return coroutine::make_exception(util::corruption_error());
+    co_await coroutine::return_exception(util::corruption_error());
   }
   reference_segments({&i, 1});
   auto* segment = it->second.get();
@@ -218,7 +218,7 @@ future<snapshot_ptr> segment_manager::query_snapshot(group_id id) {
   co_await unreference_segments({&i, 1});
   if (up.snapshot->log_id.index == log_id::INVALID_INDEX) {
     l.error("{} segment_manager::query_snapshot: empty", id);
-    co_return coroutine::make_exception(util::corruption_error());
+    co_await coroutine::return_exception(util::corruption_error());
   }
   co_return std::move(up.snapshot);
 }

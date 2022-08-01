@@ -108,11 +108,11 @@ future<request_result> node::request_snapshot(
     req.type = snapshot_request::type::exported;
     auto f = co_await file_type(option.export_path);
     if (!f.has_value()) {
-      co_return coroutine::make_exception(
+      co_await coroutine::return_exception(
           util::request_error("invalid export path"));
     }
     if (f.value() != directory_entry_type::directory) {
-      co_return coroutine::make_exception(
+      co_await coroutine::return_exception(
           util::request_error("export path is not a directory"));
     }
   }
@@ -188,10 +188,12 @@ future<> node::apply_config_change(
 
 future<> node::restore_remotes(protocol::snapshot_ptr ss) {
   if (!ss || !ss->membership) [[unlikely]] {
-    throw util::request_error("missing snapshot or membership");
+    co_await coroutine::return_exception(
+        util::request_error("missing snapshot or membership"));
   }
   if (ss->membership->config_change_id == 0) [[unlikely]] {
-    throw util::request_error("invalid config change id");
+    co_await coroutine::return_exception(
+        util::request_error("invalid config change id"));
   }
   for (auto& [node_id, address] : ss->membership->addresses) {
     _node_registry.update({_config.cluster_id, node_id}, address);
@@ -245,8 +247,8 @@ future<> node::process_dropped_entries(const protocol::update& up) {
     } else if (e->type == entry_type::config_change) {
       _pending_config_change.drop(e->key);
     } else {
-      throw util::failed_precondition_error(
-          fmt::format("{}: unknown entry type:{}", id(), e->type));
+      return make_exception_future<>(util::failed_precondition_error(
+          fmt::format("{}: unknown entry type:{}", id(), e->type)));
     }
   }
   return make_ready_future<>();
@@ -279,7 +281,8 @@ future<> node::process_snapshot(const protocol::update& up) {
           ssi,
           _pushed_index,
           _snapshot_state.snapshot_index);
-      throw util::failed_precondition_error("invalid snapshot");
+      co_await coroutine::return_exception(
+          util::failed_precondition_error("invalid snapshot"));
     }
     co_await _sm->push(rsm_task{.index = ssi, .recover = true});
     _snapshot_state.snapshot_index = ssi;
@@ -296,7 +299,8 @@ bool node::is_busy_snapshotting() const {
 future<> node::handle_snapshot_task(protocol::rsm_task task) {
   if (_snapshot_state.recovering) {
     l.error("{}: recovering again", id());
-    throw util::failed_precondition_error("TODO");
+    co_await coroutine::return_exception(
+        util::failed_precondition_error("TODO"));
   }
   if (task.recover) {
     report_recover_snapshot(std::move(task));
@@ -680,7 +684,7 @@ future<std::optional<update>> node::get_update() {
           id(),
           _confirmed_index,
           _applied_index);
-      throw util::failed_precondition_error();
+      co_await coroutine::return_exception(util::failed_precondition_error());
     }
     auto update = co_await _peer->get_update(not_busy, _applied_index);
     _confirmed_index = _applied_index;

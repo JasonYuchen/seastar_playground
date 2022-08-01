@@ -119,7 +119,8 @@ future<> statemachine_manager::handle_entry(log_entry_ptr entry, bool last) {
     if (entry->is_noop()) {
       co_await _node.apply_entry(*entry, {}, false, true, last);
     } else {
-      throw util::panic("not session manged, not empty");
+      co_await coroutine::return_exception(
+          util::panic("not session manged, not empty"));
     }
   } else if (entry->is_new_session_request()) {
     bool registered = _sessions->register_client(entry->client_id);
@@ -254,7 +255,7 @@ future<server::snapshot> statemachine_manager::do_save(snapshot_metadata meta) {
 
 future<> statemachine_manager::do_recover(snapshot_ptr ss, bool init) {
   if (last_applied_index() >= ss->log_id.index) {
-    throw util::snapshot_out_of_date();
+    return make_exception_future<>(util::snapshot_out_of_date());
   }
   if (_stopped) {
     return make_exception_future<>(util::closed_error());

@@ -9,6 +9,7 @@
 
 #include "rafter/config.hh"
 #include "test/util.hh"
+#include "util/seastarx.hh"
 #include "util/signal.hh"
 
 using namespace std;
@@ -69,9 +70,9 @@ void base::TearDown() {
   for (auto&& fut : futs) {
     fut.get();
   }
-  auto ret = ::pthread_kill(_engine_thread.native_handle(), SIGTERM);
+  auto ret = ::pthread_kill(_engine_thread.native_handle(), SIGINT);
   if (ret) {
-    l.error("send SIGTERM failed: {}", ret);
+    l.error("send SIGINT failed: {}", ret);
     std::abort();
   }
   _engine_thread.join();

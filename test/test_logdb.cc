@@ -125,7 +125,7 @@ future<> test_logdb::remove_node(group_id id) {
 future<> test_logdb::import_snapshot(snapshot_ptr snapshot) {
   auto& n = _clusters[snapshot->group_id];
   if (n._snap && n._snap->log_id.index >= snapshot->log_id.index) {
-    throw rafter::util::snapshot_out_of_date();
+    return make_exception_future<>(rafter::util::snapshot_out_of_date());
   }
   n._snap = snapshot;
   n._boot = bootstrap{.join = true, .smtype = snapshot->smtype};

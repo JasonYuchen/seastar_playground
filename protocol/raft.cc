@@ -24,9 +24,7 @@ std::string_view name(enum raft_role role) {
       "observer",
       "witness",
   };
-  static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(raft_role::num_of_role));
+  static_assert(std::size(types) == static_cast<int>(raft_role::num_of_role));
   assert(
       static_cast<uint8_t>(role) <
       static_cast<uint8_t>(raft_role::num_of_role));
@@ -62,8 +60,7 @@ std::string_view name(enum message_type type) {
       "rate_limit",
   };
   static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(message_type::num_of_type));
+      std::size(types) == static_cast<int>(message_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(message_type::num_of_type));
@@ -77,9 +74,7 @@ std::string_view name(enum entry_type type) {
       "encoded",
       "metadata",
   };
-  static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(entry_type::num_of_type));
+  static_assert(std::size(types) == static_cast<int>(entry_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(entry_type::num_of_type));
@@ -94,8 +89,7 @@ std::string_view name(enum config_change_type type) {
       "add_witness",
   };
   static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(config_change_type::num_of_type));
+      std::size(types) == static_cast<int>(config_change_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(config_change_type::num_of_type));
@@ -107,8 +101,7 @@ std::string_view name(enum state_machine_type type) {
       "regular",
   };
   static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(state_machine_type::num_of_type));
+      std::size(types) == static_cast<int>(state_machine_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(state_machine_type::num_of_type));
@@ -122,8 +115,7 @@ std::string_view name(enum compression_type type) {
       "snappy",
   };
   static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(compression_type::num_of_type));
+      std::size(types) == static_cast<int>(compression_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(compression_type::num_of_type));
@@ -137,8 +129,7 @@ std::string_view name(enum checksum_type type) {
       "highway",
   };
   static_assert(
-      sizeof(types) / sizeof(types[0]) ==
-      static_cast<int>(checksum_type::num_of_type));
+      std::size(types) == static_cast<int>(checksum_type::num_of_type));
   assert(
       static_cast<uint8_t>(type) <
       static_cast<uint8_t>(checksum_type::num_of_type));

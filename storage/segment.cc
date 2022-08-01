@@ -72,7 +72,7 @@ future<uint64_t> segment::append(const update& up) {
           up.gid,
           it.size(),
           bytes);
-      co_return coroutine::make_exception(util::short_write_error());
+      co_await coroutine::return_exception(util::short_write_error());
     }
     if (written_bytes < it.size()) {
       // the last chunk
@@ -94,7 +94,7 @@ future<update> segment::query(index::entry i) const {
         "segment::query: filename mismatch, expect:{}, actual:{}",
         i.filename,
         _filename);
-    co_return coroutine::make_exception(util::failed_precondition_error());
+    co_await coroutine::return_exception(util::failed_precondition_error());
   }
   auto file_in_stream = make_file_input_stream(_file, i.offset);
   auto buffer = co_await util::fragmented_temporary_buffer::from_stream_exactly(
@@ -126,7 +126,7 @@ future<size_t> segment::query(
           "segment::query: filename mismatch, expect:{}, actual:{}",
           i.filename,
           _filename);
-      co_return coroutine::make_exception(util::failed_precondition_error());
+      co_await coroutine::return_exception(util::failed_precondition_error());
     }
   }
   uint64_t max_pos = indexes.back().offset + indexes.back().length;
@@ -137,7 +137,7 @@ future<size_t> segment::query(
         _filename,
         max_pos,
         _bytes);
-    co_return coroutine::make_exception(util::out_of_range_error());
+    co_await coroutine::return_exception(util::out_of_range_error());
   }
 
   // TODO(jyc): tune file stream options
@@ -156,7 +156,7 @@ future<size_t> segment::query(
           _filename,
           i.length,
           fragments.back().size());
-      co_return coroutine::make_exception(util::short_read_error());
+      co_await coroutine::return_exception(util::short_read_error());
     }
   }
   co_await file_in_stream.close();
@@ -177,7 +177,7 @@ future<size_t> segment::query(
           _filename,
           i.length,
           read_bytes);
-      co_return coroutine::make_exception(util::corruption_error());
+      co_await coroutine::return_exception(util::corruption_error());
     }
     for (auto& ent : up.entries_to_save) {
       if (ent->lid.index < expected_index) {
@@ -192,7 +192,7 @@ future<size_t> segment::query(
             up.gid,
             _filename,
             expected_index);
-        co_return coroutine::make_exception(util::corruption_error());
+        co_await coroutine::return_exception(util::corruption_error());
       }
       size_t entry_bytes = ent->bytes();
       if (left_bytes < entry_bytes) {
@@ -234,7 +234,8 @@ future<> segment::list_update(
     util::fragmented_temporary_buffer::fragment_list fragments;
     fragments.emplace_back(co_await istream.read_exactly(update::meta_bytes()));
     if (fragments.back().size() < up.meta_bytes()) {
-      throw util::short_read_error("incomplete update meta");
+      co_await coroutine::return_exception(
+          util::short_read_error("incomplete update meta"));
     }
     auto buffer = util::fragmented_temporary_buffer(
         std::move(fragments), update::meta_bytes());
@@ -250,12 +251,13 @@ future<> segment::list_update(
     up.last_index = read(serializer{}, i, util::type<uint64_t>());
     up.snapshot_index = read(serializer{}, i, util::type<uint64_t>());
     if (i.bytes_left() > 0) [[unlikely]] {
-      co_return coroutine::make_exception(util::corruption_error());
+      co_await coroutine::return_exception(util::corruption_error());
     }
     // we may reach the eof too early
     if (offset + size + 8 > stat.size) {
       // this index is valid though, the full update is partial
-      throw util::short_read_error("incomplete update body");
+      co_await coroutine::return_exception(
+          util::short_read_error("incomplete update body"));
     }
     // skip to next update data position
     co_await istream.skip(size + 8 - update::meta_bytes());

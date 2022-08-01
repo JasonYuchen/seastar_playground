@@ -134,27 +134,29 @@ future<> express::sender::split_and_send(
     uint64_t& chunk_id,
     srpc::sink<snapshot_chunk>& sink) const {
   if (_close) {
-    throw util::closed_error();
+    return make_exception_future<>(util::closed_error());
   }
   const auto& file_path = file ? file->file_path : snapshot->file_path;
   auto file_size = file ? file->file_size : snapshot->file_size;
   auto func = [&, total_chunks](class file& f) -> future<> {
     uint64_t actual_file_size = co_await f.size();
     if (file_size != actual_file_size) {
-      throw util::failed_precondition_error(fmt::format(
-          "inconsistent file size, expect:{}, actual:{}",
-          file_size,
-          actual_file_size));
+      co_await coroutine::return_exception(
+          util::failed_precondition_error(fmt::format(
+              "inconsistent file size, expect:{}, actual:{}",
+              file_size,
+              actual_file_size)));
     }
     if (file_size == 0) {
-      throw util::out_of_range_error(fmt::format("empty file:{}", file_path));
+      co_await coroutine::return_exception(
+          util::out_of_range_error(fmt::format("empty file:{}", file_path)));
     }
     auto fstream = make_file_input_stream(f);
     uint64_t snapshot_chunk_size = config::shard().snapshot_chunk_size;
     uint64_t file_chunk_count = (file_size - 1) / snapshot_chunk_size + 1;
     for (uint64_t i = 0; i < file_chunk_count; ++i) {
       if (_close) {
-        throw util::closed_error();
+        co_await coroutine::return_exception(util::closed_error());
       }
       snapshot_chunk chunk;
       chunk.group_id = {_pair.cluster, _pair.to};
@@ -220,7 +222,7 @@ future<> express::receiver::start(
     // TODO(jyc): check if this node is removed here
     if (chunk.file_chunk_id != 0) {
       co_await ctx.remove_tmp_dir();
-      throw util::short_read_error();
+      co_await coroutine::return_exception(util::short_read_error());
     }
     // create file, write the first one, read more
     tracker.record(chunk);
@@ -232,7 +234,7 @@ future<> express::receiver::start(
       for (uint64_t id = 1; id < first.file_chunk_count; ++id) {
         auto data = co_await source();
         if (!data) {
-          throw util::short_read_error();
+          co_await coroutine::return_exception(util::short_read_error());
         }
         auto& chunk = std::get<0>(*data);
         tracker.record(chunk);

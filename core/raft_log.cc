@@ -244,12 +244,12 @@ membership_ptr log_reader::get_membership() const noexcept {
 future<size_t> log_reader::query(
     hint range, log_entry_vector& entries, size_t max_bytes) {
   if (range.low < first_index()) [[unlikely]] {
-    co_return coroutine::make_exception(
+    co_await coroutine::return_exception(
         util::compacted_error(range.low, first_index()));
   }
 
   if (range.high > last_index() + 1) [[unlikely]] {
-    co_return coroutine::make_exception(
+    co_await coroutine::return_exception(
         util::unavailable_error(range.high, last_index() + 1));
   }
   // TODO(jyc): consider limiting the max number of entries even not exceeds the
@@ -262,11 +262,11 @@ future<size_t> log_reader::query(
   }
   if (!entries.empty()) {
     if (range.low < entries.front()->lid.index) {
-      co_return coroutine::make_exception(
+      co_await coroutine::return_exception(
           util::compacted_error(range.low, entries.front()->lid.index));
     }
     if (last_index() < entries.back()->lid.index) {
-      co_return coroutine::make_exception(
+      co_await coroutine::return_exception(
           util::unavailable_error(entries.back()->lid.index, last_index() + 1));
     }
     co_return coroutine::exception(
@@ -276,7 +276,7 @@ future<size_t> log_reader::query(
             range.high,
             entries.back()->lid.index + 1)));
   }
-  co_return coroutine::make_exception(util::unavailable_error(range.low, 0));
+  co_await coroutine::return_exception(util::unavailable_error(range.low, 0));
 }
 
 future<uint64_t> log_reader::get_term(uint64_t index) {
@@ -355,10 +355,12 @@ void log_reader::apply_entries(log_entry_span entries) {
 future<> log_reader::apply_compaction(uint64_t index) {
   // index == _marker.index is a no-op
   if (index < _marker.index) {
-    throw util::compacted_error(index, first_index());
+    co_await coroutine::return_exception(
+        util::compacted_error(index, first_index()));
   }
   if (index > last_index()) {
-    throw util::unavailable_error(index, last_index());
+    co_await coroutine::return_exception(
+        util::unavailable_error(index, last_index()));
   }
   auto term = co_await get_term(index);
   auto i = index - _marker.index;

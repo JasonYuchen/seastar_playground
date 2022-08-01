@@ -699,7 +699,7 @@ bool raft::can_grant_vote(uint64_t peer_id, uint64_t peer_term) const noexcept {
 future<> raft::become_leader() {
   if (!is_leader() && !is_candidate()) {
     l.error("{}: unexpected transitioning to leader", *this);
-    throw util::invalid_raft_state();
+    co_await coroutine::return_exception(util::invalid_raft_state());
   }
   _role = role::leader;
   reset(_term, true);
