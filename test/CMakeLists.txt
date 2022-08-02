@@ -61,6 +61,10 @@ set(SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+target_compile_options(${PROJECT_NAME}
+    PUBLIC ${RAFTER_CXX_FLAGS}
+    )
+
 target_link_libraries(${PROJECT_NAME}
     PUBLIC rafter
     PUBLIC Seastar::seastar

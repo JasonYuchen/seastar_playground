@@ -1,20 +1,54 @@
 cmake_minimum_required(VERSION 3.16)
-project(rafter)
+project(rafter
+    VERSION 0.1
+    LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD
+    "20"
+    CACHE
+    STRING
+    "C++ standard to build with.")
+
+set(CMAKE_C_FLAGS_SANITIZE
+    "-Os -g"
+    CACHE
+    STRING
+    "Flags used by the C compiler during sanitize builds."
+    FORCE)
+
+set(CMAKE_CXX_FLAGS_SANITIZE
+    "-Os -g"
+    CACHE
+    STRING
+    "Flags used by the C++ compiler during sanitize builds."
+    FORCE)
+
+set(CMAKE_BUILD_TYPE
+    "${CMAKE_BUILD_TYPE}"
+    CACHE
+    STRING
+    "Choose the type of build, options are: None Debug Release RelWithDebInfo Sanitize."
+    FORCE)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+endif ()
+
+set(RAFTER_CXX_FLAGS -fcoroutines-ts -Wall)
+
+if ((CMAKE_BUILD_TYPE STREQUAL "Debug") OR (CMAKE_BUILD_TYPE STREQUAL "Sanitize"))
+    list(APPEND RAFTER_CXX_FLAGS -fno-omit-frame-pointer -fno-optimize-sibling-calls)
+else ()
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif ()
 
 find_package(Seastar REQUIRED)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts -Wall")
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
-endif()
+# workaround of valgrind not found error
+# see https://github.com/scylladb/seastar/issues/1065
+add_library(Valgrind::valgrind INTERFACE IMPORTED)
 
 include_directories(${PROJECT_SOURCE_DIR})
 
@@ -128,6 +162,10 @@ set(SOURCES
     )
 
 add_library(${PROJECT_NAME} ${SOURCES})
+
+target_compile_options(${PROJECT_NAME}
+    PUBLIC ${RAFTER_CXX_FLAGS}
+    )
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC Seastar::seastar
