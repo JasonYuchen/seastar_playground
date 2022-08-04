@@ -37,6 +37,7 @@ if (NOT CMAKE_BUILD_TYPE)
 endif ()
 
 set(RAFTER_CXX_FLAGS -fcoroutines-ts -Wall)
+set(RAFTER_LINKER_FLAGS -fuse-ld=mold)
 
 if ((CMAKE_BUILD_TYPE STREQUAL "Debug") OR (CMAKE_BUILD_TYPE STREQUAL "Sanitize"))
     list(APPEND RAFTER_CXX_FLAGS -fno-omit-frame-pointer -fno-optimize-sibling-calls)
@@ -165,6 +166,10 @@ add_library(${PROJECT_NAME} ${SOURCES})
 
 target_compile_options(${PROJECT_NAME}
     PUBLIC ${RAFTER_CXX_FLAGS}
+    )
+
+target_link_options(${PROJECT_NAME}
+    PUBLIC ${RAFTER_LINKER_FLAGS}
     )
 
 target_link_libraries(${PROJECT_NAME}
