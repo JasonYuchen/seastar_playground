@@ -181,7 +181,44 @@ bool membership::operator!=(const membership& rhs) const noexcept {
   return !(*this == rhs);
 }
 
+log_entry::log_entry(const log_entry& e)
+  : lid(e.lid)
+  , type(e.type)
+  , key(e.key)
+  , client_id(e.client_id)
+  , series_id(e.series_id)
+  , responded_to(e.responded_to)
+  , payload(e.payload.clone()) {}
+
+log_entry& log_entry::operator=(const log_entry& e) {
+  if (this != &e) {
+    lid = e.lid;
+    type = e.type;
+    key = e.key;
+    client_id = e.client_id;
+    series_id = e.series_id;
+    responded_to = e.responded_to;
+    payload = e.payload.clone();
+  }
+  return *this;
+}
+
+log_entry log_entry::share() {
+  log_entry e;
+  e.lid = lid;
+  e.type = type;
+  e.client_id = client_id;
+  e.series_id = series_id;
+  e.responded_to = responded_to;
+  e.payload = payload.share();
+  return e;
+}
+
 uint64_t log_entry::bytes() const noexcept { return sizer(*this); }
+
+uint64_t log_entry::in_memory_bytes() const noexcept {
+  return sizeof(log_entry) + payload.size();
+}
 
 bool log_entry::is_proposal() const noexcept {
   return type != entry_type::config_change;
@@ -223,12 +260,19 @@ bool log_entry::is_noop_session() const noexcept {
   return series_id == session::NOOP_SERIES_ID;
 }
 
-uint64_t log_entry::in_memory_bytes(
-    std::span<const seastar::lw_shared_ptr<log_entry>> entries) noexcept {
-  // pointer to hold the entry is not counted
+log_entry_vector log_entry::share(log_entry_span entries) {
+  log_entry_vector shared;
+  shared.reserve(entries.size());
+  for (auto& e : entries) {
+    shared.emplace_back(e.share());
+  }
+  return shared;
+}
+
+uint64_t log_entry::in_memory_bytes(log_entry_span entries) noexcept {
   uint64_t s = entries.size() * sizeof(log_entry);
   for (const auto& e : entries) {
-    s += e->payload.size();
+    s += e.payload.size();
   }
   return s;
 }
@@ -258,8 +302,8 @@ uint64_t snapshot_chunk::bytes() const noexcept { return sizer(*this); }
 
 void update::fill_meta() noexcept {
   if (!entries_to_save.empty()) {
-    first_index = entries_to_save.front()->lid.index;
-    last_index = entries_to_save.back()->lid.index;
+    first_index = entries_to_save.front().lid.index;
+    last_index = entries_to_save.back().lid.index;
   }
   if (snapshot) {
     snapshot_index = snapshot->log_id.index;
@@ -286,14 +330,14 @@ bool update::has_update() const noexcept {
 
 void update::validate() const {
   if (state.commit != log_id::INVALID_INDEX && !committed_entries.empty()) {
-    auto last = committed_entries.back()->lid.index;
+    auto last = committed_entries.back().lid.index;
     if (last > state.commit) {
       throw util::failed_precondition_error(/*FIXME*/);
     }
   }
   if (!committed_entries.empty() && !entries_to_save.empty()) {
-    auto last_apply = committed_entries.back()->lid.index;
-    auto last_save = entries_to_save.back()->lid.index;
+    auto last_apply = committed_entries.back().lid.index;
+    auto last_save = entries_to_save.back().lid.index;
     if (last_apply > last_save) {
       throw util::failed_precondition_error(/*FIXME*/);
     }
@@ -306,9 +350,9 @@ void update::set_fast_apply() noexcept {
     fast_apply = false;
   }
   if (fast_apply) {
-    auto last_apply = committed_entries.back()->lid.index;
-    auto last_save = entries_to_save.back()->lid.index;
-    auto first_save = entries_to_save.front()->lid.index;
+    auto last_apply = committed_entries.back().lid.index;
+    auto last_save = entries_to_save.back().lid.index;
+    auto first_save = entries_to_save.front().lid.index;
     // we cannot fast apply if some entries are not persistent yet
     if (last_apply >= first_save && last_apply <= last_save) {
       fast_apply = false;
@@ -320,10 +364,10 @@ void update::set_update_commit() noexcept {
   update_commit.ready_to_read = ready_to_reads.size();
   update_commit.last_applied = last_applied;
   if (!committed_entries.empty()) {
-    update_commit.processed = committed_entries.back()->lid.index;
+    update_commit.processed = committed_entries.back().lid.index;
   }
   if (!entries_to_save.empty()) {
-    update_commit.stable_log_id = entries_to_save.back()->lid;
+    update_commit.stable_log_id = entries_to_save.back().lid;
   }
   if (snapshot && !snapshot->empty()) {
     update_commit.stable_snapshot_to = snapshot->log_id.index;
@@ -338,27 +382,24 @@ void utils::assert_continuous(log_entry_span left, log_entry_span right) {
   if (left.empty() || right.empty()) {
     return;
   }
-  if (left.back()->lid.index + 1 != right.front()->lid.index) {
+  if (left.back().lid.index + 1 != right.front().lid.index) {
     util::panic::panic_with_backtrace(fmt::format(
         "gap found, left:{}, right:{}",
-        left.back()->lid.index,
-        right.front()->lid.index));
+        left.back().lid.index,
+        right.front().lid.index));
   }
-  if (left.back()->lid.term > right.front()->lid.term) {
+  if (left.back().lid.term > right.front().lid.term) {
     util::panic::panic_with_backtrace(fmt::format(
         "decreasing term, left:{}, right:{}",
-        left.back()->lid.term,
-        right.front()->lid.term));
+        left.back().lid.term,
+        right.front().lid.term));
   }
 }
 
 void utils::fill_metadata_entries(log_entry_vector& entries) {
   for (auto& entry : entries) {
-    if (entry->type != entry_type::config_change) {
-      log_id lid = entry->lid;
-      entry = seastar::make_lw_shared<log_entry>();
-      entry->type = entry_type::metadata;
-      entry->lid = lid;
+    if (entry.type != entry_type::config_change) {
+      entry.type = entry_type::metadata;
     }
   }
 }

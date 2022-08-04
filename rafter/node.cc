@@ -220,7 +220,7 @@ future<> node::apply_raft_update(const protocol::update& up) {
   if (entries.empty()) {
     co_return;
   }
-  auto last_index = entries.back()->lid.index;
+  auto last_index = entries.back().lid.index;
   co_await _sm->push(rsm_task{.entries = std::move(entries)});
   _pushed_index = last_index;
 }
@@ -242,13 +242,13 @@ future<> node::process_raft_update(protocol::update& up) {
 
 future<> node::process_dropped_entries(const protocol::update& up) {
   for (const auto& e : up.dropped_entries) {
-    if (e->is_proposal()) {
-      _pending_proposal.drop(e->key);
-    } else if (e->type == entry_type::config_change) {
-      _pending_config_change.drop(e->key);
+    if (e.is_proposal()) {
+      _pending_proposal.drop(e.key);
+    } else if (e.type == entry_type::config_change) {
+      _pending_config_change.drop(e.key);
     } else {
       return make_exception_future<>(util::failed_precondition_error(
-          fmt::format("{}: unknown entry type:{}", id(), e->type)));
+          fmt::format("{}: unknown entry type:{}", id(), e.type)));
     }
   }
   return make_ready_future<>();

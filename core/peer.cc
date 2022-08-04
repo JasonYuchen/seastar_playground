@@ -62,10 +62,10 @@ future<> peer::propose_entries(log_entry_vector entries) {
 future<> peer::propose_config_change(
     const config_change& change, uint64_t key) {
   log_entry_vector e;
-  e.emplace_back(make_lw_shared<log_entry>());
-  e.back()->type = entry_type::config_change;
-  e.back()->payload = write_to_string(change);
-  e.back()->key = key;
+  e.emplace_back();
+  e.back().type = entry_type::config_change;
+  e.back().payload = write_to_tmpbuf(change);
+  e.back().key = key;
   return _raft.handle(
       message{.type = message_type::propose, .entries = std::move(e)});
 }
@@ -158,7 +158,7 @@ future<update> peer::get_update(bool more_to_apply, uint64_t last_applied) {
     co_await _raft._log.get_entries_to_apply(up.committed_entries);
   }
   if (!up.committed_entries.empty()) {
-    auto last = up.committed_entries.back()->lid.index;
+    auto last = up.committed_entries.back().lid.index;
     up.has_more_committed_entries = _raft._log.has_more_entries_to_apply(last);
   }
   if (auto s = _raft.state(); s != _prev_state) {
@@ -197,15 +197,14 @@ void peer::bootstrap(const member_map& addresses) {
   entries.reserve(addresses.size());
   for (const auto& [id, address] : addresses) {
     l.info("{}: added bootstrap node {} {}", _raft, id, address);
-    auto entry = make_lw_shared<log_entry>();
-    entry->type = entry_type::config_change;
-    entry->lid = {.term = 1, .index = entries.size() + 1};
-    entry->payload = write_to_string(config_change{
+    auto& e = entries.emplace_back();
+    e.lid = {.term = 1, .index = entries.size() + 1};
+    e.type = entry_type::config_change;
+    e.payload = write_to_tmpbuf(config_change{
         .type = config_change_type::add_node,
         .node = id,
         .address = address,
         .initialize = true});
-    entries.emplace_back(std::move(entry));
   }
   _raft._log.append(entries);
   _raft._log.set_committed(entries.size());

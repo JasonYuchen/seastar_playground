@@ -156,8 +156,8 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
   entries.clear();
   co_await _manager->query_entries(
       gid,
-      {.low = expected.front()->lid.index,
-       .high = expected.back()->lid.index + 1},
+      {.low = expected.front().lid.index,
+       .high = expected.back().lid.index + 1},
       entries,
       size - 1);
   expected.pop_back();
@@ -208,8 +208,8 @@ RAFTER_TEST_P(segment_manager_test, append_and_rolling) {
   log_entry_vector queried;
   co_await _manager->query_entries(
       {4, 4},
-      {.low = expected.front()->lid.index,
-       .high = expected.back()->lid.index + 1},
+      {.low = expected.front().lid.index,
+       .high = expected.back().lid.index + 1},
       queried,
       UINT64_MAX);
   EXPECT_TRUE(test::util::compare(

@@ -23,7 +23,7 @@ class in_memory_log_test : public ::testing::Test {
   static void fill_entries(
       core::in_memory_log& im, const std::vector<log_id>& lids) {
     for (auto lid : lids) {
-      helper::_entries(im).emplace_back(test::util::new_entry(lid));
+      helper::_entries(im).emplace_back(log_entry{lid});
     }
   }
   static void fill_snapshot(core::in_memory_log& im, log_id lid) {
@@ -235,11 +235,11 @@ RAFTER_TEST_F(in_memory_log_test, entries_to_save) {
   helper::_entries(im) = test::util::new_entries({5, 8});
   auto to_save = im.get_entries_to_save();
   EXPECT_EQ(to_save.size(), 3);
-  EXPECT_EQ(to_save[0]->lid.index, 5);
+  EXPECT_EQ(to_save[0].lid.index, 5);
   helper::_saved(im) = 5;
   to_save = im.get_entries_to_save();
   EXPECT_EQ(to_save.size(), 2);
-  EXPECT_EQ(to_save[0]->lid.index, 6);
+  EXPECT_EQ(to_save[0].lid.index, 6);
   helper::_saved(im) = 7;
   to_save = im.get_entries_to_save();
   EXPECT_TRUE(to_save.empty());
@@ -321,7 +321,7 @@ RAFTER_TEST_F(in_memory_log_test, advance_applied_log) {
     im.advance_applied_log(t.applied_to);
     EXPECT_EQ(helper::_entries(im).size(), t.len);
     if (!helper::_entries(im).empty()) {
-      EXPECT_EQ(helper::_entries(im).front()->lid.index, t.first);
+      EXPECT_EQ(helper::_entries(im).front().lid.index, t.first);
     }
   }
   co_return;
@@ -350,7 +350,7 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_cleared_after_restoring) {
   auto rl = core::rate_limiter{10000};
   auto im = core::in_memory_log{0, &rl};
   auto to_merge = test::util::new_entries({{1, 1}});
-  to_merge[0]->payload.resize(1024);
+  to_merge[0].payload = temporary_buffer<char>{1024};
   im.merge(to_merge);
   ASSERT_GT(rl.get(), 0);
   im.restore(make_lw_shared<snapshot>());
@@ -361,12 +361,12 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_merging) {
   auto rl = core::rate_limiter{10000};
   auto im = core::in_memory_log{0, &rl};
   auto to_merge = test::util::new_entries({{1, 1}});
-  to_merge[0]->payload.resize(1024);
+  to_merge[0].payload = temporary_buffer<char>{1024};
   im.merge(to_merge);
   auto old_bytes = rl.get();
   to_merge = test::util::new_entries({{2, 2}, {3, 3}});
-  to_merge[0]->payload.resize(16);
-  to_merge[1]->payload.resize(64);
+  to_merge[0].payload = temporary_buffer<char>{16};
+  to_merge[1].payload = temporary_buffer<char>{64};
   auto new_bytes = old_bytes + log_entry::in_memory_bytes(to_merge);
   im.merge(to_merge);
   ASSERT_EQ(rl.get(), new_bytes);
@@ -376,15 +376,15 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_decreased_after_applying) {
   auto rl = core::rate_limiter{10000};
   auto im = core::in_memory_log{2, &rl};
   auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
-  to_merge[0]->payload.resize(16);
-  to_merge[1]->payload.resize(64);
-  to_merge[2]->payload.resize(128);
+  to_merge[0].payload = temporary_buffer<char>{16};
+  to_merge[1].payload = temporary_buffer<char>{64};
+  to_merge[2].payload = temporary_buffer<char>{128};
   im.merge(to_merge);
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(to_merge));
   for (uint64_t i = 2; i < 5; ++i) {
     im.advance_applied_log(i);
     if (!helper::_entries(im).empty()) {
-      ASSERT_EQ(helper::_entries(im).front()->lid.index, i + 1);
+      ASSERT_EQ(helper::_entries(im).front().lid.index, i + 1);
     }
     ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
   }
@@ -394,12 +394,12 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_reset_when_merging) {
   auto rl = core::rate_limiter{10000};
   auto im = core::in_memory_log{2, &rl};
   auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
-  to_merge[0]->payload.resize(16);
-  to_merge[1]->payload.resize(64);
-  to_merge[2]->payload.resize(128);
+  to_merge[0].payload = temporary_buffer<char>{16};
+  to_merge[1].payload = temporary_buffer<char>{64};
+  to_merge[2].payload = temporary_buffer<char>{128};
   im.merge(to_merge);
   to_merge = test::util::new_entries({{1, 1}});
-  to_merge[0]->payload.resize(16);
+  to_merge[0].payload = temporary_buffer<char>{16};
   im.merge(to_merge);
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(to_merge));
 }
@@ -408,13 +408,13 @@ RAFTER_TEST_F(in_memory_log_test, rate_limit_updated_after_cut_merging) {
   auto rl = core::rate_limiter{10000};
   auto im = core::in_memory_log{2, &rl};
   auto to_merge = test::util::new_entries({{2, 2}, {3, 3}, {4, 4}});
-  to_merge[0]->payload.resize(16);
-  to_merge[1]->payload.resize(64);
-  to_merge[2]->payload.resize(128);
+  to_merge[0].payload = temporary_buffer<char>{16};
+  to_merge[1].payload = temporary_buffer<char>{64};
+  to_merge[2].payload = temporary_buffer<char>{128};
   im.merge(to_merge);
   to_merge = test::util::new_entries({{3, 3}, {4, 4}});
-  to_merge[0]->payload.resize(1024);
-  to_merge[1]->payload.resize(1024);
+  to_merge[0].payload = temporary_buffer<char>{1024};
+  to_merge[1].payload = temporary_buffer<char>{1024};
   im.merge(to_merge);
   ASSERT_EQ(rl.get(), log_entry::in_memory_bytes(helper::_entries(im)));
 }
@@ -669,25 +669,23 @@ RAFTER_TEST_F(log_reader_test, panic_when_gap) {
 class raft_log_test : public ::testing::Test {
  protected:
   void SetUp() override {
-    base::submit([this]() -> future<> {
+    base::submit([this] {
       _db = std::make_unique<test::test_logdb>();
       _lr = std::make_unique<core::log_reader>(group_id{1, 1}, *_db);
-      co_return;
+      return make_ready_future<>();
     });
   }
 
   void TearDown() override {
-    base::submit([this]() -> future<> {
+    base::submit([this] {
       _lr.reset();
       _db.reset();
-      co_return;
+      return make_ready_future<>();
     });
   }
 
   future<> append_to_test_logdb(
-      const log_entry_vector& entries,
-      snapshot_ptr snap = {},
-      bool reset = false) {
+      log_entry_span entries, snapshot_ptr snap = {}, bool reset = false) {
     if (reset) {
       _db = std::make_unique<test::test_logdb>();
       _lr = std::make_unique<core::log_reader>(group_id{1, 1}, *_db);
@@ -697,16 +695,16 @@ class raft_log_test : public ::testing::Test {
     }
     update up{
         .gid = {1, 1},
-        .entries_to_save = entries,
+        .entries_to_save = log_entry::share(entries),
         .snapshot = snap,
     };
     storage::update_pack pack(up);
     co_await _db->save({&pack, 1});
     co_await pack.done.get_future();
-    _lr->apply_entries(entries);
     if (snap) {
       _lr->apply_snapshot(snap);
     }
+    _lr->apply_entries(entries);
   }
 
   std::unique_ptr<test::test_logdb> _db;
@@ -714,8 +712,8 @@ class raft_log_test : public ::testing::Test {
 };
 
 RAFTER_TEST_F(raft_log_test, create) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}});
+  co_await append_to_test_logdb(to_append);
   auto expected_range = hint{.low = 1, .high = 3};
   ASSERT_EQ(_lr->get_range(), expected_range);
   auto rl = core::raft_log({1, 1}, *_lr);
@@ -769,7 +767,7 @@ RAFTER_TEST_F(raft_log_test, iterate_ready_to_be_applied) {
   auto entries = test::util::new_entries({.low = 1, .high = 129});
   for (int i = 1; i <= 10; ++i) {
     // no greater than max_entry_bytes = 8MB
-    entries[i * 10]->payload.resize(7UL * MB);
+    entries[i * 10].payload = temporary_buffer<char>{7UL * MB};
   }
   co_await append_to_test_logdb(entries);
   auto rl = core::raft_log({1, 1}, *_lr);
@@ -780,23 +778,23 @@ RAFTER_TEST_F(raft_log_test, iterate_ready_to_be_applied) {
   while (true) {
     co_await rl.get_entries_to_apply(entries);
     ASSERT_FALSE(entries.empty());
-    if (rl.processed() == entries.back()->lid.index) {
+    if (rl.processed() == entries.back().lid.index) {
       break;
     }
     count++;
     // for default config
     // (max_entry_bytes = 8MB, max_apply_entry_bytes = 64MB)
     if (count == 1) {
-      ASSERT_EQ(entries.back()->lid.index, 100);
+      ASSERT_EQ(entries.back().lid.index, 100);
     }
     if (count == 2) {
-      ASSERT_EQ(entries.back()->lid.index, 128);
+      ASSERT_EQ(entries.back().lid.index, 128);
     }
-    rl.set_processed(entries.back()->lid.index);
+    rl.set_processed(entries.back().lid.index);
   }
   ASSERT_EQ(entries.size(), 128);
   for (uint64_t i = 0; i < 128; ++i) {
-    ASSERT_EQ(entries[i]->lid.index, i + 1);
+    ASSERT_EQ(entries[i].lid.index, i + 1);
   }
   ASSERT_EQ(count, 2);
 }
@@ -819,8 +817,8 @@ RAFTER_TEST_F(raft_log_test, panic_if_append_committed_entries) {
 }
 
 RAFTER_TEST_F(raft_log_test, first_index_from_logdb) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   ASSERT_EQ(rl.first_index(), 1);
 }
@@ -832,14 +830,15 @@ RAFTER_TEST_F(raft_log_test, last_index_from_inmemory) {
 }
 
 RAFTER_TEST_F(raft_log_test, last_index_from_logdb) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   ASSERT_EQ(rl.last_index(), 3);
 }
 
 RAFTER_TEST_F(raft_log_test, last_term_from_logdb) {
-  co_await append_to_test_logdb(test::util::new_entries({{1, 1}, {5, 2}}));
+  auto to_append = test::util::new_entries({{1, 1}, {5, 2}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   ASSERT_EQ(co_await rl.last_term(), 5);
 }
@@ -855,7 +854,7 @@ RAFTER_TEST_F(raft_log_test, log_term_from_logdb) {
   co_await append_to_test_logdb(entries);
   auto rl = core::raft_log({1, 1}, *_lr);
   for (const auto& e : entries) {
-    EXPECT_EQ(co_await rl.term(e->lid.index), e->lid.term);
+    EXPECT_EQ(co_await rl.term(e.lid.index), e.lid.term);
   }
 }
 
@@ -864,7 +863,7 @@ RAFTER_TEST_F(raft_log_test, log_term_from_inmemory) {
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(entries);
   for (const auto& e : entries) {
-    EXPECT_EQ(co_await rl.term(e->lid.index), e->lid.term);
+    EXPECT_EQ(co_await rl.term(e.lid.index), e.lid.term);
   }
 }
 
@@ -880,8 +879,8 @@ RAFTER_TEST_F(raft_log_test, query_inmemory) {
 }
 
 RAFTER_TEST_F(raft_log_test, query_logdb) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   log_entry_vector entries;
   co_await rl.query({1, 5}, entries, UINT64_MAX);
@@ -892,8 +891,8 @@ RAFTER_TEST_F(raft_log_test, query_logdb) {
 }
 
 RAFTER_TEST_F(raft_log_test, query_inmemory_and_logdb) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   log_entry_vector entries;
@@ -902,13 +901,13 @@ RAFTER_TEST_F(raft_log_test, query_inmemory_and_logdb) {
   entries.clear();
   co_await rl.query({2, 7}, entries, UINT64_MAX);
   ASSERT_EQ(entries.size(), 5);
-  ASSERT_EQ(entries[0]->lid.index, 2);
-  ASSERT_EQ(entries[4]->lid.index, 6);
+  ASSERT_EQ(entries[0].lid.index, 2);
+  ASSERT_EQ(entries[4].lid.index, 6);
   entries.clear();
   co_await rl.query({1, 5}, entries, UINT64_MAX);
   ASSERT_EQ(entries.size(), 4);
-  ASSERT_EQ(entries[0]->lid.index, 1);
-  ASSERT_EQ(entries[3]->lid.index, 4);
+  ASSERT_EQ(entries[0].lid.index, 1);
+  ASSERT_EQ(entries[3].lid.index, 4);
   entries.clear();
   co_await rl.query(2, entries, UINT64_MAX);
   ASSERT_EQ(entries.size(), 6);
@@ -942,8 +941,8 @@ RAFTER_TEST_F(raft_log_test, restore_snapshot) {
 }
 
 RAFTER_TEST_F(raft_log_test, log_match_term) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   struct {
@@ -967,8 +966,8 @@ RAFTER_TEST_F(raft_log_test, log_match_term) {
 }
 
 RAFTER_TEST_F(raft_log_test, log_up_to_date) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   struct {
@@ -991,8 +990,8 @@ RAFTER_TEST_F(raft_log_test, log_up_to_date) {
 }
 
 RAFTER_TEST_F(raft_log_test, get_conflict_index) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   struct {
@@ -1015,8 +1014,8 @@ RAFTER_TEST_F(raft_log_test, get_conflict_index) {
 }
 
 RAFTER_TEST_F(raft_log_test, commit_to) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   rl.commit(3);
@@ -1026,8 +1025,8 @@ RAFTER_TEST_F(raft_log_test, commit_to) {
 }
 
 RAFTER_TEST_F(raft_log_test, panic_when_commit_to_unavailable_index) {
-  co_await append_to_test_logdb(
-      test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}}));
+  auto to_append = test::util::new_entries({{1, 1}, {1, 2}, {2, 3}, {3, 4}});
+  co_await append_to_test_logdb(to_append);
   auto rl = core::raft_log({1, 1}, *_lr);
   rl.append(test::util::new_entries({{3, 5}, {3, 6}, {4, 7}}));
   ASSERT_THROW(rl.commit(8), rafter::util::panic);
@@ -1077,7 +1076,7 @@ RAFTER_TEST_F(raft_log_test, get_uncommitted_entries) {
     rl.get_uncommitted_entries(entries);
     EXPECT_EQ(entries.size(), t.length) << CASE_INDEX(t, tests);
     if (!entries.empty()) {
-      EXPECT_EQ(entries[0]->lid.index, t.first_index) << CASE_INDEX(t, tests);
+      EXPECT_EQ(entries[0].lid.index, t.first_index) << CASE_INDEX(t, tests);
     }
   }
   co_return;
@@ -1373,7 +1372,7 @@ RAFTER_TEST_F(raft_log_test, out_of_bounds) {
   auto rl = core::raft_log({1, 1}, *_lr);
   auto to_append = test::util::new_entries({1, 101});
   for (auto& e : to_append) {
-    e->lid = {1, e->lid.index + offset};
+    e.lid = {1, e.lid.index + offset};
   }
   rl.append(to_append);
   uint64_t first = offset + 1;
@@ -1419,7 +1418,7 @@ RAFTER_TEST_F(raft_log_test, term) {
   auto rl = core::raft_log({1, 1}, *_lr);
   auto to_append = test::util::new_entries({1, 100});
   for (auto& e : to_append) {
-    e->lid = {e->lid.term, e->lid.index + offset};
+    e.lid = {e.lid.term, e.lid.index + offset};
   }
   rl.append(to_append);
   struct {
@@ -1457,6 +1456,75 @@ RAFTER_TEST_F(raft_log_test, term_with_unstable_snapshot) {
   };
   for (auto& t : tests) {
     EXPECT_EQ(co_await rl.term(t.index), t.exp_term) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, slice) {
+  uint64_t i = 0;
+  uint64_t offset = 100;
+  uint64_t num = 100;
+  uint64_t last = offset + num;
+  uint64_t half = offset + num / 2;
+  uint64_t entry_basic_size = log_entry{}.in_memory_bytes();
+  auto snap = test::util::new_snapshot({1, offset});
+  log_entry_vector to_append;
+  for (i = 1; i < num / 2; ++i) {
+    to_append.emplace_back(i + offset, i + offset);
+  }
+  co_await append_to_test_logdb(to_append, snap);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  to_append.clear();
+  for (i = num / 2; i < num; ++i) {
+    to_append.emplace_back(i + offset, i + offset);
+  }
+  rl.append(to_append);
+
+  uint64_t no_limit = UINT64_MAX;
+  struct {
+    hint range;
+    uint64_t limit;
+    std::vector<log_id> expect_entries;
+  } tests[] = {
+      // no limit
+      {{offset - 1, offset + 1}, no_limit, {}},
+      {{offset, offset + 1}, no_limit, {}},
+      {{half - 1, half + 1}, no_limit, {{half - 1, half - 1}, {half, half}}},
+      {{half, half + 1}, no_limit, {{half, half}}},
+      {{last - 1, last}, no_limit, {{last - 1, last - 1}}},
+      {{last, last + 1}, no_limit, {}},
+
+      // limit
+      {{half - 1, half + 1}, 0, {}},
+      {{half - 1, half + 1}, entry_basic_size + 1, {{half - 1, half - 1}}},
+      {{half - 2, half + 1}, entry_basic_size + 1, {{half - 2, half - 2}}},
+      {{half - 1, half + 1},
+       entry_basic_size * 2,
+       {{half - 1, half - 1}, {half, half}}},
+      {{half - 1, half + 2},
+       entry_basic_size * 3,
+       {{half - 1, half - 1}, {half, half}, {half + 1, half + 1}}},
+      {{half, half + 2}, entry_basic_size, {{half, half}}},
+      {{half, half + 2},
+       entry_basic_size * 2,
+       {{half, half}, {half + 1, half + 1}}},
+  };
+
+  for (auto& t : tests) {
+    log_entry_vector queried;
+    try {
+      co_await rl.query(t.range, queried, t.limit);
+      EXPECT_TRUE(test::util::compare(
+          queried, test::util::new_entries(t.expect_entries)))
+          << CASE_INDEX(t, tests);
+    } catch (rafter::util::compacted_error& ex) {
+      EXPECT_LE(t.range.low, offset) << CASE_INDEX(t, tests);
+    } catch (rafter::util::unavailable_error& ex) {
+      EXPECT_GT(t.range.high, last) << CASE_INDEX(t, tests);
+    } catch (std::exception& ex) {
+      ADD_FAILURE() << "unwanted exception: " << ex.what() << " at "
+                    << CASE_INDEX(t, tests);
+    }
   }
   co_return;
 }

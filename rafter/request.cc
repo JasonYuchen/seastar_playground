@@ -36,8 +36,8 @@ pending_proposal::pending_proposal(const raft_config& cfg) : _config(cfg) {
 
 future<request_result> pending_proposal::propose(
     const session& session, std::string_view cmd, uint64_t timeout) {
-  if (cmd.size() + log_entry{}.bytes() > config::shard().max_entry_bytes)
-      [[unlikely]] {
+  if (cmd.size() + log_entry{}.in_memory_bytes() >
+      config::shard().max_entry_bytes) [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cmd", "too big"));
   }
@@ -56,16 +56,16 @@ future<request_result> pending_proposal::propose(
   if (_pending.contains(_next_key + 1)) [[unlikely]] {
     return make_exception_future<request_result>(util::system_busy());
   }
-  auto& e = _proposal_queue.emplace_back(make_lw_shared<log_entry>());
-  e->type = cmd.empty() ? entry_type::application : entry_type::encoded;
-  e->key = _next_key++;
-  e->client_id = session.client_id;
-  e->series_id = session.series_id;
-  e->responded_to = session.responded_to;
+  auto& e = _proposal_queue.emplace_back();
+  e.type = cmd.empty() ? entry_type::application : entry_type::encoded;
+  e.key = _next_key++;
+  e.client_id = session.client_id;
+  e.series_id = session.series_id;
+  e.responded_to = session.responded_to;
   // TODO(jyc): add compression support
-  e->payload = cmd;
+  e.payload = {cmd.data(), cmd.size()};
   auto deadline = _clock.tick + timeout;
-  auto [it, inserted] = _pending.emplace(e->key, request_state{deadline});
+  auto [it, inserted] = _pending.emplace(e.key, request_state{deadline});
   assert(inserted);
   return it->second.result.get_future();
 }

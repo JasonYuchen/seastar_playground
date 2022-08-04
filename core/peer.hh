@@ -10,6 +10,12 @@
 #include "protocol/raft.hh"
 #include "util/seastarx.hh"
 
+namespace rafter::test {
+
+class core_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::core {
 
 class peer {
@@ -44,6 +50,7 @@ class peer {
   bool rate_limited() const noexcept { return _raft._limiter.enabled(); }
 
  private:
+  friend class test::core_helper;
   void bootstrap(const protocol::member_map& addresses);
 
   protocol::hard_state _prev_state;

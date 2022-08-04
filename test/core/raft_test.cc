@@ -360,10 +360,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node) {
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -388,10 +385,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node_from_follower) {
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -426,10 +420,7 @@ RAFTER_TEST_F(raft_test, DISABLED_leader_transfer_with_check_quorum) {
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -445,10 +436,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_slow_follower) {
   co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
   nt.isolate(3);
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   nt.recover();
   auto& lead = raft_cast(nt.sms[1].get());
   ASSERT_EQ(helper::_remotes(lead)[3].match, 1);
@@ -461,10 +449,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_slow_follower) {
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1, 3));
   helper::abort_leader_transfer(lead);
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   co_await nt.send(
       {.type = message_type::leader_transfer,
        .from = 3,
@@ -478,10 +463,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_after_snapshot) {
   co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
   nt.isolate(3);
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   auto& lead = raft_cast(nt.sms[1].get());
   co_await next_entries(nt.sms[1].get(), nt.dbs[1].get());
   auto m = test_membership(nt.sms[1].get());
@@ -562,16 +544,10 @@ RAFTER_TEST_F(raft_test, leader_transfer_ignore_proposal) {
        .hint = {.low = 3}});
   ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   uint64_t matched = helper::_remotes(lead)[2].match;
   co_await nt.send(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   ASSERT_EQ(helper::_remotes(lead)[2].match, matched);
 }
 
@@ -681,20 +657,11 @@ RAFTER_TEST_F(raft_test, remote_paused) {
   helper::become_candidate(r->raft());
   co_await helper::become_leader(r->raft());
   co_await r->raft().handle(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   co_await r->raft().handle(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   co_await r->raft().handle(
-      {.type = message_type::propose,
-       .from = 1,
-       .to = 1,
-       .entries = {make_lw_shared<log_entry>()}});
+      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
   ASSERT_EQ(r->read_messages().size(), 1);
 }
 
@@ -788,8 +755,8 @@ RAFTER_TEST_F(raft_test, election_overwrite_newer_logs) {
   for (auto& [id, peer] : nt.sms) {
     auto entries = co_await get_all_entries(peer.get());
     EXPECT_EQ(entries.size(), 2) << id;
-    EXPECT_EQ(entries[0]->lid.term, 1);
-    EXPECT_EQ(entries[1]->lid.term, 3);
+    EXPECT_EQ(entries[0].lid.term, 1);
+    EXPECT_EQ(entries[1].lid.term, 3);
   }
   co_return;
 }

@@ -101,7 +101,7 @@ class pending_proposal {
   bool _stopped = false;
   request_state::logical_clock _clock;
   uint64_t _next_key = 0;
-  std::vector<protocol::log_entry_ptr> _proposal_queue;
+  std::vector<protocol::log_entry> _proposal_queue;
   std::unordered_map<uint64_t, request_state> _pending;
 };
 

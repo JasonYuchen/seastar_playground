@@ -70,9 +70,9 @@ class statemachine_manager {
   };
 
   future<> handle(std::vector<protocol::rsm_task>& tasks, bool& open);
-  future<> handle_entry(protocol::log_entry_ptr entry, bool last);
-  future<> handle_config_change(protocol::log_entry_ptr entry);
-  future<> handle_update(protocol::log_entry_ptr entry, bool last);
+  future<> handle_entry(const protocol::log_entry& entry, bool last);
+  future<> handle_config_change(const protocol::log_entry& entry);
+  future<> handle_update(const protocol::log_entry& entry, bool last);
   future<> handle_save(protocol::rsm_task task);
   future<> handle_recover(protocol::rsm_task task);
   future<> handle_stream(protocol::rsm_task task);

@@ -9,9 +9,22 @@
 #include <any>
 #include <optional>
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/temporary_buffer.hh>
 #include <span>
 #include <string>
 #include <vector>
+
+namespace seastar {
+
+// FIXME(jyc)
+inline std::strong_ordering operator<=>(
+    const seastar::temporary_buffer<char> &lhs,
+    const seastar::temporary_buffer<char> &rhs) {
+  return std::string_view{lhs.get(), lhs.size()} <=>
+         std::string_view{rhs.get(), rhs.size()};
+}
+
+}  // namespace seastar
 
 namespace rafter::protocol {
 
@@ -228,15 +241,30 @@ struct membership {
 using membership_ptr = seastar::lw_shared_ptr<membership>;
 
 struct log_entry {
+  log_entry() = default;
+  explicit log_entry(log_id lid) : lid(lid) {}
+  log_entry(uint64_t term, uint64_t index) : lid({term, index}) {}
+  log_entry(const log_entry &e);
+  log_entry &operator=(const log_entry &e);
+  log_entry(log_entry &&e) = default;
+  log_entry &operator=(log_entry &&e) = default;
+
+  // return a new log entry with shared payload
+  log_entry share();
+  void copy_of(std::string_view data) {
+    payload = seastar::temporary_buffer<char>::copy_of(data);
+  }
+
   log_id lid;
   entry_type type = entry_type::application;
   uint64_t key = 0;
   uint64_t client_id = 0;
   uint64_t series_id = 0;
   uint64_t responded_to = 0;
-  std::string payload;
+  seastar::temporary_buffer<char> payload;
 
   uint64_t bytes() const noexcept;
+  uint64_t in_memory_bytes() const noexcept;
   bool is_proposal() const noexcept;
   bool is_config_change() const noexcept;
   bool is_noop() const noexcept;
@@ -247,15 +275,14 @@ struct log_entry {
   bool is_empty() const noexcept;
   bool is_regular() const noexcept;
 
-  static uint64_t in_memory_bytes(
-      std::span<const seastar::lw_shared_ptr<log_entry>> entries) noexcept;
+  static std::vector<log_entry> share(std::span<log_entry> entries);
+  static uint64_t in_memory_bytes(std::span<log_entry> entries) noexcept;
 
   std::strong_ordering operator<=>(const log_entry &) const = default;
 };
 
-using log_entry_ptr = seastar::lw_shared_ptr<log_entry>;
-using log_entry_vector = std::vector<log_entry_ptr>;
-using log_entry_span = std::span<const log_entry_ptr>;
+using log_entry_vector = std::vector<log_entry>;
+using log_entry_span = std::span<log_entry>;
 
 struct hard_state {
   uint64_t term = log_id::INVALID_TERM;

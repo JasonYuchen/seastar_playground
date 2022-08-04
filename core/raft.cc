@@ -278,7 +278,7 @@ void raft::must_not_be(raft_role role) const {
   }
 }
 
-void raft::report_dropped_config_change(log_entry_ptr e) {
+void raft::report_dropped_config_change(log_entry e) {
   _dropped_entries.emplace_back(std::move(e));
 }
 
@@ -313,12 +313,12 @@ future<message> raft::make_replicate(
   auto term = co_await _log.term(next - 1);
   co_await _log.query(next, m.entries, max_bytes);
   if (!m.entries.empty() &&
-      m.entries.back()->lid.index != next - 1 + m.entries.size()) [[unlikely]] {
+      m.entries.back().lid.index != next - 1 + m.entries.size()) [[unlikely]] {
     throw_with_log(
         "{}: potential log hole in entries, expect:{}, actual:{}",
         *this,
         next - 1 + m.entries.size(),
-        m.entries.back()->lid.index);
+        m.entries.back().lid.index);
   }
   if (_witnesses.contains(to)) {
     utils::fill_metadata_entries(m.entries);
@@ -476,7 +476,7 @@ future<> raft::send_replicate(uint64_t to, remote& r) {
   try {
     auto m = co_await make_replicate(to, r.next, UINT64_MAX);
     if (!m.entries.empty()) {
-      r.optimistic_update(m.entries.back()->lid.index);
+      r.optimistic_update(m.entries.back().lid.index);
     }
     send(std::move(m));
   } catch (util::compacted_error& e) {
@@ -859,7 +859,7 @@ future<bool> raft::try_commit() {
 future<> raft::append_entries(log_entry_vector& entries) {
   auto li = _log.last_index();
   for (size_t i = 0; i < entries.size(); ++i) {
-    entries[i]->lid = {.term = _term, .index = li + i + 1};
+    entries[i].lid = {.term = _term, .index = li + i + 1};
   }
   _log.append(entries);
   _remotes[_gid.node].try_update(_log.last_index());
@@ -870,9 +870,8 @@ future<> raft::append_entries(log_entry_vector& entries) {
 }
 
 future<> raft::append_noop_entry() {
-  auto noop = make_lw_shared<log_entry>();
-  noop->type = entry_type::application;
-  noop->lid = {.term = _term, .index = _log.last_index() + 1};
+  log_entry noop{_term, _log.last_index() + 1};
+  noop.type = entry_type::application;
   _log.append({&noop, 1});
   _remotes[_gid.node].try_update(_log.last_index());
   if (quorum() == 1) {
@@ -1245,12 +1244,14 @@ future<> raft::leader_propose(message& m) {
     report_dropped_proposal(m);
     co_return;
   }
-  for (const auto& e : m.entries) {
-    if (e->type == entry_type::config_change) {
+  for (auto& e : m.entries) {
+    if (e.type == entry_type::config_change) {
       if (_pending_config_change) {
         l.warn("{}: dropped config change due to pending change", *this);
-        report_dropped_config_change(make_lw_shared(*e));
-        *e = log_entry{.type = entry_type::application};
+        auto lid = e.lid;
+        report_dropped_config_change(std::move(e));
+        e = log_entry{lid};
+        e.type = entry_type::application;
       }
       _pending_config_change = true;
     }

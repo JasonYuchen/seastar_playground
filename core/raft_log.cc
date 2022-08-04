@@ -20,7 +20,7 @@ in_memory_log::in_memory_log(uint64_t last_index, rate_limiter* limiter)
   : _marker(last_index + 1), _saved(last_index), _limiter(limiter) {}
 
 size_t in_memory_log::query(
-    hint range, log_entry_vector& entries, size_t max_bytes) const {
+    hint range, log_entry_vector& entries, size_t max_bytes) {
   auto upper = _marker + _entries.size();
   if (range.low > range.high || range.low < _marker || range.high > upper) {
     throw util::out_of_range_error(fmt::format(
@@ -32,27 +32,28 @@ size_t in_memory_log::query(
     if (it == _entries.end()) {
       break;
     }
-    if ((*it)->lid.index >= range.high) {
+    if (it->lid.index >= range.high) {
       break;
     }
-    auto bytes = (*it)->bytes();
+    auto bytes = it->in_memory_bytes();
     if (bytes > max_bytes) {
       max_bytes = 0;
       break;
     }
-    if (!entries.empty() && entries.back()->lid.index + 1 != (*it)->lid.index) {
+    if (!entries.empty() && entries.back().lid.index + 1 != it->lid.index) {
       util::panic::panic_with_backtrace(fmt::format(
           "log hole found, left:{}, right:{}",
-          entries.back()->lid.index,
-          (*it)->lid.index));
+          entries.back().lid.index,
+          it->lid.index));
     }
-    entries.emplace_back(*it++);
+    entries.emplace_back(it->share());
     max_bytes -= bytes;
+    it++;
   }
   return max_bytes;
 }
 
-log_entry_span in_memory_log::get_entries_to_save() const noexcept {
+log_entry_span in_memory_log::get_entries_to_save() noexcept {
   if (_saved + 1 - _marker > _entries.size()) {
     return {};
   }
@@ -72,7 +73,7 @@ std::optional<uint64_t> in_memory_log::get_snapshot_index() const noexcept {
 
 std::optional<uint64_t> in_memory_log::get_last_index() const noexcept {
   if (!_entries.empty()) {
-    return _entries.back()->lid.index;
+    return _entries.back().lid.index;
   }
   return get_snapshot_index();
 }
@@ -87,8 +88,8 @@ std::optional<uint64_t> in_memory_log::get_term(uint64_t index) const noexcept {
     }
     return std::optional<uint64_t>{};
   }
-  if (!_entries.empty() && index <= _entries.back()->lid.index) {
-    return _entries[index - _marker]->lid.term;
+  if (!_entries.empty() && index <= _entries.back().lid.index) {
+    return _entries[index - _marker].lid.term;
   }
   return std::optional<uint64_t>{};
 }
@@ -110,8 +111,8 @@ void in_memory_log::advance_saved_log(log_id saved_log) noexcept {
   if (_entries.empty()) {
     return;
   }
-  if (saved_log.index > _entries.back()->lid.index ||
-      saved_log.term != _entries[saved_log.index - _marker]->lid.term) {
+  if (saved_log.index > _entries.back().lid.index ||
+      saved_log.term != _entries[saved_log.index - _marker].lid.term) {
     return;
   }
   _saved = saved_log.index;
@@ -124,17 +125,17 @@ void in_memory_log::advance_applied_log(uint64_t applied_index) {
   if (_entries.empty()) {
     return;
   }
-  if (applied_index > _entries.back()->lid.index) {
+  if (applied_index > _entries.back().lid.index) {
     return;
   }
-  if (_entries[applied_index - _marker]->lid.index != applied_index) {
+  if (_entries[applied_index - _marker].lid.index != applied_index) {
     util::panic::panic_with_backtrace(fmt::format(
         "mismatch last applied index, applied_index:{}, expect:{}, marker:{}",
-        _entries[applied_index - _marker]->lid.index,
+        _entries[applied_index - _marker].lid.index,
         applied_index,
         _marker));
   }
-  _applied = _entries[applied_index - _marker]->lid;
+  _applied = _entries[applied_index - _marker].lid;
   auto new_marker = applied_index + 1;
   _shrunk = true;
   auto end = _entries.begin();
@@ -165,15 +166,20 @@ void in_memory_log::advance_saved_snapshot(
   }
 }
 
+void in_memory_log::merge(log_entry_vector&& entries) { return merge(entries); }
+
 void in_memory_log::merge(log_entry_span entries) {
   if (entries.empty()) {
     return;
   }
   // TODO(jyc): rate limiter
-  auto first_index = entries.front()->lid.index;
+  auto first_index = entries.front().lid.index;
   if (first_index >= _marker + _entries.size()) {
     utils::assert_continuous(_entries, entries);
-    _entries.insert(_entries.end(), entries.begin(), entries.end());
+    _entries.reserve(_entries.size() + entries.size());
+    for (auto& e : entries) {
+      _entries.emplace_back(e.share());
+    }
     assert_marker();
     if (rate_limited()) {
       _limiter->increase(log_entry::in_memory_bytes(entries));
@@ -184,7 +190,11 @@ void in_memory_log::merge(log_entry_span entries) {
   if (first_index <= _marker) {
     _marker = first_index;
     _shrunk = false;
-    _entries = {entries.begin(), entries.end()};
+    _entries.clear();
+    _entries.reserve(entries.size());
+    for (auto& e : entries) {
+      _entries.emplace_back(e.share());
+    }
     _saved = first_index - 1;
     assert_marker();
     if (rate_limited()) {
@@ -197,7 +207,10 @@ void in_memory_log::merge(log_entry_span entries) {
   std::advance(start, first_index - _marker);
   _entries.erase(start, _entries.end());
   utils::assert_continuous(_entries, entries);
-  _entries.insert(_entries.end(), entries.begin(), entries.end());
+  _entries.reserve(_entries.size() + entries.size());
+  for (auto& e : entries) {
+    _entries.emplace_back(e.share());
+  }
   _saved = std::min(_saved, first_index - 1);
   _shrunk = false;
   assert_marker();
@@ -219,11 +232,11 @@ void in_memory_log::restore(snapshot_ptr snapshot) noexcept {
 }
 
 void in_memory_log::assert_marker() const {
-  if (!_entries.empty() && _entries.front()->lid.index != _marker) {
+  if (!_entries.empty() && _entries.front().lid.index != _marker) {
     util::panic::panic_with_backtrace(fmt::format(
         "mismatch marker:{}, first index:{}",
         _marker,
-        _entries.front()->lid.index));
+        _entries.front().lid.index));
   }
 }
 
@@ -261,22 +274,23 @@ future<size_t> log_reader::query(
     co_return max_bytes;
   }
   if (!entries.empty()) {
-    if (range.low < entries.front()->lid.index) {
+    if (range.low < entries.front().lid.index) {
       co_await coroutine::return_exception(
-          util::compacted_error(range.low, entries.front()->lid.index));
+          util::compacted_error(range.low, entries.front().lid.index));
     }
-    if (last_index() < entries.back()->lid.index) {
+    if (last_index() < entries.back().lid.index) {
       co_await coroutine::return_exception(
-          util::unavailable_error(entries.back()->lid.index, last_index() + 1));
+          util::unavailable_error(entries.back().lid.index, last_index() + 1));
     }
     co_return coroutine::exception(
         util::panic::panic_ptr_with_backtrace(fmt::format(
             "log hole found in [{}: {}) at {}",
             range.low,
             range.high,
-            entries.back()->lid.index + 1)));
+            entries.back().lid.index + 1)));
   }
   co_await coroutine::return_exception(util::unavailable_error(range.low, 0));
+  co_return 0;
 }
 
 future<uint64_t> log_reader::get_term(uint64_t index) {
@@ -288,7 +302,7 @@ future<uint64_t> log_reader::get_term(uint64_t index) {
   if (entry.empty()) {
     co_return log_id::INVALID_INDEX;
   }
-  co_return entry.front()->lid.term;
+  co_return entry.front().lid.term;
 }
 
 hint log_reader::get_range() const noexcept {
@@ -345,11 +359,11 @@ void log_reader::apply_entries(log_entry_span entries) {
   if (entries.empty()) {
     return;
   }
-  if (entries.front()->lid.index + entries.size() - 1 !=
-      entries.back()->lid.index) {
+  if (entries.front().lid.index + entries.size() - 1 !=
+      entries.back().lid.index) {
     util::panic::panic_with_backtrace("log hole found");
   }
-  set_range({entries.front()->lid.index, entries.back()->lid.index + 1});
+  set_range({entries.front().lid.index, entries.back().lid.index + 1});
 }
 
 future<> log_reader::apply_compaction(uint64_t index) {
@@ -438,7 +452,7 @@ bool raft_log::has_more_entries_to_apply(uint64_t applied_to) const noexcept {
   return _committed > applied_to;
 }
 
-bool raft_log::has_config_change_to_apply() const noexcept {
+bool raft_log::has_config_change_to_apply() noexcept {
   // TODO(jyc): avoid entry vector
   if (!has_entries_to_apply()) {
     return false;
@@ -449,20 +463,23 @@ bool raft_log::has_config_change_to_apply() const noexcept {
       entries,
       UINT64_MAX);
   for (const auto& ent : entries) {
-    if (ent->type == entry_type::config_change) {
+    if (ent.type == entry_type::config_change) {
       return true;
     }
   }
   return false;
 }
 
-bool raft_log::has_entries_to_save() const noexcept {
+bool raft_log::has_entries_to_save() noexcept {
   return !_in_memory.get_entries_to_save().empty();
 }
 
 void raft_log::get_entries_to_save(log_entry_vector& entries) {
   auto ents = _in_memory.get_entries_to_save();
-  entries.insert(entries.end(), ents.begin(), ents.end());
+  entries.reserve(ents.size());
+  for (auto& e : ents) {
+    entries.emplace_back(e.share());
+  }
 }
 
 void raft_log::get_uncommitted_entries(log_entry_vector& entries) {
@@ -484,7 +501,7 @@ future<> raft_log::get_entries_to_apply(log_entry_vector& entries) {
 }
 
 future<size_t> raft_log::query(
-    uint64_t start, log_entry_vector& entries, size_t max_bytes) const {
+    uint64_t start, log_entry_vector& entries, size_t max_bytes) {
   if (start > last_index()) {
     co_return max_bytes;
   }
@@ -493,7 +510,7 @@ future<size_t> raft_log::query(
 }
 
 future<size_t> raft_log::query(
-    hint range, log_entry_vector& entries, size_t max_bytes) const {
+    hint range, log_entry_vector& entries, size_t max_bytes) {
   check_range(range);
   if (range.low == range.high) {
     co_return max_bytes;
@@ -524,7 +541,7 @@ future<size_t> raft_log::query_logdb(
 }
 
 future<size_t> raft_log::query_memory(
-    hint range, log_entry_vector& entries, size_t max_bytes) const noexcept {
+    hint range, log_entry_vector& entries, size_t max_bytes) noexcept {
   if (range.high <= _in_memory._marker) {
     co_return max_bytes;
   }
@@ -543,16 +560,21 @@ snapshot_ptr raft_log::get_memory_snapshot() const noexcept {
   return _in_memory.get_snapshot();
 }
 
+future<uint64_t> raft_log::get_conflict_index(
+    log_entry_vector&& entries) const {
+  return get_conflict_index(entries);
+}
+
 future<uint64_t> raft_log::get_conflict_index(log_entry_span entries) const {
   for (const auto& ent : entries) {
-    if (!co_await term_index_match(ent->lid)) {
-      co_return ent->lid.index;
+    if (!co_await term_index_match(ent.lid)) {
+      co_return ent.lid.index;
     }
   }
   co_return log_id::INVALID_INDEX;
 }
 
-future<uint64_t> raft_log::pending_config_change_count() const {
+future<uint64_t> raft_log::pending_config_change_count() {
   uint64_t count = 0;
   uint64_t start_index = _committed + 1;
   log_entry_vector entries;
@@ -567,10 +589,14 @@ future<uint64_t> raft_log::pending_config_change_count() const {
         entries.end(),
         count,
         [](uint64_t count, const auto& entry) {
-          return count + (entry->type == entry_type::config_change);
+          return count + (entry.type == entry_type::config_change);
         });
-    start_index = entries.back()->lid.index + 1;
+    start_index = entries.back().lid.index + 1;
   }
+}
+
+future<bool> raft_log::try_append(uint64_t index, log_entry_vector&& entries) {
+  return try_append(index, entries);
 }
 
 future<bool> raft_log::try_append(uint64_t index, log_entry_span entries) {
@@ -587,14 +613,16 @@ future<bool> raft_log::try_append(uint64_t index, log_entry_span entries) {
   co_return false;
 }
 
+void raft_log::append(log_entry_vector&& entries) { return append(entries); }
+
 void raft_log::append(log_entry_span entries) {
   if (entries.empty()) {
     return;
   }
-  if (entries.front()->lid.index <= _committed) {
+  if (entries.front().lid.index <= _committed) {
     util::panic::panic_with_backtrace(fmt::format(
         "append first index:{} <= committed:{}",
-        entries.front()->lid.index,
+        entries.front().lid.index,
         _committed));
   }
   _in_memory.merge(entries);

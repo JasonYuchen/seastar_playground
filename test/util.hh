@@ -33,7 +33,6 @@ class util {
       const protocol::update& lhs, const protocol::update& rhs) noexcept;
   static bool compare(
       const protocol::snapshot& lhs, const protocol::snapshot& rhs) noexcept;
-  static protocol::log_entry_ptr new_entry(protocol::log_id lid);
   // generate entry vector with continuous log entries
   // first index = first term = range.low
   // last index = last term = range.high - 1

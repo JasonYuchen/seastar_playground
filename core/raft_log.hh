@@ -26,8 +26,8 @@ class in_memory_log {
   size_t query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
-      size_t max_bytes) const;
-  protocol::log_entry_span get_entries_to_save() const noexcept;
+      size_t max_bytes);
+  protocol::log_entry_span get_entries_to_save() noexcept;
   size_t get_entries_size() const noexcept { return _entries.size(); }
   protocol::snapshot_ptr get_snapshot() const noexcept;
   std::optional<uint64_t> get_snapshot_index() const noexcept;
@@ -39,6 +39,7 @@ class in_memory_log {
   void advance_saved_snapshot(uint64_t saved_snapshot_index) noexcept;
   void advance_applied_log(uint64_t applied_index);
 
+  void merge(protocol::log_entry_vector&& entries);
   void merge(protocol::log_entry_span entries);
   void restore(protocol::snapshot_ptr snapshot) noexcept;
 
@@ -116,19 +117,17 @@ class raft_log {
   uint64_t apply_index_limit() const noexcept;
   bool has_entries_to_apply() const noexcept;
   bool has_more_entries_to_apply(uint64_t applied_to) const noexcept;
-  bool has_config_change_to_apply() const noexcept;
-  bool has_entries_to_save() const noexcept;
+  bool has_config_change_to_apply() noexcept;
+  bool has_entries_to_save() noexcept;
   void get_entries_to_save(protocol::log_entry_vector& entries);
   void get_uncommitted_entries(protocol::log_entry_vector& entries);
   future<> get_entries_to_apply(protocol::log_entry_vector& entries);
   future<size_t> query(
-      uint64_t start,
-      protocol::log_entry_vector& entries,
-      size_t max_bytes) const;
+      uint64_t start, protocol::log_entry_vector& entries, size_t max_bytes);
   future<size_t> query(
       protocol::hint range,
       protocol::log_entry_vector& entries,
-      size_t max_bytes) const;
+      size_t max_bytes);
   future<size_t> query_logdb(
       protocol::hint range,
       protocol::log_entry_vector& entries,
@@ -136,12 +135,16 @@ class raft_log {
   future<size_t> query_memory(
       protocol::hint range,
       protocol::log_entry_vector& entries,
-      size_t max_bytes) const noexcept;
+      size_t max_bytes) noexcept;
   protocol::snapshot_ptr get_snapshot() const noexcept;
   protocol::snapshot_ptr get_memory_snapshot() const noexcept;
+  future<uint64_t> get_conflict_index(
+      protocol::log_entry_vector&& entries) const;
   future<uint64_t> get_conflict_index(protocol::log_entry_span entries) const;
-  future<uint64_t> pending_config_change_count() const;
+  future<uint64_t> pending_config_change_count();
+  future<bool> try_append(uint64_t index, protocol::log_entry_vector&& entries);
   future<bool> try_append(uint64_t index, protocol::log_entry_span entries);
+  void append(protocol::log_entry_vector&& entries);
   void append(protocol::log_entry_span entries);
   future<bool> try_commit(protocol::log_id lid);
   void commit(uint64_t index);

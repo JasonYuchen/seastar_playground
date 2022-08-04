@@ -66,9 +66,9 @@ vector<update> util::make_updates(
       up.last_index = prev_index + r(g);
       prev_index = up.last_index + 1;
       for (size_t j = up.first_index; j <= up.last_index; ++j) {
-        auto e = up.entries_to_save.emplace_back(make_lw_shared<log_entry>());
-        e->lid = {.term = prev_state.term, .index = j};
-        e->payload = fmt::format("test_payload for {} with {}", gid, e->lid);
+        auto& e = up.entries_to_save.emplace_back();
+        e.lid = {.term = prev_state.term, .index = j};
+        e.copy_of(fmt::format("test_payload for {} with {}", gid, e.lid));
       }
     }
     up.fill_meta();
@@ -82,9 +82,9 @@ vector<update> util::make_updates(
 size_t util::extract_entries(const update& up, log_entry_vector& entries) {
   size_t size = 0;
   std::for_each(
-      up.entries_to_save.begin(), up.entries_to_save.end(), [&](auto e) {
+      up.entries_to_save.begin(), up.entries_to_save.end(), [&](const auto& e) {
         entries.push_back(e);
-        size += e->bytes();
+        size += e.in_memory_bytes();
       });
   return size;
 }
@@ -96,10 +96,7 @@ bool util::compare(
     return false;
   }
   for (size_t i = 0; i < lhs.size(); ++i) {
-    if (lhs[i].operator bool() ^ rhs[i].operator bool()) {
-      return false;
-    }
-    if (lhs[i] && *lhs[i] != *rhs[i]) {
+    if (lhs[i] != rhs[i]) {
       return false;
     }
   }
@@ -182,18 +179,11 @@ bool util::compare(const snapshot& lhs, const snapshot& rhs) noexcept {
   return true;
 }
 
-log_entry_ptr util::new_entry(log_id lid) {
-  auto e = make_lw_shared<log_entry>();
-  e->lid = lid;
-  return e;
-}
-
 log_entry_vector util::new_entries(hint range) {
   log_entry_vector entries;
   entries.reserve(range.count());
   for (uint64_t i = range.low; i < range.high; ++i) {
-    auto& e = entries.emplace_back(make_lw_shared<log_entry>());
-    e->lid = {i, i};
+    entries.emplace_back(i, i);
   }
   return entries;
 }
@@ -202,8 +192,7 @@ log_entry_vector util::new_entries(const std::vector<log_id>& lids) {
   log_entry_vector entries;
   entries.reserve(lids.size());
   for (auto lid : lids) {
-    auto& e = entries.emplace_back(make_lw_shared<log_entry>());
-    e->lid = lid;
+    entries.emplace_back(log_entry(lid));
   }
   return entries;
 }

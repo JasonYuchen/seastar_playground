@@ -46,7 +46,7 @@ future<> test_logdb::save(std::span<storage::update_pack> updates) {
     auto& n = _clusters[up.update.gid];
     for (const auto& ent : up.update.entries_to_save) {
       if (!n._entries.empty() &&
-          ent->lid.index != n._entries.back()->lid.index + 1) {
+          ent.lid.index != n._entries.back().lid.index + 1) {
         rafter::util::panic::panic_with_backtrace("inconsistent entry");
       }
       n._entries.push_back(ent);
@@ -74,18 +74,18 @@ future<size_t> test_logdb::query_entries(
     if (next == range.high) {
       break;
     }
-    if (max_bytes < ent->bytes()) {
+    if (max_bytes < ent.in_memory_bytes()) {
       max_bytes = 0;
       break;
     }
-    if (ent->lid.index != next) {
+    if (ent.lid.index != next) {
       continue;
     }
-    if (!entries.empty() && entries.back()->lid.index + 1 != ent->lid.index) {
+    if (!entries.empty() && entries.back().lid.index + 1 != ent.lid.index) {
       rafter::util::panic::panic_with_backtrace("inconsistent entry");
     }
     entries.push_back(ent);
-    max_bytes -= ent->bytes();
+    max_bytes -= ent.in_memory_bytes();
     next++;
   }
   return make_ready_future<size_t>(max_bytes);
@@ -100,7 +100,7 @@ future<storage::raft_state> test_logdb::query_raft_state(
   auto& n = it->second;
   return make_ready_future<storage::raft_state>(storage::raft_state{
       .hard_state = n._state,
-      .first_index = n._entries.empty() ? 0 : n._entries.front()->lid.index,
+      .first_index = n._entries.empty() ? 0 : n._entries.front().lid.index,
       .entry_count = n._entries.size()});
 }
 

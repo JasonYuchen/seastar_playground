@@ -99,8 +99,8 @@ future<> statemachine_manager::handle(
       co_await handle_recover(std::move(task));
       continue;
     }
-    for (auto e : task.entries) {
-      if (e->type == entry_type::config_change) {
+    for (const auto& e : task.entries) {
+      if (e.type == entry_type::config_change) {
         co_await handle_config_change(e);
       } else {
         // TODO(jyc): figure out the last entry
@@ -113,55 +113,61 @@ future<> statemachine_manager::handle(
   _node.node_ready();
 }
 
-future<> statemachine_manager::handle_entry(log_entry_ptr entry, bool last) {
+future<> statemachine_manager::handle_entry(
+    const protocol::log_entry& entry, bool last) {
   // TODO(jyc): support on disk statemachine
-  if (!entry->is_session_managed()) {
-    if (entry->is_noop()) {
-      co_await _node.apply_entry(*entry, {}, false, true, last);
+  if (!entry.is_session_managed()) {
+    if (entry.is_noop()) {
+      co_await _node.apply_entry(entry, {}, false, true, last);
     } else {
       co_await coroutine::return_exception(
           util::panic("not session manged, not empty"));
     }
-  } else if (entry->is_new_session_request()) {
-    bool registered = _sessions->register_client(entry->client_id);
-    co_await _node.apply_entry(*entry, {}, !registered, false, last);
-  } else if (entry->is_end_session_request()) {
-    bool unregistered = _sessions->unregister_client(entry->client_id);
-    co_await _node.apply_entry(*entry, {}, !unregistered, false, last);
+  } else if (entry.is_new_session_request()) {
+    bool registered = _sessions->register_client(entry.client_id);
+    co_await _node.apply_entry(entry, {}, !registered, false, last);
+  } else if (entry.is_end_session_request()) {
+    bool unregistered = _sessions->unregister_client(entry.client_id);
+    co_await _node.apply_entry(entry, {}, !unregistered, false, last);
   } else {
     co_await handle_update(entry, last);
   }
-  set_applied(entry->lid);
+  set_applied(entry.lid);
 }
 
-future<> statemachine_manager::handle_config_change(log_entry_ptr entry) {
-  auto cc = util::read_from_string(entry->payload, util::type<config_change>());
-  bool rejected = !_members.handle(cc, entry->lid.index);
-  set_applied(entry->lid);
-  co_await _node.apply_config_change(std::move(cc), entry->key, rejected);
+future<> statemachine_manager::handle_config_change(
+    const protocol::log_entry& entry) {
+  auto cc = util::read_from_string(
+      {entry.payload.get(), entry.payload.size()}, util::type<config_change>());
+  bool rejected = !_members.handle(cc, entry.lid.index);
+  set_applied(entry.lid);
+  co_await _node.apply_config_change(std::move(cc), entry.key, rejected);
 }
 
-future<> statemachine_manager::handle_update(log_entry_ptr entry, bool last) {
-  if (entry->is_noop_session()) {
-    auto result = co_await _managed->update(entry->lid.index, entry->payload);
-    co_await _node.apply_entry(*entry, std::move(result), false, false, last);
+future<> statemachine_manager::handle_update(
+    const protocol::log_entry& entry, bool last) {
+  if (entry.is_noop_session()) {
+    auto result = co_await _managed->update(
+        entry.lid.index, {entry.payload.get(), entry.payload.size()});
+    co_await _node.apply_entry(entry, std::move(result), false, false, last);
   } else {
-    auto* s = _sessions->registered_client(entry->client_id);
+    auto* s = _sessions->registered_client(entry.client_id);
     if (s == nullptr) {
-      co_return co_await _node.apply_entry(*entry, {}, true, false, last);
+      co_return co_await _node.apply_entry(entry, {}, true, false, last);
     }
-    s->clear_to(entry->responded_to);
-    if (s->has_responded(entry->series_id)) {
-      co_return co_await _node.apply_entry(*entry, {}, false, true, last);
+    s->clear_to(entry.responded_to);
+    if (s->has_responded(entry.series_id)) {
+      co_return co_await _node.apply_entry(entry, {}, false, true, last);
     }
-    auto response = s->response(entry->series_id);
+    auto response = s->response(entry.series_id);
     if (response.has_value()) {
       co_return co_await _node.apply_entry(
-          *entry, std::move(response.value()), false, false, last);
+          entry, std::move(response.value()), false, false, last);
     }
-    auto result = co_await _managed->update(entry->lid.index, entry->payload);
-    s->response(entry->series_id, result);
-    co_await _node.apply_entry(*entry, std::move(result), false, false, last);
+    auto result = co_await _managed->update(
+        entry.lid.index, {entry.payload.get(), entry.payload.size()});
+    s->response(entry.series_id, result);
+    co_await _node.apply_entry(entry, std::move(result), false, false, last);
   }
 }
 
@@ -313,7 +319,7 @@ void statemachine_manager::apply(const snapshot& ss, bool init) {
 void statemachine_manager::set_last_applied(const log_entry_vector& entries) {
   if (!entries.empty()) {
     // TODO(jyc): various log continuity check
-    _last_applied = entries.back()->lid;
+    _last_applied = entries.back().lid;
   }
 }
 

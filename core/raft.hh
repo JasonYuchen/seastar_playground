@@ -64,7 +64,7 @@ class raft {
   bool is_witness() const noexcept { return _role == role::witness; }
   void must_be(protocol::raft_role role) const;
   void must_not_be(protocol::raft_role role) const;
-  void report_dropped_config_change(protocol::log_entry_ptr e);
+  void report_dropped_config_change(protocol::log_entry e);
   void report_dropped_proposal(protocol::message& m);
   void report_dropped_read_index(protocol::message& m);
   void finalize_message(protocol::message& m);

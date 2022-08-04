@@ -8,6 +8,7 @@
 #include <seastar/core/reactor.hh>
 
 #include "protocol/serializer.hh"
+#include "rafter/config.hh"
 #include "storage/logger.hh"
 #include "util/error.hh"
 
@@ -30,8 +31,10 @@ future<unique_ptr<segment>> segment::open(
     s->_bytes = st.size;
     s->_file = co_await open_file_dma(s->_filepath, open_flags::ro);
   } else {
+    file_open_options opts;
     s->_file = co_await open_file_dma(
-        s->_filepath, open_flags::create | open_flags::rw);
+        s->_filepath, open_flags::create | open_flags::rw, opts);
+    co_await s->_file.allocate(0, config::shard().wal_rolling_size);
     s->_tail.reserve(util::fragmented_temporary_buffer::DEFAULT_FRAGMENT_SIZE);
   }
   assert(s->_file);
@@ -180,13 +183,13 @@ future<size_t> segment::query(
       co_await coroutine::return_exception(util::corruption_error());
     }
     for (auto& ent : up.entries_to_save) {
-      if (ent->lid.index < expected_index) {
+      if (ent.lid.index < expected_index) {
         continue;
       }
-      if (ent->lid.index > i.last_index) {
+      if (ent.lid.index > i.last_index) {
         break;
       }
-      if (ent->lid.index != expected_index) [[unlikely]] {
+      if (ent.lid.index != expected_index) [[unlikely]] {
         l.error(
             "{} segment::query: log hole found in segment:{}, missing:{}",
             up.gid,
@@ -194,7 +197,7 @@ future<size_t> segment::query(
             expected_index);
         co_await coroutine::return_exception(util::corruption_error());
       }
-      size_t entry_bytes = ent->bytes();
+      size_t entry_bytes = ent.in_memory_bytes();
       if (left_bytes < entry_bytes) {
         co_return 0;
       }

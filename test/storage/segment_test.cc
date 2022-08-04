@@ -178,8 +178,8 @@ RAFTER_TEST_F(segment_test, append_large_entry) {
   update up;
   up.first_index = 100;
   up.last_index = 100;
-  auto en = up.entries_to_save.emplace_back(make_lw_shared<log_entry>());
-  en->payload = std::string(10 * MB, 'c');
+  auto& e = up.entries_to_save.emplace_back();
+  e.copy_of(std::string(10 * MB, 'c'));
   index::entry ie;
   ie.filename = 1;
   ie.offset = _segment->bytes();

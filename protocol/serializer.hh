@@ -138,7 +138,7 @@ struct serializer<log_entry> {
     v.client_id = deserialize(i, type<uint64_t>());
     v.series_id = deserialize(i, type<uint64_t>());
     v.responded_to = deserialize(i, type<uint64_t>());
-    v.payload = deserialize(i, type<std::string>());
+    v.payload = deserialize(i, type<seastar::temporary_buffer<char>>());
     return v;
   }
   template <typename Output>
@@ -540,12 +540,19 @@ T read(serializer, Input& i, util::type<T>) {
   return util::deserialize(i, util::type<T>());
 }
 
-// TODO(jyc): switch to temporary buffer ?
 template <typename T>
 std::string write_to_string(const T& v) {
   std::string data;
   data.resize(v.bytes());
   seastar::simple_memory_output_stream s(data.data(), data.size());
+  util::serialize(s, v);
+  return data;
+}
+
+template <typename T>
+seastar::temporary_buffer<char> write_to_tmpbuf(const T& v) {
+  seastar::temporary_buffer<char> data{v.bytes()};
+  seastar::simple_memory_output_stream s(data.get_write(), data.size());
   util::serialize(s, v);
   return data;
 }

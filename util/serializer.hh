@@ -78,6 +78,25 @@ struct string_serializer {
   }
 };
 
+struct temporary_buffer_serializer {
+  template <typename Input>
+  static seastar::temporary_buffer<char> read(Input& i) {
+    auto size = deserialize(i, type<uint64_t>());
+    seastar::temporary_buffer<char> s{size};
+    i.read(s.get_write(), size);
+    return s;
+  }
+  template <typename Output>
+  static void write(Output& o, const seastar::temporary_buffer<char>& s) {
+    serialize(o, s.size());
+    o.write(s.get(), s.size());
+  }
+  template <typename Input>
+  static void skip(Input& i) {
+    i.skip(deserialize(i, type<uint64_t>()));
+  }
+};
+
 template <typename T>
 struct lw_shared_ptr_serializer {
   // lw_shared_ptr must be non-null
@@ -408,6 +427,9 @@ template <>
 struct serializer<double> : public detail::numeric_serializer<double> {};
 template <>
 struct serializer<std::string> : public detail::string_serializer {};
+template <>
+struct serializer<seastar::temporary_buffer<char>>
+  : public detail::temporary_buffer_serializer {};
 
 template <typename T>
 struct serializer<seastar::lw_shared_ptr<T>>

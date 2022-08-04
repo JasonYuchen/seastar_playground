@@ -106,9 +106,9 @@ RAFTER_TEST_P(
 
 RAFTER_TEST_P(logdb_test, save_snapshot) {
   auto hs1 = hard_state{.term = 2, .vote = 3, .commit = 100};
-  auto e1 = test::util::new_entry({.term = 1, .index = 10});
-  e1->type = entry_type::application;
-  e1->payload = "test data";
+  auto e1 = log_entry({.term = 1, .index = 10});
+  e1.type = entry_type::application;
+  e1.copy_of("test data");
   auto sp1 = test::util::new_snapshot({.term = 1, .index = 5});
   sp1->group_id = {3, 4};
   sp1->file_path = "p1";
@@ -117,9 +117,9 @@ RAFTER_TEST_P(logdb_test, save_snapshot) {
       .gid = {3, 4}, .state = hs1, .entries_to_save = {e1}, .snapshot = sp1};
   ud1.fill_meta();
   auto hs2 = hard_state{.term = 2, .vote = 3, .commit = 100};
-  auto e2 = test::util::new_entry({.term = 1, .index = 20});
-  e2->type = entry_type::application;
-  e2->payload = "test data";
+  auto e2 = log_entry({.term = 1, .index = 20});
+  e2.type = entry_type::application;
+  e2.copy_of("test data");
   auto sp2 = test::util::new_snapshot({.term = 1, .index = 12});
   sp2->group_id = {3, 3};
   sp2->file_path = "p2";
