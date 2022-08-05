@@ -18,7 +18,12 @@ jobs:
       - checkout
       - run: git submodule sync
       - run: git submodule update --init
-      - run: sudo ./install-dependencies.sh << parameters.compiler >> << parameters.standard >> << parameters.mode >>
+      - run: sudo ./install-dependencies.sh << parameters.compiler >>
+      - run: mkdir build
+      - run: cmake -G Ninja -DCMAKE_BUILD_TYPE=<< parameters.mode >> -DCMAKE_CXX_COMPILER=<< parameters.compiler >> -B build -S .
+      - run: ninja -C build -j $(nproc)
+      - run: ./build/test/rafter_test
+
 
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
@@ -34,4 +39,4 @@ workflows:
             parameters:
               compiler: ["clang++-12"]
               standard: ["20"]
-              mode: ["dev"]
+              mode: [ "Debug" ]
