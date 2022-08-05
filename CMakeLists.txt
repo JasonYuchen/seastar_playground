@@ -42,17 +42,20 @@ set(RAFTER_LINKER_FLAGS -fuse-ld=mold)
 if ((CMAKE_BUILD_TYPE STREQUAL "Debug") OR (CMAKE_BUILD_TYPE STREQUAL "Sanitize"))
     list(APPEND RAFTER_CXX_FLAGS -fno-omit-frame-pointer -fno-optimize-sibling-calls)
 else ()
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O3")
+    set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT result OUTPUT output)
+    if (result)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else ()
+        message(WARNING "IPO is not supported: ${output}")
+    endif ()
 endif ()
-
-find_package(Seastar REQUIRED)
-
-# workaround of valgrind not found error
-# see https://github.com/scylladb/seastar/issues/1065
-add_library(Valgrind::valgrind INTERFACE IMPORTED)
 
 include_directories(${PROJECT_SOURCE_DIR})
 
+add_subdirectory(seastar)
 add_subdirectory(3rd)
 add_subdirectory(test)
 

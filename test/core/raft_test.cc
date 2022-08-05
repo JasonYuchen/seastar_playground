@@ -307,6 +307,7 @@ class raft_test : public ::testing::Test {
       co_return entries;
     }
     co_await coroutine::return_exception(rafter::util::panic("not a raft_sm"));
+    co_return log_entry_vector{};
   }
 
   static membership_ptr test_membership(sm* s) {

@@ -23,12 +23,15 @@ rafter is deeply inspired by
 
 - prerequisite
   - Compiler with C++20 support, tested with clang-12
-  - Seastar, *the installation of Seastar is not trivial, please refer to
-      this [post](https://github.com/JasonYuchen/notes/blob/master/seastar/Setup.md)*
+  - Seastar, taken care of by submodule (the installation of Seastar is not trivial, please refer to
+    this [post](https://github.com/JasonYuchen/notes/blob/master/seastar/Setup.md))
   - GoogleTest, taken care of by rafter's cmake configuration
 
 ```shell
-TBD
+git submodule update --init --recursive
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/clang-12 -DCMAKE_CXX_COMPILER=/usr/bin/clang++-12 ..
+make
 ```
 
 *it is recommended to use [ninja](https://github.com/ninja-build/ninja), [mold](https://github.com/rui314/mold) (
