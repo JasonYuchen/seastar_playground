@@ -34,9 +34,7 @@ future<> segment_manager::start() {
       config::shard().wal_rolling_size,
       config::shard().wal_gc_queue_capacity);
   file dir = co_await open_directory(_log_dir);
-  co_await dir
-      .list_directory([this](auto e) { return parse_existing_segments(e); })
-      .done();
+  co_await parse_existing_segments(dir);
   // always write to a new file after bootstrap
   _next_filename = _segments.empty() ? 1 : _segments.rbegin()->first + 1;
   co_await rolling();
@@ -78,6 +76,7 @@ future<vector<group_id>> segment_manager::list_nodes() {
         })
         .done();
   });
+  std::sort(nodes.begin(), nodes.end());
   co_return std::move(nodes);
 }
 
@@ -336,21 +335,38 @@ string segment_manager::debug_string() const noexcept {
       ss.str());
 }
 
-future<> segment_manager::parse_existing_segments(directory_entry s) {
-  auto [shard_id, filename] = segment::parse_name(s.name);
-  if (filename == segment::INVALID_FILENAME) {
-    l.warn("segment_manager::parse_existing_segments: invalid {}", s.name);
-    co_return;
+future<> segment_manager::parse_existing_segments(seastar::file dir) {
+  std::vector<std::string> segments;
+  co_await dir
+      .list_directory([&segments](auto s) {
+        auto [shard_id, filename] = segment::parse_name(s.name);
+        if (filename == segment::INVALID_FILENAME) {
+          l.warn(
+              "segment_manager::parse_existing_segments: invalid {}", s.name);
+          return make_ready_future<>();
+        }
+        if (shard_id != this_shard_id()) {
+          return make_ready_future<>();
+        }
+        segments.emplace_back(s.name);
+        return make_ready_future<>();
+      })
+      .done();
+  // make sure we are starting from lower index
+  std::sort(segments.begin(), segments.end());
+  for (auto& s : segments) {
+    auto [shard_id, filename] = segment::parse_name(s);
+    if (shard_id != this_shard_id() || filename == segment::INVALID_FILENAME) {
+      l.error("unexpected name:{}", s);
+      continue;
+    }
+    auto path = fmt::format("{}/{}", _log_dir, s);
+    auto seg = co_await segment::open(filename, std::move(path), true);
+    _stats._new_segment++;
+    co_await seg->list_update(
+        [this](const auto& up, auto e) { return update_index(up, e); });
+    _segments.emplace(filename, std::move(seg));
   }
-  if (shard_id != this_shard_id()) {
-    co_return;
-  }
-  auto path = fmt::format("{}/{}", _log_dir, s.name);
-  auto seg = co_await segment::open(filename, std::move(path), true);
-  _stats._new_segment++;
-  co_await seg->list_update(
-      [this](const auto& up, auto e) { return update_index(up, e); });
-  _segments.emplace(filename, std::move(seg));
 }
 
 future<> segment_manager::recovery_compaction() {

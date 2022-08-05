@@ -248,7 +248,7 @@ RAFTER_TEST_P(segment_manager_test, remove_simple) {
 
 RAFTER_TEST_P(segment_manager_test, DISABLED_basic_read_write) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, DSIABLED_save_overlapping_entries) {
+RAFTER_TEST_P(segment_manager_test, DISABLED_save_overlapping_entries) {
   co_return;
 }
 
@@ -260,7 +260,7 @@ RAFTER_TEST_P(segment_manager_test, DISABLED_bootstrap_info) { co_return; }
 
 RAFTER_TEST_P(segment_manager_test, DISABLED_remove_node) { co_return; }
 
-RAFTER_TEST_P(segment_manager_test, DSIABLED_import_snapshot) { co_return; }
+RAFTER_TEST_P(segment_manager_test, DISABLED_import_snapshot) { co_return; }
 
 RAFTER_TEST_P(segment_manager_test, DISABLED_recovery_compaction) { co_return; }
 

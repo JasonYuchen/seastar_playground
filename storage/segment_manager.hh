@@ -53,7 +53,7 @@ class segment_manager final
   std::string debug_string() const noexcept;
 
  private:
-  future<> parse_existing_segments(directory_entry s);
+  future<> parse_existing_segments(file dir);
   future<> recovery_compaction();
   future<> update_index(const protocol::update& up, index::entry e);
   future<> rolling();
