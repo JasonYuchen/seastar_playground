@@ -537,8 +537,7 @@ RAFTER_TEST_F(in_memory_log_test, unstable_truncate_append) {
     fill_entries(im, t.entries);
     im.merge(test::util::new_entries(t.to_append));
     EXPECT_EQ(helper::_marker(im), t.exp_marker) << CASE_INDEX(t, tests);
-    EXPECT_TRUE(test::util::compare(
-        helper::_entries(im), test::util::new_entries(t.exp_entries)))
+    EXPECT_EQ(helper::_entries(im), test::util::new_entries(t.exp_entries))
         << CASE_INDEX(t, tests);
   }
   co_return;
@@ -1167,8 +1166,7 @@ RAFTER_TEST_F(raft_log_test, append) {
     EXPECT_EQ(rl.last_index(), t.exp_index) << CASE_INDEX(t, tests);
     log_entry_vector queried;
     co_await rl.query(1, queried, UINT64_MAX);
-    EXPECT_TRUE(
-        test::util::compare(queried, test::util::new_entries(t.exp_entries)))
+    EXPECT_EQ(queried, test::util::new_entries(t.exp_entries))
         << CASE_INDEX(t, tests);
     EXPECT_EQ(helper::_marker(helper::_in_memory(rl)), t.exp_unstable)
         << CASE_INDEX(t, tests);
@@ -1252,7 +1250,7 @@ RAFTER_TEST_F(raft_log_test, maybe_append) {
              .high = rl.last_index() + 1},
             e,
             UINT64_MAX);
-        EXPECT_TRUE(test::util::compare(e, test::util::new_entries(t.entries)))
+        EXPECT_EQ(e, test::util::new_entries(t.entries))
             << CASE_INDEX(t, tests);
       }
     } catch (rafter::util::panic& e) {
@@ -1284,8 +1282,7 @@ RAFTER_TEST_F(raft_log_test, next_entries) {
         << CASE_INDEX(t, tests);
     log_entry_vector queried;
     co_await rl.get_entries_to_apply(queried);
-    EXPECT_TRUE(
-        test::util::compare(queried, test::util::new_entries(t.exp_entries)))
+    EXPECT_EQ(queried, test::util::new_entries(t.exp_entries))
         << CASE_INDEX(t, tests);
   }
   co_return;
@@ -1514,8 +1511,7 @@ RAFTER_TEST_F(raft_log_test, slice) {
     log_entry_vector queried;
     try {
       co_await rl.query(t.range, queried, t.limit);
-      EXPECT_TRUE(test::util::compare(
-          queried, test::util::new_entries(t.expect_entries)))
+      EXPECT_EQ(queried, test::util::new_entries(t.expect_entries))
           << CASE_INDEX(t, tests);
     } catch (rafter::util::compacted_error& ex) {
       EXPECT_LE(t.range.low, offset) << CASE_INDEX(t, tests);

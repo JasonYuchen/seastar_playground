@@ -79,28 +79,14 @@ vector<update> util::make_updates(
   return updates;
 }
 
-size_t util::extract_entries(const update& up, log_entry_vector& entries) {
+size_t util::extract_entries(update& up, log_entry_vector& entries) {
   size_t size = 0;
   std::for_each(
-      up.entries_to_save.begin(), up.entries_to_save.end(), [&](const auto& e) {
-        entries.push_back(e);
+      up.entries_to_save.begin(), up.entries_to_save.end(), [&](auto& e) {
+        entries.push_back(e.share());
         size += e.in_memory_bytes();
       });
   return size;
-}
-
-// TODO(jyc): need log mismatched elements in following compare helpers
-bool util::compare(
-    const log_entry_vector& lhs, const log_entry_vector& rhs) noexcept {
-  if (lhs.size() != rhs.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < lhs.size(); ++i) {
-    if (lhs[i] != rhs[i]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 bool util::compare(const update& lhs, const update& rhs) noexcept {
@@ -119,7 +105,7 @@ bool util::compare(const update& lhs, const update& rhs) noexcept {
   if (lhs.snapshot_index != rhs.snapshot_index) {
     return false;
   }
-  if (!compare(lhs.entries_to_save, rhs.entries_to_save)) {
+  if (lhs.entries_to_save != rhs.entries_to_save) {
     return false;
   }
   if (lhs.snapshot.operator bool() ^ rhs.snapshot.operator bool()) {

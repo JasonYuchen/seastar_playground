@@ -227,24 +227,15 @@ RAFTER_TEST_F(segment_test, batch_query) {
   log_entry_vector fetched;
   auto left = co_await _segment->query(query, fetched, UINT64_MAX);
   EXPECT_EQ(left, UINT64_MAX - entry_size);
-  update u1{.entries_to_save = fetched};
-  update u2{.entries_to_save = expected};
-  if (!rafter::test::util::compare(u1, u2)) {
-    ADD_FAILURE() << fmt::format("batch query failed");
-  }
-
+  EXPECT_EQ(fetched, expected);
   fetched.clear();
   size_t cutoff = 10;
   left = co_await _segment->query(query, fetched, entry_size - cutoff);
   EXPECT_EQ(left, 0);
   EXPECT_EQ(fetched.size() + 1, expected.size());
-  u1.entries_to_save = fetched;
-  u2.entries_to_save = expected;
-  u2.entries_to_save.pop_back();
-  if (!rafter::test::util::compare(u1, u2)) {
-    ADD_FAILURE() << fmt::format(
-        "batch query failed with size limitation {}", entry_size - cutoff);
-  }
+  expected.pop_back();
+  EXPECT_EQ(fetched, expected) << fmt::format(
+      "batch query failed with size limitation {}", entry_size - cutoff);
   co_return;
 }
 

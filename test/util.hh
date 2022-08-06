@@ -25,10 +25,7 @@ class util {
       size_t state_interval,      // fill state per state_interval
       size_t snapshot_interval);  // fill snapshot per snapshot interval
   static size_t extract_entries(
-      const protocol::update& up, protocol::log_entry_vector& entries);
-  static bool compare(
-      const protocol::log_entry_vector& lhs,
-      const protocol::log_entry_vector& rhs) noexcept;
+      protocol::update& up, protocol::log_entry_vector& entries);
   static bool compare(
       const protocol::update& lhs, const protocol::update& rhs) noexcept;
   static bool compare(

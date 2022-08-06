@@ -131,9 +131,7 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
       {.low = up1.first_index, .high = up1.last_index + 1},
       entries,
       UINT64_MAX);
-  EXPECT_TRUE(test::util::compare(
-      update{.entries_to_save = entries},
-      update{.entries_to_save = up1.entries_to_save}))
+  EXPECT_EQ(entries, up1.entries_to_save)
       << "failed to query existing segment 3";
   entries.clear();
   co_await _manager->query_entries(
@@ -141,14 +139,12 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
       {.low = up2.first_index, .high = up2.last_index + 1},
       entries,
       UINT64_MAX);
-  EXPECT_TRUE(test::util::compare(
-      update{.entries_to_save = entries},
-      update{.entries_to_save = up2.entries_to_save}))
+  EXPECT_EQ(entries, up2.entries_to_save)
       << "failed to query existing segment 4";
   auto gid = up1.gid;
   size_t size = 0;
   log_entry_vector expected;
-  for (const auto& up : _updates) {
+  for (auto& up : _updates) {
     if (up.gid == gid) {
       size += test::util::extract_entries(up, expected);
     }
@@ -161,9 +157,7 @@ RAFTER_TEST_P(segment_manager_test, load_existing_segments) {
       entries,
       size - 1);
   expected.pop_back();
-  EXPECT_TRUE(test::util::compare(
-      update{.entries_to_save = entries}, update{.entries_to_save = expected}))
-      << "failed to query across existing segments";
+  EXPECT_EQ(entries, expected) << "failed to query across existing segments";
   l.info("{}", _manager->debug_string());
   co_return;
 }
@@ -202,7 +196,7 @@ RAFTER_TEST_P(segment_manager_test, append_and_rolling) {
   EXPECT_GT(_manager->stats()._new_segment, 1);
   EXPECT_EQ(_manager->stats()._del_segment, 0);
   log_entry_vector expected;
-  for (const auto& up : ups) {
+  for (auto& up : ups) {
     test::util::extract_entries(up, expected);
   }
   log_entry_vector queried;
@@ -212,9 +206,7 @@ RAFTER_TEST_P(segment_manager_test, append_and_rolling) {
        .high = expected.back().lid.index + 1},
       queried,
       UINT64_MAX);
-  EXPECT_TRUE(test::util::compare(
-      update{.entries_to_save = queried}, update{.entries_to_save = expected}))
-      << "failed to query across existing segments";
+  EXPECT_EQ(queried, expected);
   co_return;
 }
 
