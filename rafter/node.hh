@@ -63,7 +63,7 @@ class node {
   future<> apply_snapshot(
       uint64_t key, bool ignored, bool aborted, uint64_t index);
   future<> restore_remotes(protocol::snapshot_ptr ss);
-  future<> apply_raft_update(const protocol::update& up);
+  future<> apply_raft_update(protocol::update& up);
   future<> commit_raft_update(const protocol::update& up);
   // This method will access underlying logdb, which is not multi-coroutine safe
   future<> process_raft_update(protocol::update& up);

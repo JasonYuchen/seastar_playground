@@ -181,26 +181,15 @@ bool membership::operator!=(const membership& rhs) const noexcept {
   return !(*this == rhs);
 }
 
-log_entry::log_entry(const log_entry& e)
-  : lid(e.lid)
-  , type(e.type)
-  , key(e.key)
-  , client_id(e.client_id)
-  , series_id(e.series_id)
-  , responded_to(e.responded_to)
-  , payload(e.payload.clone()) {}
-
-log_entry& log_entry::operator=(const log_entry& e) {
-  if (this != &e) {
-    lid = e.lid;
-    type = e.type;
-    key = e.key;
-    client_id = e.client_id;
-    series_id = e.series_id;
-    responded_to = e.responded_to;
-    payload = e.payload.clone();
-  }
-  return *this;
+log_entry log_entry::clone() {
+  log_entry e;
+  e.lid = lid;
+  e.type = type;
+  e.client_id = client_id;
+  e.series_id = series_id;
+  e.responded_to = responded_to;
+  e.payload = payload.clone();
+  return e;
 }
 
 log_entry log_entry::share() {
@@ -295,6 +284,32 @@ std::string snapshot_file::filename() {
 uint64_t snapshot::bytes() const noexcept { return sizer(*this); }
 
 uint64_t message::bytes() const noexcept { return sizer(*this); }
+
+message message::share() {
+  message m;
+  m.type = type;
+  m.cluster = cluster;
+  m.from = from;
+  m.to = to;
+  m.term = term;
+  m.lid = lid;
+  m.commit = commit;
+  m.witness = witness;
+  m.reject = reject;
+  m.hint = hint;
+  m.entries = log_entry::share(entries);
+  m.snapshot = snapshot;
+  return m;
+}
+
+std::vector<message> message::share(std::span<message> messages) {
+  std::vector<message> msgs;
+  msgs.reserve(messages.size());
+  for (auto& msg : messages) {
+    msgs.emplace_back(msg.share());
+  }
+  return msgs;
+}
 
 uint64_t config_change::bytes() const noexcept { return sizer(*this); }
 

@@ -283,8 +283,9 @@ void raft::report_dropped_config_change(log_entry e) {
 }
 
 void raft::report_dropped_proposal(message& m) {
-  _dropped_entries.insert(
-      _dropped_entries.end(), m.entries.begin(), m.entries.end());
+  for (auto& e : m.entries) {
+    _dropped_entries.emplace_back(e.share());
+  }
 }
 
 void raft::report_dropped_read_index(message& m) {

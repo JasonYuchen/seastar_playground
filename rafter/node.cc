@@ -215,7 +215,7 @@ future<> node::restore_remotes(protocol::snapshot_ptr ss) {
   // TODO(jyc): notify config change
 }
 
-future<> node::apply_raft_update(const protocol::update& up) {
+future<> node::apply_raft_update(protocol::update& up) {
   auto entries = utils::entries_to_apply(up.committed_entries, _pushed_index);
   if (entries.empty()) {
     co_return;
@@ -488,7 +488,7 @@ future<bool> node::handle_proposals() {
   // TODO(jyc): db busy
   auto paused = rate_limited;
   if (!_pending_proposal._proposal_queue.empty()) {
-    auto copy = _pending_proposal._proposal_queue;
+    auto copy = log_entry::share(_pending_proposal._proposal_queue);
     _pending_proposal._proposal_queue.clear();
     co_await _peer->propose_entries(std::move(copy));
     co_return true;

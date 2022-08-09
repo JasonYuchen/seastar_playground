@@ -244,11 +244,13 @@ struct log_entry {
   log_entry() = default;
   explicit log_entry(log_id lid) : lid(lid) {}
   log_entry(uint64_t term, uint64_t index) : lid({term, index}) {}
-  log_entry(const log_entry &e);
-  log_entry &operator=(const log_entry &e);
+  log_entry(const log_entry &e) = delete;
+  log_entry &operator=(const log_entry &e) = delete;
   log_entry(log_entry &&e) = default;
   log_entry &operator=(log_entry &&e) = default;
 
+  // return a new log entry with cloned payload
+  log_entry clone();
   // return a new log entry with shared payload
   log_entry share();
   void copy_of(std::string_view data) {
@@ -367,6 +369,9 @@ struct message {
   bool is_leader_message() const noexcept;
   bool is_local_message() const noexcept;
   uint64_t bytes() const noexcept;
+
+  message share();
+  static std::vector<message> share(std::span<message> messages);
 };
 
 using message_ptr = seastar::lw_shared_ptr<message>;
@@ -573,7 +578,7 @@ class utils {
   static void assert_continuous(log_entry_span left, log_entry_span right);
   static void fill_metadata_entries(log_entry_vector &entries);
   static log_entry_vector entries_to_apply(
-      const log_entry_vector &entries, uint64_t applied);
+      log_entry_vector &entries, uint64_t applied);
 };
 
 }  // namespace rafter::protocol

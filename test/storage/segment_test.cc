@@ -71,10 +71,13 @@ class segment_test : public ::testing::Test {
     for (size_t i = 0; i < 10; ++i) {
       std::vector<update> shuffled;
       for (size_t j = 0; j < _gids.size(); ++j) {
-        shuffled.emplace_back(gid_updates[j][i]);
+        shuffled.emplace_back(std::move(gid_updates[j][i]));
       }
       std::shuffle(shuffled.begin(), shuffled.end(), g);
-      _updates.insert(_updates.end(), shuffled.begin(), shuffled.end());
+      _updates.insert(
+          _updates.end(),
+          std::make_move_iterator(shuffled.begin()),
+          std::make_move_iterator(shuffled.end()));
     }
     for (const auto& up : _updates) {
       index::entry ie;

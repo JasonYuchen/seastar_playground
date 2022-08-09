@@ -147,7 +147,7 @@ future<update> peer::get_update(bool more_to_apply, uint64_t last_applied) {
   auto up = update{
       .gid = _raft._gid,
       .fast_apply = true,
-      .messages = _raft._messages,
+      .messages = message::share(_raft._messages),
       .last_applied = last_applied,
   };
   _raft._log.get_entries_to_save(up.entries_to_save);

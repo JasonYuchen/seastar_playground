@@ -113,8 +113,8 @@ RAFTER_TEST_P(logdb_test, save_snapshot) {
   sp1->group_id = {3, 4};
   sp1->file_path = "p1";
   sp1->file_size = 100;
-  auto ud1 = update{
-      .gid = {3, 4}, .state = hs1, .entries_to_save = {e1}, .snapshot = sp1};
+  auto ud1 = update{.gid = {3, 4}, .state = hs1, .snapshot = sp1};
+  ud1.entries_to_save.emplace_back(std::move(e1));
   ud1.fill_meta();
   auto hs2 = hard_state{.term = 2, .vote = 3, .commit = 100};
   auto e2 = log_entry({.term = 1, .index = 20});
@@ -124,8 +124,8 @@ RAFTER_TEST_P(logdb_test, save_snapshot) {
   sp2->group_id = {3, 3};
   sp2->file_path = "p2";
   sp2->file_size = 200;
-  auto ud2 = update{
-      .gid = {3, 3}, .state = hs2, .entries_to_save = {e2}, .snapshot = sp2};
+  auto ud2 = update{.gid = {3, 3}, .state = hs2, .snapshot = sp2};
+  ud2.entries_to_save.emplace_back(std::move(e2));
   ud2.fill_meta();
   std::vector<update_pack> packs;
   packs.emplace_back(ud1);

@@ -49,7 +49,9 @@ future<> test_logdb::save(std::span<storage::update_pack> updates) {
           ent.lid.index != n._entries.back().lid.index + 1) {
         rafter::util::panic::panic_with_backtrace("inconsistent entry");
       }
-      n._entries.push_back(ent);
+      // to avoid redundant copy, have to make it mutable and call share()
+      // which is safe here since share() is just a ref counting operation
+      n._entries.push_back(const_cast<log_entry&>(ent).share());
     }
     if (up.update.snapshot) {
       n._snap = up.update.snapshot;
@@ -84,7 +86,7 @@ future<size_t> test_logdb::query_entries(
     if (!entries.empty() && entries.back().lid.index + 1 != ent.lid.index) {
       rafter::util::panic::panic_with_backtrace("inconsistent entry");
     }
-    entries.push_back(ent);
+    entries.push_back(ent.share());
     max_bytes -= ent.in_memory_bytes();
     next++;
   }
