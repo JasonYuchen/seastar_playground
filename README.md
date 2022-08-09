@@ -28,10 +28,15 @@ rafter is deeply inspired by
   - GoogleTest, taken care of by rafter's cmake configuration
 
 ```shell
+# ubuntu 22.04
 git submodule update --init --recursive
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/clang-12 -DCMAKE_CXX_COMPILER=/usr/bin/clang++-12 ..
-make
+sudo ./install-dependencies.sh clang++-12
+mkdir build
+cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-12 -B build -S .
+ninja -C build -j $(nproc)
+
+# run tests
+./build/test/rafter_test
 ```
 
 *it is recommended to use [ninja](https://github.com/ninja-build/ninja), [mold](https://github.com/rui314/mold) (
