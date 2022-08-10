@@ -5,6 +5,9 @@
 #include "core/raft_log.hh"
 
 #include "helper.hh"
+#include "seastar/coroutine/maybe_yield.hh"
+#include "seastar/util/file.hh"
+#include "storage/segment_manager.hh"
 #include "test/base.hh"
 #include "test/test_logdb.hh"
 #include "test/util.hh"
@@ -15,6 +18,7 @@ using namespace rafter;
 using namespace rafter::protocol;
 
 using helper = rafter::test::core_helper;
+using rafter::storage::segment_manager;
 using rafter::test::base;
 using rafter::test::l;
 
@@ -665,6 +669,49 @@ RAFTER_TEST_F(log_reader_test, panic_when_gap) {
   ASSERT_THROW(lr.set_range({50, 60}), rafter::util::panic);
 }
 
+class log_reader_logdb_test : public ::testing::TestWithParam<std::string> {
+ protected:
+  void SetUp() override {
+    base::submit([this]() -> future<> {
+      // ignore exceptions
+      co_await recursive_remove_directory(config::shard().data_dir)
+          .handle_exception([](auto) {});
+      co_await recursive_touch_directory(config::shard().data_dir);
+      if (GetParam() == "test_logdb") {
+        _logdb = std::make_unique<test::test_logdb>();
+      }
+      if (GetParam() == "segment_manager") {
+        auto* db = new segment_manager(test::util::partition_func());
+        co_await db->start();
+        _logdb.reset(db);
+      }
+      co_return;
+    });
+  }
+
+  void TearDown() override {
+    base::submit([this]() -> future<> {
+      if (GetParam() == "segment_manager") {
+        co_await dynamic_cast<segment_manager*>(_logdb.get())->stop();
+      }
+      _logdb.reset();
+      co_return;
+    });
+  }
+
+  std::unique_ptr<storage::logdb> _logdb;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    raft_log,
+    log_reader_logdb_test,
+    testing::Values(std::string("test_logdb"), std::string("segment_manager")));
+
+RAFTER_TEST_P(log_reader_logdb_test, log_reader_entries) {
+  // TODO
+  co_return;
+}
+
 class raft_log_test : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -764,9 +811,10 @@ RAFTER_TEST_F(raft_log_test, first_not_applied_index_after_restored) {
 
 RAFTER_TEST_F(raft_log_test, iterate_ready_to_be_applied) {
   auto entries = test::util::new_entries({.low = 1, .high = 129});
-  for (int i = 1; i <= 10; ++i) {
+  for (size_t i = 1; i <= 10; ++i) {
     // no greater than max_entry_bytes = 8MB
     entries[i * 10].payload = temporary_buffer<char>{7UL * MB};
+    co_await coroutine::maybe_yield();
   }
   co_await append_to_test_logdb(entries);
   auto rl = core::raft_log({1, 1}, *_lr);
@@ -1521,6 +1569,141 @@ RAFTER_TEST_F(raft_log_test, slice) {
       ADD_FAILURE() << "unwanted exception: " << ex.what() << " at "
                     << CASE_INDEX(t, tests);
     }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, compaction_side_effects) {
+  uint64_t i = 0;
+  uint64_t last_index = 1000;
+  uint64_t unstable_index = 750;
+  uint64_t last_term = last_index;
+  log_entry_vector to_append;
+  for (i = 1; i <= unstable_index; ++i) {
+    to_append.emplace_back(i, i);
+  }
+  co_await append_to_test_logdb(to_append);
+  auto rl = core::raft_log({1, 1}, *_lr);
+  to_append.clear();
+  for (i = unstable_index + 1; i <= last_index; ++i) {
+    to_append.emplace_back(i, i);
+  }
+  rl.append(to_append);
+  ASSERT_TRUE(co_await rl.try_commit({last_term, last_index}));
+  uint64_t offset = 500;
+  co_await _lr->apply_compaction(offset);
+  ASSERT_EQ(rl.last_index(), last_index);
+  for (auto j = offset; j <= rl.last_index(); ++j) {
+    ASSERT_EQ(co_await rl.term(j), j);
+    ASSERT_TRUE(co_await rl.term_index_match({j, j}));
+  }
+  log_entry_vector unstable_entries;
+  rl.get_entries_to_save(unstable_entries);
+  ASSERT_EQ(unstable_entries.size(), 250);
+  ASSERT_EQ(unstable_entries.front().lid.index, 751);
+  uint64_t prev = rl.last_index();
+  rl.append(
+      test::util::new_entries({{rl.last_index() + 1, rl.last_index() + 1}}));
+  ASSERT_EQ(rl.last_index(), prev + 1);
+  log_entry_vector queried;
+  co_await rl.query(rl.last_index(), queried, UINT64_MAX);
+  ASSERT_EQ(queried.size(), 1);
+}
+
+RAFTER_TEST_F(raft_log_test, unstable_entries) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {2, 2}});
+  struct {
+    uint64_t unstable;
+    log_entry_vector exp_entries;
+  } tests[] = {
+      {3, {}},
+      {1, log_entry::share(previous_entries)},
+  };
+  for (auto& t : tests) {
+    auto to_append = log_entry_span{previous_entries};
+    // append stable entries to logdb
+    co_await append_to_test_logdb(
+        to_append.subspan(0, t.unstable - 1), {}, true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    // append unstable entries to raft log
+    rl.append(to_append.subspan(t.unstable - 1));
+    log_entry_vector to_save;
+    rl.get_entries_to_save(to_save);
+    if (!to_save.empty()) {
+      co_await rl.try_commit(to_save.back().lid);
+      auto uc = update_commit{
+          .processed = to_save.back().lid.index,
+          .last_applied = to_save.back().lid.index,
+          .stable_log_id = to_save.back().lid,
+      };
+      rl.commit_update(uc);
+    }
+    EXPECT_EQ(to_save, t.exp_entries) << CASE_INDEX(t, tests);
+    if (!to_save.empty()) {
+      EXPECT_EQ(
+          to_save.back().lid.index + 1, helper::_marker(helper::_in_memory(rl)))
+          << CASE_INDEX(t, tests);
+    }
+  }
+}
+
+RAFTER_TEST_F(raft_log_test, stable_to) {
+  struct {
+    log_id stable;
+    uint64_t saved_to;
+    uint64_t exp_unstable_to;
+  } tests[] = {
+      {{1, 1}, 1, 1},
+      {{2, 2}, 1, 1},
+      {{1, 2}, 0, 1},
+      {{1, 3}, 0, 1},
+  };
+  for (auto& t : tests) {
+    co_await append_to_test_logdb({}, {}, true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(test::util::new_entries({{1, 1}, {2, 2}}));
+    rl.commit_update(update_commit{.stable_log_id = t.stable});
+    if (t.saved_to > 0) {
+      EXPECT_EQ(helper::_saved(helper::_in_memory(rl)), t.stable.index)
+          << CASE_INDEX(t, tests);
+    }
+    EXPECT_EQ(helper::_marker(helper::_in_memory(rl)), t.exp_unstable_to)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_log_test, stable_to_with_snapshot) {
+  uint64_t st = 2;
+  uint64_t si = 5;
+  struct {
+    log_id stable;
+    std::vector<log_id> new_entries;
+    uint64_t exp_unstable_to;
+  } tests[] = {
+      {{st, si + 1}, {}, si + 1},
+      {{st, si}, {}, si + 1},
+      {{st, si - 1}, {}, si + 1},
+
+      {{st + 1, si + 1}, {}, si + 1},
+      {{st + 1, si}, {}, si + 1},
+      {{st + 1, si - 1}, {}, si + 1},
+
+      {{st, si + 1}, {{st, si + 1}}, si + 2},
+      {{st, si}, {{st, si + 1}}, si + 1},
+      {{st, si - 1}, {{st, si + 1}}, si + 1},
+
+      {{st + 1, si + 1}, {{st, si + 1}}, si + 1},
+      {{st + 1, si}, {{st, si + 1}}, si + 1},
+      {{st + 1, si - 1}, {{st, si + 1}}, si + 1},
+  };
+  for (auto& t : tests) {
+    co_await append_to_test_logdb({}, test::util::new_snapshot({st, si}), true);
+    auto rl = core::raft_log({1, 1}, *_lr);
+    rl.append(test::util::new_entries(t.new_entries));
+    rl.commit_update(update_commit{.stable_log_id = t.stable});
+    EXPECT_EQ(helper::_saved(helper::_in_memory(rl)), t.exp_unstable_to - 1)
+        << CASE_INDEX(t, tests);
   }
   co_return;
 }
