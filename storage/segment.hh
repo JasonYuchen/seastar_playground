@@ -42,6 +42,7 @@ class segment {
   // read segment and append saved entries to entries, return left bytes
   future<size_t> query(
       std::span<const index::entry> indexes,
+      protocol::hint range,
       protocol::log_entry_vector& entries,
       size_t left_bytes) const;
   future<> sync();

@@ -678,12 +678,12 @@ class log_reader_logdb_test : public ::testing::TestWithParam<std::string> {
           .handle_exception([](auto) {});
       co_await recursive_touch_directory(config::shard().data_dir);
       if (GetParam() == "test_logdb") {
-        _logdb = std::make_unique<test::test_logdb>();
+        _db = std::make_unique<test::test_logdb>();
       }
       if (GetParam() == "segment_manager") {
         auto* db = new segment_manager(test::util::partition_func());
         co_await db->start();
-        _logdb.reset(db);
+        _db.reset(db);
       }
       co_return;
     });
@@ -692,14 +692,31 @@ class log_reader_logdb_test : public ::testing::TestWithParam<std::string> {
   void TearDown() override {
     base::submit([this]() -> future<> {
       if (GetParam() == "segment_manager") {
-        co_await dynamic_cast<segment_manager*>(_logdb.get())->stop();
+        co_await dynamic_cast<segment_manager*>(_db.get())->stop();
       }
-      _logdb.reset();
+      _db.reset();
       co_return;
     });
   }
 
-  std::unique_ptr<storage::logdb> _logdb;
+  future<> append_to_logdb(log_entry_span entries) {
+    update up{.gid = _test_gid, .entries_to_save = log_entry::share(entries)};
+    up.fill_meta();
+    storage::update_pack pack(up);
+    co_await _db->save({&pack, 1});
+    co_await pack.done.get_future();
+  }
+
+  future<std::unique_ptr<core::log_reader>> get_test_log_reader(
+      log_id marker, size_t len) {
+    auto lr = std::make_unique<core::log_reader>(_test_gid, *_db);
+    helper::_marker(*lr) = marker;
+    helper::_length(*lr) = len;
+    co_return std::move(lr);
+  }
+
+  static constexpr group_id _test_gid{23, 45};
+  std::unique_ptr<storage::logdb> _db;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -708,7 +725,53 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(std::string("test_logdb"), std::string("segment_manager")));
 
 RAFTER_TEST_P(log_reader_logdb_test, log_reader_entries) {
-  // TODO
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}});
+  co_await append_to_logdb(entries);
+  auto base_size = entries[1].in_memory_bytes();
+  entries = test::util::new_entries({{5, 5}, {6, 6}});
+  co_await append_to_logdb(entries);
+  base_size += entries[0].in_memory_bytes();
+  auto ok = rafter::util::code::ok;
+  auto compacted = rafter::util::code::compacted;
+  struct {
+    hint range;
+    uint64_t limit;
+    rafter::util::code exp_code;
+    std::vector<log_id> exp_entries;
+  } tests[] = {
+      {{2, 6}, UINT64_MAX, compacted, {}},
+      {{3, 4}, UINT64_MAX, compacted, {}},
+      {{4, 5}, UINT64_MAX, ok, {{4, 4}}},
+      {{4, 6}, UINT64_MAX, ok, {{4, 4}, {5, 5}}},
+      {{4, 7}, UINT64_MAX, ok, {{4, 4}, {5, 5}, {6, 6}}},
+      // if max size = 0, nothing should be returned (different from dragonboat)
+      {{4, 7}, 0, ok, {}},
+      {{4, 7}, base_size, ok, {{4, 4}, {5, 5}}},
+      {{4, 7},
+       base_size + entries[1].in_memory_bytes() / 2,
+       ok,
+       {{4, 4}, {5, 5}}},
+      {{4, 7},
+       base_size + entries[1].in_memory_bytes() - 1,
+       ok,
+       {{4, 4}, {5, 5}}},
+      {{4, 7},
+       base_size + entries[1].in_memory_bytes(),
+       ok,
+       {{4, 4}, {5, 5}, {6, 6}}},
+  };
+  for (auto& t : tests) {
+    auto lr = co_await get_test_log_reader({3, 3}, 4);
+    log_entry_vector queried;
+    try {
+      co_await lr->query(t.range, queried, t.limit);
+      EXPECT_EQ(ok, t.exp_code) << CASE_INDEX(t, tests);
+    } catch (const rafter::util::base_error& e) {
+      EXPECT_EQ(e.error_code(), t.exp_code) << CASE_INDEX(t, tests) << e.what();
+    }
+    EXPECT_EQ(queried, rafter::test::util::new_entries(t.exp_entries))
+        << CASE_INDEX(t, tests);
+  }
   co_return;
 }
 

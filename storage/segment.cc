@@ -118,6 +118,7 @@ future<update> segment::query(index::entry i) const {
 
 future<size_t> segment::query(
     span<const index::entry> indexes,
+    hint range,
     log_entry_vector& entries,
     size_t left_bytes) const {
   if (indexes.empty() || left_bytes == 0) {
@@ -166,7 +167,9 @@ future<size_t> segment::query(
   util::fragmented_temporary_buffer buffer{std::move(fragments), size};
   auto in_stream = buffer.as_istream();
   uint64_t bytes_left = in_stream.bytes_left();
-  uint64_t expected_index = indexes.front().first_index;
+  uint64_t expected_index =
+      entries.empty() ? std::max(indexes.front().first_index, range.low)
+                      : entries.back().lid.index + 1;
   for (const auto& i : indexes) {
     auto sz = in_stream.read_le<uint64_t>();
     assert(sz + 8 == i.length);
@@ -191,9 +194,10 @@ future<size_t> segment::query(
       }
       if (ent.lid.index != expected_index) [[unlikely]] {
         l.error(
-            "{} segment::query: log hole found in segment:{}, missing:{}",
+            "{} segment::query: log hole in segment:{}, actual:{}, want:{}",
             up.gid,
             _filename,
+            ent.lid.index,
             expected_index);
         co_await coroutine::return_exception(util::corruption_error());
       }
@@ -201,8 +205,20 @@ future<size_t> segment::query(
       if (left_bytes < entry_bytes) {
         co_return 0;
       }
+      if (ent.lid.index >= range.high) {
+        co_return 0;
+      }
       left_bytes -= entry_bytes;
       expected_index++;
+      if (!entries.empty() && ent.lid.index != entries.back().lid.index + 1)
+          [[unlikely]] {
+        l.error(
+            "{} segment::query: inconsistent entries, last:{}, next:{}",
+            up.gid,
+            entries.back().lid.index,
+            ent.lid.index);
+        co_await coroutine::return_exception(util::corruption_error());
+      }
       entries.emplace_back(std::move(ent));
     }
   }

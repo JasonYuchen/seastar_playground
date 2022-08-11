@@ -228,12 +228,20 @@ RAFTER_TEST_F(segment_test, batch_query) {
     entry_size += rafter::test::util::extract_entries(_updates[i], expected);
   }
   log_entry_vector fetched;
-  auto left = co_await _segment->query(query, fetched, UINT64_MAX);
+  auto left = co_await _segment->query(
+      query,
+      {expected.front().lid.index, expected.back().lid.index + 1},
+      fetched,
+      UINT64_MAX);
   EXPECT_EQ(left, UINT64_MAX - entry_size);
   EXPECT_EQ(fetched, expected);
   fetched.clear();
   size_t cutoff = 10;
-  left = co_await _segment->query(query, fetched, entry_size - cutoff);
+  left = co_await _segment->query(
+      query,
+      {expected.front().lid.index, expected.back().lid.index},
+      fetched,
+      entry_size - cutoff);
   EXPECT_EQ(left, 0);
   EXPECT_EQ(fetched.size() + 1, expected.size());
   expected.pop_back();

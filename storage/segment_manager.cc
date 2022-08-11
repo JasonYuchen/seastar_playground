@@ -145,7 +145,7 @@ future<size_t> segment_manager::query_entries(
     if (indexes[i].filename != prev_filename) {
       // TODO(jyc): check the continuity of entry's index
       max_bytes = co_await _segments[prev_filename]->query(
-          indexes.subspan(start, count), entries, max_bytes);
+          indexes.subspan(start, count), range, entries, max_bytes);
       if (max_bytes == 0) {
         break;
       }
@@ -158,7 +158,7 @@ future<size_t> segment_manager::query_entries(
   }
   if (max_bytes != 0) {
     max_bytes = co_await _segments[prev_filename]->query(
-        indexes.subspan(start, count), entries, max_bytes);
+        indexes.subspan(start, count), range, entries, max_bytes);
   }
   co_await unreference_segments(indexes);
   co_return max_bytes;
