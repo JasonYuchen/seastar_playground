@@ -688,7 +688,7 @@ future<std::optional<update>> node::get_update() {
     }
     auto update = co_await _peer->get_update(not_busy, _applied_index);
     _confirmed_index = _applied_index;
-    co_return std::move(update);
+    co_return std::optional<protocol::update>{std::move(update)};
   }
   co_return std::nullopt;
 }

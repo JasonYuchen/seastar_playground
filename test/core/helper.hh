@@ -48,6 +48,10 @@ class core_helper {
   PUBLISH_METHOD(core::raft, remove_node);
   PUBLISH_METHOD(core::raft, become_leader);
   PUBLISH_METHOD(core::raft, become_candidate);
+  PUBLISH_METHOD(core::raft, become_pre_candidate);
+  PUBLISH_METHOD(core::raft, become_follower);
+  PUBLISH_METHOD(core::raft, become_observer);
+  PUBLISH_METHOD(core::raft, become_witness);
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
   PUBLISH_METHOD(core::raft, tick);
@@ -56,6 +60,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft, _leader_id);
   PUBLISH_VARIABLE(core::raft, _leader_transfer_target);
   PUBLISH_VARIABLE(core::raft, _term);
+  PUBLISH_VARIABLE(core::raft, _vote);
   PUBLISH_VARIABLE(core::raft, _check_quorum);
   PUBLISH_VARIABLE(core::raft, _log);
   PUBLISH_VARIABLE(core::raft, _remotes);

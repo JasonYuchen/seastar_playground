@@ -341,8 +341,13 @@ class raft_test : public ::testing::Test {
     auto s = make_lw_shared<snapshot>();
     s->log_id = {.term = co_await logdb->lr().get_term(index), .index = index};
 
-    s->membership = members;
+    s->membership = std::move(members);
     co_return std::move(s);
+  }
+  static message naive_proposal(uint64_t from, uint64_t to) {
+    message m{.type = message_type::propose, .from = from, .to = to};
+    m.entries.emplace_back();
+    return m;
   }
 };
 
@@ -360,8 +365,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node) {
        .to = 1,
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -385,8 +389,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_up_to_date_node_from_follower) {
        .to = 2,
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -420,8 +423,7 @@ RAFTER_TEST_F(raft_test, DISABLED_leader_transfer_with_check_quorum) {
        .to = 1,
        .hint = {.low = 2}});
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::follower, 2));
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   // transfer leadership back to 1 after replication
   co_await nt.send(
       {.type = message_type::leader_transfer,
@@ -436,8 +438,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_slow_follower) {
   auto nt = network({null(), null(), null()});
   co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
   nt.isolate(3);
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   nt.recover();
   auto& lead = raft_cast(nt.sms[1].get());
   ASSERT_EQ(helper::_remotes(lead)[3].match, 1);
@@ -449,8 +450,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_to_slow_follower) {
   // leader is still under transferring state with target = 3
   ASSERT_TRUE(check_leader_transfer_state(lead, raft_role::leader, 1, 3));
   helper::abort_leader_transfer(lead);
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   co_await nt.send(
       {.type = message_type::leader_transfer,
        .from = 3,
@@ -463,8 +463,7 @@ RAFTER_TEST_F(raft_test, leader_transfer_after_snapshot) {
   auto nt = network({null(), null(), null()});
   co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
   nt.isolate(3);
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   auto& lead = raft_cast(nt.sms[1].get());
   co_await next_entries(nt.sms[1].get(), nt.dbs[1].get());
   auto m = test_membership(nt.sms[1].get());
@@ -544,11 +543,9 @@ RAFTER_TEST_F(raft_test, leader_transfer_ignore_proposal) {
        .to = 1,
        .hint = {.low = 3}});
   ASSERT_EQ(helper::_leader_transfer_target(lead), 3);
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   uint64_t matched = helper::_remotes(lead)[2].match;
-  co_await nt.send(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await nt.send(naive_proposal(1, 1));
   ASSERT_EQ(helper::_remotes(lead)[2].match, matched);
 }
 
@@ -657,12 +654,9 @@ RAFTER_TEST_F(raft_test, remote_paused) {
   std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
   helper::become_candidate(r->raft());
   co_await helper::become_leader(r->raft());
-  co_await r->raft().handle(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
-  co_await r->raft().handle(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
-  co_await r->raft().handle(
-      {.type = message_type::propose, .from = 1, .to = 1, .entries = {{}}});
+  co_await r->raft().handle(naive_proposal(1, 1));
+  co_await r->raft().handle(naive_proposal(1, 1));
+  co_await r->raft().handle(naive_proposal(1, 1));
   ASSERT_EQ(r->read_messages().size(), 1);
 }
 
@@ -760,6 +754,84 @@ RAFTER_TEST_F(raft_test, election_overwrite_newer_logs) {
     EXPECT_EQ(entries[1].lid.term, 3);
   }
   co_return;
+}
+
+RAFTER_TEST_F(raft_test, vote_from_any_state) {
+  // TODO(jyc): support observer/witness
+  std::vector<raft_role> roles{
+      raft_role::follower,
+      raft_role::pre_candidate,
+      raft_role::candidate,
+      raft_role::leader,
+      /* raft_role::observer, */
+      /* raft_role::witness, */
+  };
+  std::vector<message_type> vote_types{
+      message_type::request_prevote,
+      message_type::request_vote,
+  };
+  for (auto vote_type : vote_types) {
+    for (auto role : roles) {
+      auto err = fmt::format("{}:{}", vote_type, role);
+      std::unique_ptr<raft_sm> rsm{raft_sm::make(1, {1, 2, 3}, 10, 1)};
+      auto& r = rsm->raft();
+      helper::_term(r) = 1;
+      if (role == raft_role::follower) {
+        helper::become_follower(r, helper::_term(r), 3, true);
+      } else if (role == raft_role::pre_candidate) {
+        helper::become_pre_candidate(r);
+      } else if (role == raft_role::candidate) {
+        helper::become_candidate(r);
+      } else if (role == raft_role::leader) {
+        helper::become_candidate(r);
+        co_await helper::become_leader(r);
+      } else if (role == raft_role::observer) {
+        /* helper::become_observer(r, helper::_term(r), 3); */
+      } else if (role == raft_role::witness) {
+        /* helper::become_witness(r, helper::_term(r), 3); */
+      }
+      auto orig_term = helper::_term(r);
+      auto new_term = orig_term + 1;
+      message msg{
+          .type = vote_type,
+          .from = 2,
+          .to = 1,
+          .term = new_term,
+          .lid = {new_term, 42},
+      };
+      co_await r.handle(msg);
+      EXPECT_EQ(r.messages().size(), 1) << err;
+      auto& resp = r.messages().front();
+      if (vote_type == message_type::request_vote) {
+        EXPECT_EQ(resp.type, message_type::request_vote_resp) << err;
+      } else {
+        EXPECT_EQ(resp.type, message_type::request_prevote_resp) << err;
+      }
+      EXPECT_FALSE(resp.reject) << err;
+      if (vote_type == message_type::request_vote) {
+        EXPECT_EQ(helper::_role(r), raft_role::follower) << err;
+        EXPECT_EQ(helper::_term(r), new_term) << err;
+        EXPECT_EQ(helper::_vote(r), 2) << err;
+      } else {  // request_prevote, nothing change
+        EXPECT_EQ(helper::_role(r), role) << err;
+        EXPECT_EQ(helper::_term(r), orig_term) << err;
+        // if role is follower or pre_candidate, raft hasn't voted yet.
+        // if role is candidate or leader, it's voted for itself.
+        if (helper::_vote(r) != group_id::INVALID_NODE) {
+          EXPECT_EQ(helper::_vote(r), 1) << err;
+        }
+      }
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, single_node_commit) {
+  auto nt = network({null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  co_await nt.send(naive_proposal(1, 1));
+  co_await nt.send(naive_proposal(1, 1));
+  ASSERT_EQ(helper::_log(raft_cast(nt.sms[1].get())).committed(), 3);
 }
 
 }  // namespace

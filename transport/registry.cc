@@ -42,7 +42,7 @@ std::optional<peer_address> registry::resolve(protocol::group_id gid) {
   if (it == _peer.end()) {
     return std::optional<peer_address>{};
   }
-  return it->second;
+  return std::optional<peer_address>{it->second};
 }
 
 void registry::update(protocol::group_id gid, std::string_view url) {

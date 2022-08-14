@@ -473,9 +473,9 @@ future<> raft::send_replicate(uint64_t to, remote& r) {
   if (r.is_paused()) {
     co_return;
   }
-  // TODO(jyc): refine max bytes
   try {
-    auto m = co_await make_replicate(to, r.next, UINT64_MAX);
+    auto m = co_await make_replicate(
+        to, r.next, config::shard().max_replicate_entry_bytes);
     if (!m.entries.empty()) {
       r.optimistic_update(m.entries.back().lid.index);
     }

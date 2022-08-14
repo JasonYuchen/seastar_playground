@@ -98,8 +98,8 @@ future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
   }
   co_return co_await util::read_file(_boot_dir, name)
       .then([](temporary_buffer<char> buf) {
-        return read_from_string(
-            {buf.get(), buf.size()}, util::type<bootstrap>());
+        return std::optional<bootstrap>{
+            read_from_string({buf.get(), buf.size()}, util::type<bootstrap>())};
       });
 }
 

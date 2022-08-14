@@ -47,7 +47,7 @@ std::string_view status_string(enum code e);
 
 class base_error : public std::exception {
  public:
-  explicit base_error(enum code e) : _e(e) {}
+  explicit base_error(enum code e) : _e(e), _msg(status_string(e)) {}
   base_error(enum code e, std::string msg) : _e(e), _msg(std::move(msg)) {}
   template <typename... Args>
   base_error(std::string_view s, enum code e, Args&&... args)
