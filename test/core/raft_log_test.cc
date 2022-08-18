@@ -707,12 +707,30 @@ class log_reader_logdb_test : public ::testing::TestWithParam<std::string> {
     co_await pack.done.get_future();
   }
 
-  future<std::unique_ptr<core::log_reader>> get_test_log_reader(
+  std::unique_ptr<core::log_reader> get_test_log_reader(
       log_id marker, size_t len) {
     auto lr = std::make_unique<core::log_reader>(_test_gid, *_db);
     helper::_marker(*lr) = marker;
     helper::_length(*lr) = len;
-    co_return std::move(lr);
+    return lr;
+  }
+
+  future<> reinit_logdb() {
+    if (GetParam() == "segment_manager") {
+      co_await dynamic_cast<segment_manager*>(_db.get())->stop();
+    }
+    _db.reset();
+    co_await recursive_remove_directory(config::shard().data_dir)
+        .handle_exception([](auto) {});
+    co_await recursive_touch_directory(config::shard().data_dir);
+    if (GetParam() == "test_logdb") {
+      _db = std::make_unique<test::test_logdb>();
+    }
+    if (GetParam() == "segment_manager") {
+      auto* db = new segment_manager(test::util::partition_func());
+      co_await db->start();
+      _db.reset(db);
+    }
   }
 
   static constexpr group_id _test_gid{23, 45};
@@ -724,7 +742,7 @@ INSTANTIATE_TEST_SUITE_P(
     log_reader_logdb_test,
     testing::Values(std::string("test_logdb"), std::string("segment_manager")));
 
-RAFTER_TEST_P(log_reader_logdb_test, log_reader_entries) {
+RAFTER_TEST_P(log_reader_logdb_test, entries) {
   auto entries = test::util::new_entries({{3, 3}, {4, 4}});
   co_await append_to_logdb(entries);
   auto base_size = entries[1].in_memory_bytes();
@@ -761,7 +779,7 @@ RAFTER_TEST_P(log_reader_logdb_test, log_reader_entries) {
        {{4, 4}, {5, 5}, {6, 6}}},
   };
   for (auto& t : tests) {
-    auto lr = co_await get_test_log_reader({3, 3}, 4);
+    auto lr = get_test_log_reader({3, 3}, 4);
     log_entry_vector queried;
     try {
       co_await lr->query(t.range, queried, t.limit);
@@ -771,6 +789,106 @@ RAFTER_TEST_P(log_reader_logdb_test, log_reader_entries) {
     }
     EXPECT_EQ(queried, rafter::test::util::new_entries(t.exp_entries))
         << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, term) {
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+  co_await append_to_logdb(entries);
+  auto ok = rafter::util::code::ok;
+  auto compacted = rafter::util::code::compacted;
+  auto unavailable = rafter::util::code::unavailable;
+  struct {
+    uint64_t index;
+    uint64_t exp_term;
+    rafter::util::code exp_code;
+  } tests[] = {
+      {2, 0, compacted},
+      {3, 3, ok},
+      {4, 4, ok},
+      {5, 5, ok},
+      {6, 0, unavailable},
+  };
+  for (auto& t : tests) {
+    auto lr = get_test_log_reader(entries.front().lid, entries.size());
+    log_entry_vector queried;
+    try {
+      auto term = co_await lr->get_term(t.index);
+      EXPECT_EQ(ok, t.exp_code) << CASE_INDEX(t, tests);
+      EXPECT_EQ(term, t.exp_term) << CASE_INDEX(t, tests);
+    } catch (const rafter::util::base_error& e) {
+      EXPECT_EQ(e.error_code(), t.exp_code) << CASE_INDEX(t, tests) << e.what();
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, last_index) {
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+  co_await append_to_logdb(entries);
+  auto lr = get_test_log_reader(entries.front().lid, entries.size());
+  {
+    auto [_, last] = lr->get_range();
+    ASSERT_EQ(last, 5);
+  }
+  entries = test::util::new_entries({{5, 6}});
+  lr->apply_entries(entries);
+  {
+    auto [_, last] = lr->get_range();
+    ASSERT_EQ(last, 6);
+  }
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, first_index) {
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+  co_await append_to_logdb(entries);
+  auto lr = get_test_log_reader(entries.front().lid, entries.size());
+  {
+    auto [first, _] = lr->get_range();
+    ASSERT_EQ(first, 4);
+  }
+  co_await lr->apply_compaction(4);
+  {
+    auto [first, _] = lr->get_range();
+    ASSERT_EQ(first, 5);
+  }
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, append) {
+  struct {
+    std::vector<log_id> ents;
+    std::vector<log_id> exp_ents;
+  } tests[] = {
+      // duplicate
+      {{{3, 3}, {4, 4}, {5, 5}}, {{3, 3}, {4, 4}, {5, 5}}},
+      // overwrite
+      {{{3, 3}, {6, 4}, {6, 5}}, {{3, 3}, {6, 4}, {6, 5}}},
+      {{{3, 3}, {4, 4}, {5, 5}, {5, 6}}, {{3, 3}, {4, 4}, {5, 5}, {5, 6}}},
+      // truncate and append
+      {{{3, 2}, {3, 3}, {5, 4}}, {{3, 3}, {5, 4}}},
+      {{{5, 4}}, {{3, 3}, {5, 4}}},
+      // direct append
+      {{{5, 6}}, {{3, 3}, {4, 4}, {5, 5}, {5, 6}}},
+  };
+  for (auto& t : tests) {
+    co_await reinit_logdb();
+    auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+    co_await append_to_logdb(entries);
+    auto lr = get_test_log_reader({3, 3}, 3);
+    entries = rafter::test::util::new_entries(t.ents);
+    lr->apply_entries(entries);
+    co_await append_to_logdb(entries);
+    auto fi = t.exp_ents.front().index - 1;
+    EXPECT_THROW(co_await lr->get_term(fi), rafter::util::compacted_error)
+        << CASE_INDEX(t, tests);
+    auto li = t.exp_ents.back().index + 1;
+    EXPECT_THROW(co_await lr->get_term(li), rafter::util::unavailable_error)
+        << CASE_INDEX(t, tests);
+    for (auto lid : t.exp_ents) {
+      EXPECT_EQ(co_await lr->get_term(lid.index), lid.term)
+          << CASE_INDEX(t, tests) << lid;
+    }
   }
   co_return;
 }

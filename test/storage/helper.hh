@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "storage/index.hh"
 #include "test/base.hh"
 
 namespace rafter::test {
@@ -13,6 +14,8 @@ namespace rafter::test {
 // explicitly exposed via this helper.
 class storage_helper {
  public:
+  // storage::index
+  PUBLISH_VARIABLE(storage::index, _entries);
 };
 
 }  // namespace rafter::test

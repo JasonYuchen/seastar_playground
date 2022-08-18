@@ -15,6 +15,12 @@
 #include "protocol/raft.hh"
 #include "util/util.hh"
 
+namespace rafter::test {
+
+class storage_helper;
+
+}  // namespace rafter::test
+
 namespace rafter::storage {
 
 using protocol::group_id;
@@ -86,6 +92,8 @@ class index {
   std::string debug_string() const;
 
  private:
+  friend class test::storage_helper;
+
   group_id _gid;
   // entries within (0, _compacted_to) can be compacted
   uint64_t _compacted_to = protocol::log_id::INVALID_INDEX;

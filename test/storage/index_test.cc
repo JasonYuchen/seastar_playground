@@ -120,7 +120,8 @@ RAFTER_TEST_F(index_test, binary_search) {
   co_return;
 }
 
-RAFTER_TEST_F(index_test, update_invalid) {
+RAFTER_TEST_F(index_test, DISABLED_update_invalid) {
+  // FIXME(jyc): valid cases
   EXPECT_THROW(
       _idx.update({.first_index = 9, .last_index = 10}),
       rafter::util::logic_error);

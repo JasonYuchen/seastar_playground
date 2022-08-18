@@ -44,6 +44,14 @@ future<> test_logdb::save(std::span<storage::update_pack> updates) {
       rafter::util::panic::panic_with_backtrace("invalid gid");
     }
     auto& n = _clusters[up.update.gid];
+    // TODO(jyc): binary search ?
+    auto it = n._entries.begin();
+    for (; it != n._entries.end(); ++it) {
+      if (it->lid.index >= up.update.entries_to_save.front().lid.index) {
+        break;
+      }
+    }
+    n._entries.erase(it, n._entries.end());
     for (const auto& ent : up.update.entries_to_save) {
       if (!n._entries.empty() &&
           ent.lid.index != n._entries.back().lid.index + 1) {

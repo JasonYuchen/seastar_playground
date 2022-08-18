@@ -72,13 +72,10 @@ index& index::update(index::entry e) {
   }
   auto [idx, found] = binary_search(0, _entries.size() - 1, e.first_index);
   if (!found) [[unlikely]] {
-    l.error(
-        "{} index::update: first index {} out of range [{}, {}]",
-        _gid,
-        e.first_index,
-        _entries.front().first_index,
-        _entries.back().last_index);
-    throw util::out_of_range_error();
+    // totally overwrite
+    _entries.clear();
+    _entries.emplace_back(e);
+    return *this;
   }
   auto st = _entries.begin();
   std::advance(st, idx + 1);
