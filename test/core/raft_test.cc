@@ -272,6 +272,7 @@ class raft_test : public ::testing::Test {
     }
     throw rafter::util::panic("not a raft_sm");
   }
+
   static bool check_leader_transfer_state(
       core::raft& r,
       raft_role role,
@@ -301,13 +302,16 @@ class raft_test : public ::testing::Test {
 
   static future<log_entry_vector> get_all_entries(sm* s) {
     if (auto* rs = dynamic_cast<raft_sm*>(s); rs != nullptr) {
-      log_entry_vector entries;
-      auto fi = helper::_log(rs->raft()).first_index();
-      co_await helper::_log(rs->raft()).query(fi, entries, UINT64_MAX);
-      co_return entries;
+      return get_all_entries(helper::_log(rs->raft()));
     }
-    co_await coroutine::return_exception(rafter::util::panic("not a raft_sm"));
-    co_return log_entry_vector{};
+    return make_exception_future<log_entry_vector>(
+        rafter::util::panic("not a raft_sm"));
+  }
+
+  static future<log_entry_vector> get_all_entries(core::raft_log& rl) {
+    log_entry_vector entries;
+    co_await rl.query(rl.first_index(), entries, UINT64_MAX);
+    co_return std::move(entries);
   }
 
   static membership_ptr test_membership(sm* s) {
@@ -324,6 +328,7 @@ class raft_test : public ::testing::Test {
     }
     return members;
   }
+
   static future<snapshot_ptr> test_snapshot(
       db* logdb, uint64_t index, membership_ptr members) {
     auto snap = logdb->lr().get_snapshot();
@@ -344,6 +349,7 @@ class raft_test : public ::testing::Test {
     s->membership = std::move(members);
     co_return std::move(s);
   }
+
   static message naive_proposal(uint64_t from, uint64_t to) {
     message m{.type = message_type::propose, .from = from, .to = to};
     m.entries.emplace_back();
@@ -832,6 +838,143 @@ RAFTER_TEST_F(raft_test, single_node_commit) {
   co_await nt.send(naive_proposal(1, 1));
   co_await nt.send(naive_proposal(1, 1));
   ASSERT_EQ(helper::_log(raft_cast(nt.sms[1].get())).committed(), 3);
+}
+
+RAFTER_TEST_F(raft_test, cannot_commit_without_new_term_entry) {
+  // entries cannot be committed when leader changes, no new proposal comes in
+  // and ChangeTerm proposal is filtered.
+  auto nt = network({null(), null(), null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.cut(1, 3);
+  nt.cut(1, 4);
+  nt.cut(1, 5);
+  co_await nt.send(naive_proposal(1, 1));
+  co_await nt.send(naive_proposal(1, 1));
+  auto& r1 = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_log(r1).committed(), 1);
+  nt.recover();
+  // avoid committing change term proposal
+  nt.ignore(message_type::replicate);
+  co_await nt.send({.type = message_type::election, .from = 2, .to = 2});
+  auto& r2 = raft_cast(nt.sms[2].get());
+  // no log entries from previous term should be committed
+  ASSERT_EQ(helper::_log(r2).committed(), 1);
+  nt.recover();
+  // send heartbeat to reset wait
+  co_await nt.send(
+      {.type = message_type::leader_heartbeat, .from = 2, .to = 2});
+  // append an entry at current term
+  co_await nt.send(naive_proposal(2, 2));
+  // committed index should be advanced
+  ASSERT_EQ(helper::_log(r2).committed(), 5);
+}
+
+RAFTER_TEST_F(raft_test, commit_without_new_term_entry) {
+  //  entries could be committed when leader changes, no new proposal comes in.
+  auto nt = network({null(), null(), null(), null(), null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.cut(1, 3);
+  nt.cut(1, 4);
+  nt.cut(1, 5);
+  co_await nt.send(naive_proposal(1, 1));
+  co_await nt.send(naive_proposal(1, 1));
+  auto& r1 = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_log(r1).committed(), 1);
+  nt.recover();
+  // node 1 will be elected as a new leader with term 2, after append a change
+  // term entry from the current term, all entries should be committed
+  co_await nt.send({.type = message_type::election, .from = 2, .to = 2});
+  ASSERT_EQ(helper::_log(r1).committed(), 4);
+}
+
+RAFTER_TEST_F(raft_test, DISABLED_dueling_candidates) {
+  // disable this test since prevote is hard-coded enabled
+  auto* a = raft_sm::make(1, {1, 2, 3}, 10, 1);
+  auto* b = raft_sm::make(2, {1, 2, 3}, 10, 1);
+  auto* c = raft_sm::make(3, {1, 2, 3}, 10, 1);
+  auto nt = network({a, b, c});
+  nt.cut(1, 3);
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  // 1 becomes leader since it receives votes from 1 and 2
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  // 3 stays as candidate since it receives a vote from 3 and a rejection from 2
+  // FIXME(jyc): in prevote mode, 3 should be reverted to follower
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::candidate);
+  nt.recover();
+  // candidate 3 now increases its term and tries to vote again
+  // we expect it to disrupt the leader 1 since it has a higher term
+  // 3 will be follower again since both 1 and 2 rejects its vote request since
+  // 3 does not have a long enough log
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  struct {
+    raft_sm* sm;
+    raft_role role;
+    uint64_t term;
+    uint64_t exp_committed;
+    uint64_t exp_processed;
+    std::vector<log_id> exp_entries;
+  } tests[] = {
+      {a, raft_role::follower, 2, 1, 0, {{1, 1}}},
+      {b, raft_role::follower, 2, 1, 0, {{1, 1}}},
+      {c, raft_role::follower, 2, 0, 0, {}},
+  };
+  for (auto& t : tests) {
+    auto& r = t.sm->raft();
+    EXPECT_EQ(helper::_role(r), t.role) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_term(r), t.term) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_log(r).committed(), t.exp_committed)
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_log(r).processed(), t.exp_processed)
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(
+        co_await get_all_entries(helper::_log(r)),
+        rafter::test::util::new_entries(t.exp_entries))
+        << CASE_INDEX(t, tests);
+  }
+}
+
+RAFTER_TEST_F(raft_test, dueling_pre_candidates) {
+  auto* a = raft_sm::make(1, {1, 2, 3}, 10, 1);
+  auto* b = raft_sm::make(2, {1, 2, 3}, 10, 1);
+  auto* c = raft_sm::make(3, {1, 2, 3}, 10, 1);
+  auto nt = network({a, b, c});
+  nt.cut(1, 3);
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  // 1 becomes leader since it receives votes from 1 and 2
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  // 3 is reverted to follower
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::follower);
+  nt.recover();
+  // 3 now increases its term and tries to vote again.
+  // It does not disrupt the leader.
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  struct {
+    raft_sm* sm;
+    raft_role role;
+    uint64_t term;
+    uint64_t exp_committed;
+    uint64_t exp_processed;
+    std::vector<log_id> exp_entries;
+  } tests[] = {
+      {a, raft_role::leader, 1, 1, 0, {{1, 1}}},
+      {b, raft_role::follower, 1, 1, 0, {{1, 1}}},
+      {c, raft_role::follower, 1, 0, 0, {}},
+  };
+  for (auto& t : tests) {
+    auto& r = t.sm->raft();
+    EXPECT_EQ(helper::_role(r), t.role) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_term(r), t.term) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_log(r).committed(), t.exp_committed)
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_log(r).processed(), t.exp_processed)
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(
+        co_await get_all_entries(helper::_log(r)),
+        rafter::test::util::new_entries(t.exp_entries))
+        << CASE_INDEX(t, tests);
+  }
 }
 
 }  // namespace
