@@ -43,6 +43,7 @@ std::unique_ptr<raft_config> new_test_config(
 class sm {
  public:
   virtual ~sm() = default;
+  virtual bool is_raft() const = 0;
   virtual future<> handle(message m) = 0;
   virtual message_vector read_messages() = 0;
 };
@@ -119,7 +120,7 @@ class raft_sm final : public sm {
     helper::reset(r->raft(), term, true);
     return r.release();
   }
-
+  bool is_raft() const override { return true; }
   future<> handle(message m) override { return _r->handle(m); }
   message_vector read_messages() override {
     return std::exchange(_r->messages(), {});
@@ -138,6 +139,7 @@ class raft_sm final : public sm {
 class black_hole final : public sm {
  public:
   ~black_hole() override = default;
+  bool is_raft() const override { return false; }
   future<> handle(message) override { return make_ready_future<>(); }
   message_vector read_messages() override { return {}; }
 };
@@ -350,9 +352,10 @@ class raft_test : public ::testing::Test {
     co_return std::move(s);
   }
 
-  static message naive_proposal(uint64_t from, uint64_t to) {
+  static message naive_proposal(
+      uint64_t from, uint64_t to, std::string_view payload = "") {
     message m{.type = message_type::propose, .from = from, .to = to};
-    m.entries.emplace_back();
+    m.entries.emplace_back().copy_of(payload);
     return m;
   }
 };
@@ -975,6 +978,179 @@ RAFTER_TEST_F(raft_test, dueling_pre_candidates) {
         rafter::test::util::new_entries(t.exp_entries))
         << CASE_INDEX(t, tests);
   }
+}
+
+RAFTER_TEST_F(raft_test, candidate_concede) {
+  auto nt = network({null(), null(), null()});
+  nt.isolate(1);
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  nt.recover();
+  // send heartbeat to reset wait
+  co_await nt.send(
+      {.type = message_type::leader_heartbeat, .from = 3, .to = 3});
+  // send a proposal to 3 to flush out a msg append to 1
+  co_await nt.send(naive_proposal(3, 3));
+  // send heartbeat to flush out commit
+  co_await nt.send(
+      {.type = message_type::leader_heartbeat, .from = 3, .to = 3});
+  auto& r1 = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_role(r1), raft_role::follower);
+  ASSERT_EQ(helper::_term(r1), 1);
+  for (auto& [id, p] : nt.sms) {
+    auto& r = raft_cast(p.get());
+    EXPECT_EQ(helper::_log(r).committed(), 2);
+    EXPECT_EQ(helper::_log(r).processed(), 0);
+    EXPECT_EQ(
+        co_await get_all_entries(helper::_log(r)),
+        rafter::test::util::new_entries({{1, 1}, {1, 2}}));
+  }
+}
+
+RAFTER_TEST_F(raft_test, single_node_candidate) {
+  auto nt = network({null()});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  auto& r = raft_cast(nt.sms[1].get());
+  ASSERT_EQ(helper::_role(r), raft_role::leader);
+}
+
+RAFTER_TEST_F(raft_test, old_messages) {
+  auto nt = network({null(), null(), null()});
+  // make 0 leader @ term 3
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  co_await nt.send({.type = message_type::election, .from = 2, .to = 2});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  // pretend we're an old leader trying to make progress
+  // this entry is expected to be ignored.
+  co_await nt.send(
+      {.type = message_type::replicate,
+       .from = 2,
+       .to = 1,
+       .term = 2,
+       .entries = rafter::test::util::new_entries({{2, 3}})});
+  // commit a new entry
+  co_await nt.send(naive_proposal(1, 1, "some data"));
+  auto ents = rafter::test::util::new_entries({{1, 1}, {2, 2}, {3, 3}, {3, 4}});
+  ents.back().copy_of("some data");
+  for (auto& [id, p] : nt.sms) {
+    auto& r = raft_cast(p.get());
+    EXPECT_EQ(helper::_log(r).committed(), 4);
+    EXPECT_EQ(helper::_log(r).processed(), 0);
+    EXPECT_EQ(co_await get_all_entries(helper::_log(r)), ents);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, proposal) {
+  struct {
+    network nt;
+    bool success;
+  } tests[] = {
+      {network{{null(), null(), null()}}, true},
+      {network{{null(), null(), noop()}}, true},
+      {network{{null(), noop(), noop()}}, false},
+      {network{{null(), noop(), noop(), null()}}, false},
+      {network{{null(), noop(), noop(), null(), null()}}, true},
+  };
+  for (auto& t : tests) {
+    co_await t.nt.send({.type = message_type::election, .from = 1, .to = 1});
+    co_await t.nt.send(naive_proposal(1, 1, "some data"));
+    log_entry_vector ents;
+    if (t.success) {
+      ents = rafter::test::util::new_entries({{1, 1}, {1, 2}});
+      ents.back().copy_of("some data");
+    }
+    for (auto& [id, p] : t.nt.sms) {
+      if (!p->is_raft()) {
+        continue;
+      }
+      auto& r = raft_cast(p.get());
+      EXPECT_EQ(helper::_log(r).committed(), t.success ? 2 : 0);
+      EXPECT_EQ(helper::_log(r).processed(), 0);
+      EXPECT_EQ(co_await get_all_entries(helper::_log(r)), ents);
+    }
+    auto& r1 = raft_cast(t.nt.sms[1].get());
+    // since we enable prevote by default, case #3,#4 will not increase term as
+    // they cannot become candidate
+    if (helper::_role(r1) == raft_role::leader) {
+      EXPECT_EQ(helper::_term(r1), 1) << CASE_INDEX(t, tests);
+    } else {
+      EXPECT_EQ(helper::_term(r1), 0) << CASE_INDEX(t, tests);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, proposal_by_proxy) {
+  struct {
+    network nt;
+  } tests[] = {
+      {network{{null(), null(), null()}}},
+      {network{{null(), null(), noop()}}},
+  };
+  auto ents = rafter::test::util::new_entries({{1, 1}, {1, 2}});
+  ents.back().copy_of("some data");
+  for (auto& t : tests) {
+    co_await t.nt.send({.type = message_type::election, .from = 1, .to = 1});
+    co_await t.nt.send(naive_proposal(2, 2, "some data"));
+    for (auto& [id, p] : t.nt.sms) {
+      if (!p->is_raft()) {
+        continue;
+      }
+      auto& r = raft_cast(p.get());
+      EXPECT_EQ(helper::_log(r).committed(), 2);
+      EXPECT_EQ(helper::_log(r).processed(), 0);
+      EXPECT_EQ(co_await get_all_entries(helper::_log(r)), ents);
+    }
+    auto& r1 = raft_cast(t.nt.sms[1].get());
+    EXPECT_EQ(helper::_term(r1), 1) << CASE_INDEX(t, tests);
+  }
+}
+
+RAFTER_TEST_F(raft_test, commit) {
+  struct {
+    std::vector<uint64_t> matches;
+    std::vector<log_id> logs;
+    uint64_t term;
+    uint64_t exp_committed;
+  } tests[] = {
+      // single
+      {{1}, {{1, 1}}, 1, 1},
+      {{1}, {{1, 1}}, 2, 0},
+      {{2}, {{1, 1}, {2, 2}}, 2, 2},
+      {{1}, {{2, 1}}, 2, 1},
+
+      // odd
+      // quorum 1, term according to log is 1, node's term is 1, committed -> 1
+      {{2, 1, 1}, {{1, 1}, {2, 2}}, 1, 1},
+      // quorum 1, term according to log is 1, node's term is 2, committed = 0
+      {{2, 1, 1}, {{1, 1}, {1, 2}}, 2, 0},
+      {{2, 1, 2}, {{1, 1}, {2, 2}}, 2, 2},
+      {{2, 1, 2}, {{1, 1}, {1, 2}}, 2, 0},
+
+      // even
+      {{2, 1, 1, 1}, {{1, 1}, {2, 2}}, 1, 1},
+      {{2, 1, 1, 1}, {{1, 1}, {1, 2}}, 2, 0},
+      {{2, 1, 1, 2}, {{1, 1}, {2, 2}}, 1, 1},
+      {{2, 1, 1, 2}, {{1, 1}, {1, 2}}, 2, 0},
+      {{2, 1, 2, 2}, {{1, 1}, {2, 2}}, 2, 2},
+      {{2, 1, 2, 2}, {{1, 1}, {1, 2}}, 2, 0},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries(t.logs));
+    logdb->set_state({.term = t.term});
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 5, 1, std::move(logdb))};
+    for (uint64_t j = 0; j < t.matches.size(); ++j) {
+      helper::_remotes(r->raft())[j + 1] =
+          core::remote{.match = t.matches[j], .next = t.matches[j] + 1};
+    }
+    helper::_role(r->raft()) = raft_role::leader;
+    co_await helper::try_commit(r->raft());
+    EXPECT_EQ(helper::_log(r->raft()).committed(), t.exp_committed)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
 }
 
 }  // namespace

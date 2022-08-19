@@ -54,6 +54,7 @@ class core_helper {
   PUBLISH_METHOD(core::raft, become_witness);
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
+  PUBLISH_METHOD(core::raft, try_commit);
   PUBLISH_METHOD(core::raft, tick);
   PUBLISH_VARIABLE(core::raft, _gid);
   PUBLISH_VARIABLE(core::raft, _role);
