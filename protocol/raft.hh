@@ -281,6 +281,8 @@ struct log_entry {
   static uint64_t in_memory_bytes(std::span<log_entry> entries) noexcept;
 
   std::strong_ordering operator<=>(const log_entry &) const = default;
+
+  friend std::ostream &operator<<(std::ostream &os, const log_entry &entry);
 };
 
 using log_entry_vector = std::vector<log_entry>;
@@ -352,8 +354,11 @@ struct message {
   uint64_t cluster = group_id::INVALID_CLUSTER;
   uint64_t from = group_id::INVALID_NODE;
   uint64_t to = group_id::INVALID_NODE;
+  // term is the term of the raft node.
   uint64_t term = log_id::INVALID_TERM;
+  // lid{term, index} are the previous log term/index.
   struct log_id lid;
+  // commit is the log committed value (leader commit).
   uint64_t commit = log_id::INVALID_INDEX;
   // replicate messages sent to witness will only include the Entry.Index and
   // the Entry.Term with Entry.Type=Metadata, other fields will be ignored

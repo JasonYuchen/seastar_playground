@@ -35,7 +35,6 @@ class test_logdb final : public storage::logdb {
       protocol::log_entry_vector& entries,
       uint64_t max_bytes) override;
 
-  // FIXME(jyc): last_index is ignored
   future<storage::raft_state> query_raft_state(
       protocol::group_id id, uint64_t last_index) override;
 

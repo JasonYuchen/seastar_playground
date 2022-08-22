@@ -190,7 +190,7 @@ future<raft_state> segment_manager::query_raft_state(
       prev_idx = e.last_index;
     }
     r.first_index = last_index + 1;
-    r.entry_count = ie.back().last_index - r.first_index;
+    r.entry_count = ie.back().last_index + 1 - r.first_index;
   }
   co_return r;
 }

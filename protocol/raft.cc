@@ -146,12 +146,30 @@ std::ostream& operator<<(std::ostream& os, const group_id& id) {
 }
 
 std::ostream& operator<<(std::ostream& os, const log_id& id) {
-  return os << "lid[" << std::setfill('0') << std::setw(5) << id.term << ","
-            << std::setfill('0') << std::setw(5) << id.index << "]";
+  return os << "lid[" << id.term << "," << id.index << "]";
 }
 
 std::ostream& operator<<(std::ostream& os, const hint& h) {
   return os << "[" << h.low << "," << h.high << "]";
+}
+
+std::ostream& operator<<(std::ostream& os, const log_entry& entry) {
+  return os << fmt::format(
+             "log_entry[term:{},index:{},type:{},key:{},client_id:{},series_id:"
+             "{},responded_to:{},payload:{}]",
+             entry.lid.term,
+             entry.lid.index,
+             entry.type,
+             entry.key,
+             entry.client_id,
+             entry.series_id,
+             entry.responded_to,
+             entry.payload.size() > 10
+                 ? fmt::format(
+                       "{}...<{} bytes>",
+                       std::string_view(entry.payload.get(), 10),
+                       entry.payload.size())
+                 : std::string_view(entry.payload.get(), entry.payload.size()));
 }
 
 std::ostream& operator<<(std::ostream& os, const hard_state& state) {

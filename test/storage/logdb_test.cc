@@ -173,4 +173,44 @@ RAFTER_TEST_P(logdb_test, open_new_db) {
   ASSERT_EQ(size, UINT64_MAX);
 }
 
+RAFTER_TEST_P(logdb_test, basic_read_write) {
+  // TODO(jyc): different entry payload size
+  auto ud1 = update{
+      .gid = {2, 3},
+      .state = {.term = 5, .vote = 3, .commit = 100},
+      .entries_to_save =
+          test::util::new_entries({{5, 198}, {5, 199}, {5, 200}}),
+      .snapshot = test::util::new_snapshot({5, 197}),
+  };
+  ud1.fill_meta();
+  auto ud2 = update{
+      .gid = {2, 3},
+      .state = {.term = 10, .vote = 6, .commit = 200},
+      .entries_to_save =
+          test::util::new_entries({{10, 201}, {10, 202}, {10, 203}}),
+      .snapshot = test::util::new_snapshot({10, 200}),
+  };
+  ud2.fill_meta();
+  {
+    update_pack pack{ud1};
+    co_await _logdb->save({&pack, 1});
+    co_await pack.done.get_future();
+  }
+  {
+    update_pack pack{ud2};
+    co_await _logdb->save({&pack, 1});
+    co_await pack.done.get_future();
+  }
+  auto rs = co_await _logdb->query_raft_state({2, 3}, 200);
+  ASSERT_EQ(rs.hard_state, ud2.state);
+  ASSERT_EQ(rs.first_index, 201);
+  ASSERT_EQ(rs.entry_count, 3);
+  auto sp = co_await _logdb->query_snapshot({2, 3});
+  ASSERT_EQ(sp->log_id, ud2.snapshot->log_id);
+  log_entry_vector queried;
+  co_await _logdb->query_entries({2, 3}, {201, 203}, queried, UINT64_MAX);
+  ASSERT_EQ(queried.size(), 2);
+  ASSERT_EQ(queried[0], ud2.entries_to_save[0]);
+}
+
 }  // namespace

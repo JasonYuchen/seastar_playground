@@ -102,16 +102,26 @@ future<size_t> test_logdb::query_entries(
 }
 
 future<storage::raft_state> test_logdb::query_raft_state(
-    group_id id, uint64_t /*last_index*/) {
+    group_id id, uint64_t last_index) {
   auto it = _clusters.find(id);
   if (it == _clusters.end()) {
     return make_ready_future<storage::raft_state>();
   }
   auto& n = it->second;
+  uint64_t first_index = 0;
+  uint64_t entry_count = 0;
+  for (auto& e : n._entries) {
+    if (last_index + 1 == e.lid.index) {
+      first_index = e.lid.index;
+      entry_count = n._entries.back().lid.index + 1 - e.lid.index;
+      break;
+    }
+  }
+
   return make_ready_future<storage::raft_state>(storage::raft_state{
       .hard_state = n._state,
-      .first_index = n._entries.empty() ? 0 : n._entries.front().lid.index,
-      .entry_count = n._entries.size()});
+      .first_index = first_index,
+      .entry_count = entry_count});
 }
 
 future<snapshot_ptr> test_logdb::query_snapshot(group_id id) {
