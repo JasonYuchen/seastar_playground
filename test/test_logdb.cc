@@ -45,13 +45,15 @@ future<> test_logdb::save(std::span<storage::update_pack> updates) {
     }
     auto& n = _clusters[up.update.gid];
     // TODO(jyc): binary search ?
-    auto it = n._entries.begin();
-    for (; it != n._entries.end(); ++it) {
-      if (it->lid.index >= up.update.entries_to_save.front().lid.index) {
-        break;
+    if (!up.update.entries_to_save.empty()) {
+      auto it = n._entries.begin();
+      for (; it != n._entries.end(); ++it) {
+        if (it->lid.index >= up.update.entries_to_save.front().lid.index) {
+          break;
+        }
       }
+      n._entries.erase(it, n._entries.end());
     }
-    n._entries.erase(it, n._entries.end());
     for (const auto& ent : up.update.entries_to_save) {
       if (!n._entries.empty() &&
           ent.lid.index != n._entries.back().lid.index + 1) {
@@ -62,7 +64,10 @@ future<> test_logdb::save(std::span<storage::update_pack> updates) {
       n._entries.push_back(const_cast<log_entry&>(ent).share());
     }
     if (up.update.snapshot) {
-      n._snap = up.update.snapshot;
+      if (!n._snap ||
+          up.update.snapshot->log_id.index > n._snap->log_id.index) {
+        n._snap = up.update.snapshot;
+      }
     }
     if (!up.update.state.empty()) {
       n._state = up.update.state;

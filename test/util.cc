@@ -174,6 +174,15 @@ log_entry_vector util::new_entries(hint range) {
   return entries;
 }
 
+log_entry_vector util::new_entries(hint range, uint64_t term) {
+  log_entry_vector entries;
+  entries.reserve(range.count());
+  for (uint64_t i = range.low; i < range.high; ++i) {
+    entries.emplace_back(term, i);
+  }
+  return entries;
+}
+
 log_entry_vector util::new_entries(const std::vector<log_id>& lids) {
   log_entry_vector entries;
   entries.reserve(lids.size());

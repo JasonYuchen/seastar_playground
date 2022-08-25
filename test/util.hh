@@ -34,6 +34,11 @@ class util {
   // first index = first term = range.low
   // last index = last term = range.high - 1
   static protocol::log_entry_vector new_entries(protocol::hint range);
+  // generate entry vector with continuous log entries
+  // first index = range.low, last index = range.high - 1
+  // all terms = term
+  static protocol::log_entry_vector new_entries(
+      protocol::hint range, uint64_t term);
   static protocol::log_entry_vector new_entries(
       const std::vector<protocol::log_id>& lids);
   static protocol::snapshot_ptr new_snapshot(protocol::log_id lid);
