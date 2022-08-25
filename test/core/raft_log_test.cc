@@ -893,6 +893,124 @@ RAFTER_TEST_P(log_reader_logdb_test, append) {
   co_return;
 }
 
+RAFTER_TEST_P(log_reader_logdb_test, apply_snapshot) {
+  auto m = make_lw_shared<membership>();
+  m->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  auto entries = test::util::new_entries({{0, 0}});
+  co_await append_to_logdb(entries);
+  auto lr = get_test_log_reader(entries.front().lid, entries.size());
+  auto s1 = test::util::new_snapshot({4, 4});
+  s1->membership = m;
+  lr->apply_snapshot(s1);
+  auto range = lr->get_range();
+  ASSERT_EQ(range.low, 5);
+  ASSERT_EQ(range.high, 4);
+  auto s2 = test::util::new_snapshot({3, 3});
+  s2->membership = m;
+  ASSERT_THROW(lr->apply_snapshot(s2), rafter::util::snapshot_out_of_date);
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, create_snapshot) {
+  auto m = make_lw_shared<membership>();
+  m->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  struct {
+    uint64_t term;
+    log_id exp_snap;
+  } tests[] = {
+      {4, {4, 4}},
+      {5, {5, 5}},
+  };
+  for (auto& t : tests) {
+    co_await reinit_logdb();
+    auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+    co_await append_to_logdb(entries);
+    auto lr = get_test_log_reader(entries.front().lid, entries.size());
+    auto s = test::util::new_snapshot(t.exp_snap);
+    s->membership = m;
+    lr->create_snapshot(s);
+    EXPECT_EQ(lr->get_snapshot()->log_id, s->log_id);
+  }
+  co_return;
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, set_range) {
+  struct {
+    hint range;
+    uint64_t exp_len;
+    uint64_t exp_marker;
+  } tests[] = {
+      {{2, 4}, 3, 3},
+      {{2, 7}, 4, 3},
+      {{3, 8}, 5, 3},
+      {{6, 12}, 9, 3},
+  };
+  for (auto& t : tests) {
+    co_await reinit_logdb();
+    auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+    co_await append_to_logdb(entries);
+    auto lr = get_test_log_reader(entries.front().lid, entries.size());
+    lr->set_range(t.range);
+    EXPECT_EQ(helper::_marker(*lr).index, t.exp_marker) << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_length(*lr), t.exp_len) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, get_snapshot) {
+  auto m = make_lw_shared<membership>();
+  m->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+  co_await append_to_logdb(entries);
+  auto lr = get_test_log_reader(entries.front().lid, entries.size());
+  auto s = test::util::new_snapshot({4, 4});
+  s->membership = m;
+  lr->apply_snapshot(s);
+  ASSERT_EQ(lr->get_snapshot()->log_id, s->log_id);
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, initial_state) {
+  auto m = make_lw_shared<membership>();
+  m->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+  co_await append_to_logdb(entries);
+  auto lr = get_test_log_reader(entries.front().lid, entries.size());
+  auto s = test::util::new_snapshot({4, 4});
+  s->membership = m;
+  lr->apply_snapshot(s);
+  auto st = hard_state{.term = 2, .vote = 3, .commit = 5};
+  lr->set_state(st);
+  ASSERT_EQ(lr->get_state(), st);
+  ASSERT_EQ(*lr->get_membership(), *m);
+}
+
+RAFTER_TEST_P(log_reader_logdb_test, compact) {
+  struct {
+    uint64_t i;
+    bool compacted;
+    log_id exp_lid;
+  } tests[] = {
+      {2, true, {3, 3}},
+      {3, false, {3, 3}},  // noop
+      {4, false, {4, 4}},
+      {5, false, {5, 5}},
+  };
+  for (auto& t : tests) {
+    co_await reinit_logdb();
+    auto entries = test::util::new_entries({{3, 3}, {4, 4}, {5, 5}});
+    co_await append_to_logdb(entries);
+    auto lr = get_test_log_reader(entries.front().lid, entries.size());
+    if (t.compacted) {
+      EXPECT_THROW(
+          co_await lr->apply_compaction(t.i), rafter::util::compacted_error)
+          << CASE_INDEX(t, tests);
+    } else {
+      co_await lr->apply_compaction(t.i);
+    }
+    EXPECT_EQ(helper::_marker(*lr), t.exp_lid) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
 class raft_log_test : public ::testing::Test {
  protected:
   void SetUp() override {
