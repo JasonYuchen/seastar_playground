@@ -1153,4 +1153,150 @@ RAFTER_TEST_F(raft_test, commit) {
   co_return;
 }
 
+RAFTER_TEST_F(raft_test, election_timeout) {
+  struct {
+    uint64_t elapse;
+    double probability;
+    bool round;
+  } tests[] = {
+      {5, 0.0, false},
+      {10, 0.1, true},
+      {13, 0.4, true},
+      {15, 0.6, true},
+      {18, 0.9, true},
+      {20, 1.0, false},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1, std::move(logdb))};
+    helper::_election_tick(r->raft()) = t.elapse;
+    uint64_t c = 0;
+    for (uint64_t j = 0; j < 10000; ++j) {
+      helper::set_randomized_election_timeout(r->raft());
+      if (helper::time_to_elect(r->raft())) {
+        c++;
+      }
+    }
+    auto got = static_cast<double>(c) / 10000.0;
+    if (t.round) {
+      got = std::floor(got * 10 + 0.5) / 10.0;
+    }
+    EXPECT_EQ(got, t.probability) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, step_ignore_old_term_msg) {
+  auto logdb = std::make_unique<db>();
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1, std::move(logdb))};
+  helper::_term(r->raft()) = 2;
+  r->read_messages();  // drain the msg
+  auto f = r->handle({.type = message_type::replicate, .term = 1});
+  ASSERT_TRUE(f.available());
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  // higher term node will reply a noop to step down the old leader
+  ASSERT_EQ(msgs[0].type, message_type::noop);
+}
+
+RAFTER_TEST_F(raft_test, replicate) {
+  struct {
+    uint64_t term;
+    uint64_t commit;
+    log_id lid;
+    std::vector<log_id> entries;
+    uint64_t exp_index;
+    uint64_t exp_commit;
+    bool exp_reject;
+  } tests[] = {
+      // the node initially has log entries {1, 1}, {2, 2}
+      // previous log mismatch
+      {2, 3, {3, 2}, {}, 2, 0, true},
+      // previous log not exist
+      {2, 3, {3, 3}, {}, 2, 0, true},
+      // accept and advance commit index
+      {2, 1, {1, 1}, {}, 2, 1, false},
+      // conflict found, delete all existing logs, append the new one
+      {2, 1, {0, 0}, {{2, 1}}, 1, 1, false},
+      // no conflict, both new logs appended, leader's commit determines the
+      // commit value, last index in log is 4
+      {2, 3, {2, 2}, {{2, 3}, {2, 4}}, 4, 3, false},
+      // no conflict, one log appended, last index in log determines the commit
+      // value 3, last index in log is 3
+      {2, 4, {2, 2}, {{2, 3}}, 3, 3, false},
+      // no conflict, no new entry. last index in log determines the commit
+      // value 2, last index in log is 2.
+      {2, 4, {1, 1}, {{2, 2}}, 2, 2, false},
+      // match entry 1, commit up to last new entry 1
+      {1, 3, {1, 1}, {}, 2, 1, false},
+      // match entry 1, commit up to last new entry 2
+      {1, 3, {1, 1}, {{2, 2}}, 2, 2, false},
+      // match entry 2, commit up to last new entry 2
+      {2, 3, {2, 2}, {}, 2, 2, false},
+      // commit up to log.last()
+      {2, 4, {2, 2}, {}, 2, 2, false},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{1, 1}, {2, 2}}));
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1, std::move(logdb))};
+    helper::become_follower(r->raft(), 2, group_id::INVALID_NODE, true);
+    message m{
+        .type = message_type::replicate,
+        .term = t.term,
+        .lid = t.lid,
+        .commit = t.commit,
+        .entries = test::util::new_entries(t.entries),
+    };
+    co_await helper::node_replicate(r->raft(), m);
+    EXPECT_EQ(helper::_log(r->raft()).last_index(), t.exp_index)
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(helper::_log(r->raft()).committed(), t.exp_commit)
+        << CASE_INDEX(t, tests);
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 1) << CASE_INDEX(t, tests);
+    EXPECT_EQ(msgs[0].reject, t.exp_reject) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, heartbeat) {
+  uint64_t commit = 2;
+  struct {
+    message m;
+    uint64_t exp_commit;
+  } tests[] = {
+      // advance commit by heartbeat
+      {{.type = message_type::heartbeat,
+        .from = 2,
+        .to = 1,
+        .term = 2,
+        .commit = commit + 1},
+       commit + 1},
+      // commit cannot be decreased
+      {{.type = message_type::heartbeat,
+        .from = 2,
+        .to = 1,
+        .term = 2,
+        .commit = commit - 1},
+       commit},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{1, 1}, {2, 2}, {3, 3}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2}, 5, 1, std::move(logdb))};
+    helper::become_follower(r->raft(), 2, 2, true);
+    helper::_log(r->raft()).commit(commit);
+    co_await helper::node_heartbeat(r->raft(), t.m);
+    EXPECT_EQ(helper::_log(r->raft()).committed(), t.exp_commit)
+        << CASE_INDEX(t, tests);
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 1) << CASE_INDEX(t, tests);
+    EXPECT_EQ(msgs[0].type, message_type::heartbeat_resp)
+        << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
 }  // namespace

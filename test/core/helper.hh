@@ -56,6 +56,10 @@ class core_helper {
   PUBLISH_METHOD(core::raft, reset);
   PUBLISH_METHOD(core::raft, try_commit);
   PUBLISH_METHOD(core::raft, tick);
+  PUBLISH_METHOD(core::raft, time_to_elect);
+  PUBLISH_METHOD(core::raft, set_randomized_election_timeout);
+  PUBLISH_METHOD(core::raft, node_heartbeat);
+  PUBLISH_METHOD(core::raft, node_replicate);
   PUBLISH_VARIABLE(core::raft, _gid);
   PUBLISH_VARIABLE(core::raft, _role);
   PUBLISH_VARIABLE(core::raft, _leader_id);
@@ -71,6 +75,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft, _election_timeout);
   PUBLISH_VARIABLE(core::raft, _heartbeat_timeout);
   PUBLISH_VARIABLE(core::raft, _randomized_election_timeout);
+  PUBLISH_VARIABLE(core::raft, _handlers);
 };
 
 }  // namespace rafter::test
