@@ -274,7 +274,7 @@ void raft::must_be(raft_role role) const {
 
 void raft::must_not_be(raft_role role) const {
   if (_role == role) [[unlikely]] {
-    throw_with_log("{}: unexpected role {}");
+    throw_with_log("{}: unexpected role {}", *this, _role);
   }
 }
 

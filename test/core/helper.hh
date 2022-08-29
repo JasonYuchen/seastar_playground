@@ -45,6 +45,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft_log, _in_memory);
 
   // core::raft
+  PUBLISH_METHOD(core::raft, broadcast_replicate);
   PUBLISH_METHOD(core::raft, remove_node);
   PUBLISH_METHOD(core::raft, become_leader);
   PUBLISH_METHOD(core::raft, become_candidate);

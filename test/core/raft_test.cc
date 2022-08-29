@@ -154,7 +154,7 @@ struct network {
   explicit network(std::vector<sm*>&& peers) {
     for (size_t i = 0; i < peers.size(); ++i) {
       uint64_t node_id = i + 1;
-      if (!peers[i]) {
+      if (peers[i] == nullptr) {
         auto test_cfg = new_test_config(node_id, 10, 1);
         auto logdb = std::make_unique<db>();
         auto sm =
@@ -1297,6 +1297,336 @@ RAFTER_TEST_F(raft_test, heartbeat) {
         << CASE_INDEX(t, tests);
   }
   co_return;
+}
+
+RAFTER_TEST_F(raft_test, heartbeat_resp) {
+  auto logdb = std::make_unique<db>();
+  co_await logdb->append(test::util::new_entries({{1, 1}, {2, 2}, {3, 3}}));
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1, std::move(logdb))};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_log(r->raft()).commit(helper::_log(r->raft()).last_index());
+  // A heartbeat response from a node that is behind; re-send replicate
+  co_await r->handle({.type = message_type::heartbeat_resp, .from = 2});
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].type, message_type::replicate);
+  // A second heartbeat response generates another replicate re-send
+  co_await r->handle({.type = message_type::heartbeat_resp, .from = 2});
+  msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].type, message_type::replicate);
+  // Once we have an replicate_resp, heartbeats no longer send replicate.
+  co_await r->handle(
+      {.type = message_type::replicate_resp,
+       .from = 2,
+       .lid = {0, msgs[0].lid.index + msgs[0].entries.size()}});
+  (void)r->read_messages();
+  co_await r->handle({.type = message_type::heartbeat_resp, .from = 2});
+  msgs = r->read_messages();
+  ASSERT_TRUE(msgs.empty());
+}
+
+RAFTER_TEST_F(raft_test, replicate_resp_wait_reset) {
+  auto logdb = std::make_unique<db>();
+  std::unique_ptr<raft_sm> r{
+      raft_sm::make(1, {1, 2, 3}, 5, 1, std::move(logdb))};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  co_await helper::broadcast_replicate(r->raft());
+  (void)r->read_messages();
+  // Node 2 acks the first entry, making it committed.
+  co_await r->handle(
+      {.type = message_type::replicate_resp, .from = 2, .lid = {0, 1}});
+  ASSERT_EQ(helper::_log(r->raft()).committed(), 1);
+  (void)r->read_messages();
+  co_await r->handle(
+      {.type = message_type::propose,
+       .from = 1,
+       .entries = test::util::new_entries({{1, 1}})});
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].type, message_type::replicate);
+  ASSERT_EQ(msgs[0].to, 2);
+  ASSERT_EQ(msgs[0].entries.size(), 1);
+  ASSERT_EQ(msgs[0].entries[0].lid.index, 2);
+  // initially node 3 is in the probe state, the received replicate_resp message
+  // makes the node to enter replicate state.
+  ASSERT_EQ(helper::_remotes(r->raft())[3].state, core::remote::state::wait);
+  co_await r->handle(
+      {.type = message_type::replicate_resp, .from = 3, .lid = {0, 1}});
+  // Node 3 acks the first entry. This releases the wait and entry 2 is sent.
+  ASSERT_EQ(
+      helper::_remotes(r->raft())[3].state, core::remote::state::replicate);
+  msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].type, message_type::replicate);
+  ASSERT_EQ(msgs[0].to, 3);
+  ASSERT_EQ(msgs[0].entries.size(), 1);
+  ASSERT_EQ(msgs[0].entries[0].lid.index, 2);
+}
+
+RAFTER_TEST_F(raft_test, recv_msg_vote) {
+  struct {
+    raft_role role;
+    log_id lid;
+    uint64_t vote_for;
+    bool exp_reject;
+  } tests[] = {
+      {raft_role::follower, {0, 0}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {1, 0}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {2, 0}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {3, 0}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {0, 1}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {1, 1}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {2, 1}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {3, 1}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {0, 2}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {1, 2}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {2, 2}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {3, 2}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {0, 3}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {1, 3}, group_id::INVALID_NODE, true},
+      {raft_role::follower, {2, 3}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {3, 3}, group_id::INVALID_NODE, false},
+      {raft_role::follower, {2, 3}, 2, false},
+      {raft_role::follower, {2, 3}, 1, true},
+      {raft_role::leader, {3, 3}, 1, true},
+      {raft_role::pre_candidate, {3, 3}, 1, true},
+      {raft_role::candidate, {3, 3}, 1, true},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{2, 1}, {2, 2}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+    helper::_role(r->raft()) = t.role;
+    helper::_vote(r->raft()) = t.vote_for;
+    co_await r->handle(
+        {.type = message_type::request_vote, .from = 2, .lid = t.lid});
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 1) << CASE_INDEX(t, tests);
+    EXPECT_EQ(msgs[0].reject, t.exp_reject) << CASE_INDEX(t, tests);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, role_transition) {
+  auto NO_LEADER = group_id::INVALID_NODE;
+  struct {
+    raft_role from;
+    raft_role to;
+    bool exp_allow;
+    uint64_t exp_term;
+    uint64_t exp_lead;
+  } tests[] = {
+      {raft_role::follower, raft_role::follower, true, 1, NO_LEADER},
+      {raft_role::follower, raft_role::pre_candidate, true, 0, NO_LEADER},
+      {raft_role::follower, raft_role::candidate, true, 1, NO_LEADER},
+      {raft_role::pre_candidate, raft_role::follower, true, 0, NO_LEADER},
+      {raft_role::pre_candidate, raft_role::pre_candidate, true, 0, NO_LEADER},
+      {raft_role::pre_candidate, raft_role::candidate, true, 1, NO_LEADER},
+      {raft_role::pre_candidate, raft_role::leader, false, 0, 1},
+      {raft_role::candidate, raft_role::follower, true, 0, NO_LEADER},
+      {raft_role::candidate, raft_role::pre_candidate, true, 0, NO_LEADER},
+      {raft_role::candidate, raft_role::candidate, true, 1, NO_LEADER},
+      {raft_role::candidate, raft_role::leader, true, 0, 1},
+      {raft_role::leader, raft_role::follower, true, 1, NO_LEADER},
+      {raft_role::leader, raft_role::pre_candidate, false, 0, NO_LEADER},
+      {raft_role::leader, raft_role::candidate, false, 1, NO_LEADER},
+      {raft_role::leader, raft_role::leader, true, 0, 1},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1)};
+    helper::_role(r->raft()) = t.from;
+    try {
+      switch (t.to) {
+        case raft_role::follower:
+          helper::become_follower(r->raft(), t.exp_term, t.exp_lead, true);
+          break;
+        case raft_role::pre_candidate:
+          helper::become_pre_candidate(r->raft());
+          break;
+        case raft_role::candidate:
+          helper::become_candidate(r->raft());
+          break;
+        case raft_role::leader:
+          co_await helper::become_leader(r->raft());
+          break;
+        default:
+          ADD_FAILURE();
+          break;
+      }
+      EXPECT_TRUE(t.exp_allow) << CASE_INDEX(t, tests);
+      EXPECT_EQ(helper::_term(r->raft()), t.exp_term) << CASE_INDEX(t, tests);
+      EXPECT_EQ(helper::_leader_id(r->raft()), t.exp_lead)
+          << CASE_INDEX(t, tests);
+    } catch (const rafter::util::invalid_raft_state& ex) {
+      EXPECT_FALSE(t.exp_allow) << CASE_INDEX(t, tests);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, all_server_step_down) {
+  struct {
+    raft_role role;
+    raft_role exp_role;
+    uint64_t exp_term;
+    uint64_t exp_index;
+  } tests[] = {
+      {raft_role::follower, raft_role::follower, 3, 0},
+      {raft_role::pre_candidate, raft_role::follower, 3, 0},
+      {raft_role::candidate, raft_role::follower, 3, 0},
+      {raft_role::leader, raft_role::follower, 3, 1},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 10, 1)};
+    switch (t.role) {
+      case raft_role::follower:
+        helper::become_follower(r->raft(), 1, group_id::INVALID_NODE, true);
+        break;
+      case raft_role::pre_candidate:
+        helper::become_pre_candidate(r->raft());
+        break;
+      case raft_role::candidate:
+        helper::become_candidate(r->raft());
+        break;
+      case raft_role::leader:
+        helper::become_candidate(r->raft());
+        co_await helper::become_leader(r->raft());
+        break;
+      default:
+        ADD_FAILURE();
+        break;
+    }
+    for (auto msg : {message_type::request_vote, message_type::replicate}) {
+      co_await r->handle({.type = msg, .from = 2, .term = 3, .lid = {3, 0}});
+      EXPECT_EQ(helper::_role(r->raft()), t.exp_role)
+          << CASE_INDEX(t, tests) << msg;
+      EXPECT_EQ(helper::_term(r->raft()), t.exp_term)
+          << CASE_INDEX(t, tests) << msg;
+      EXPECT_EQ(helper::_log(r->raft()).last_index(), t.exp_index)
+          << CASE_INDEX(t, tests) << msg;
+      auto entries = co_await get_all_entries(r.get());
+      EXPECT_EQ(entries.size(), t.exp_index) << CASE_INDEX(t, tests) << msg;
+      if (msg == message_type::request_vote) {
+        EXPECT_EQ(helper::_leader_id(r->raft()), group_id::INVALID_NODE)
+            << CASE_INDEX(t, tests) << msg;
+      } else {
+        EXPECT_EQ(helper::_leader_id(r->raft()), 2)
+            << CASE_INDEX(t, tests) << msg;
+      }
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, leader_step_down_when_quorum_active) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 5, 1)};
+  helper::_check_quorum(r->raft()) = true;
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  for (uint64_t i = 0; i <= helper::_election_timeout(r->raft()); ++i) {
+    co_await r->handle(
+        {.type = message_type::heartbeat_resp,
+         .from = 2,
+         .term = helper::_term(r->raft())});
+    co_await helper::tick(r->raft());
+  }
+  ASSERT_EQ(helper::_role(r->raft()), raft_role::leader);
+}
+
+RAFTER_TEST_F(raft_test, leader_step_down_when_quorum_lost) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 5, 1)};
+  helper::_check_quorum(r->raft()) = true;
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  for (uint64_t i = 0; i <= helper::_election_timeout(r->raft()); ++i) {
+    co_await helper::tick(r->raft());
+  }
+  ASSERT_EQ(helper::_role(r->raft()), raft_role::follower);
+}
+
+RAFTER_TEST_F(raft_test, leader_superseding_with_check_quorum) {
+  auto* a = raft_sm::make(1, {1, 2, 3}, 10, 1);
+  auto* b = raft_sm::make(2, {1, 2, 3}, 10, 1);
+  auto* c = raft_sm::make(3, {1, 2, 3}, 10, 1);
+  helper::_check_quorum(a->raft()) = true;
+  helper::_check_quorum(b->raft()) = true;
+  helper::_check_quorum(c->raft()) = true;
+  auto nt = network({a, b, c});
+  helper::_randomized_election_timeout(b->raft()) =
+      helper::_election_timeout(b->raft()) + 1;
+  for (uint64_t i = 0; i < helper::_election_timeout(b->raft()); ++i) {
+    co_await helper::tick(b->raft());
+  }
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::follower);
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  // Peer b rejected c's vote since its election tick had not reached timeout
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::pre_candidate);
+  // Letting b reach election timeout
+  for (uint64_t i = 0; i < helper::_election_timeout(b->raft()); ++i) {
+    co_await helper::tick(b->raft());
+  }
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::leader);
+}
+
+RAFTER_TEST_F(raft_test, leader_election_with_check_quorum) {
+  auto* a = raft_sm::make(1, {1, 2, 3}, 10, 1);
+  auto* b = raft_sm::make(2, {1, 2, 3}, 10, 1);
+  auto* c = raft_sm::make(3, {1, 2, 3}, 10, 1);
+  helper::_check_quorum(a->raft()) = true;
+  helper::_check_quorum(b->raft()) = true;
+  helper::_check_quorum(c->raft()) = true;
+  auto nt = network({a, b, c});
+  helper::_randomized_election_timeout(a->raft()) =
+      helper::_election_timeout(a->raft()) + 1;
+  helper::_randomized_election_timeout(b->raft()) =
+      helper::_election_timeout(b->raft()) + 2;
+  // Immediately after creation, votes are cast regardless of the election
+  // timeout.
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  ASSERT_EQ(helper::_role(c->raft()), raft_role::follower);
+  helper::_randomized_election_timeout(a->raft()) =
+      helper::_election_timeout(a->raft()) + 1;
+  helper::_randomized_election_timeout(b->raft()) =
+      helper::_election_timeout(b->raft()) + 2;
+  for (uint64_t i = 0; i < helper::_election_timeout(a->raft()); ++i) {
+    co_await helper::tick(a->raft());
+  }
+  for (uint64_t i = 0; i < helper::_election_timeout(b->raft()); ++i) {
+    co_await helper::tick(b->raft());
+  }
+  co_await nt.send({.type = message_type::election, .from = 3, .to = 3});
+  // node 3 will receive (order is important):
+  //  - 1's heartbeat + rejection and then 2's vote, in which case the node 3
+  //    will re-enter follower state due to heartbeat
+  //  - 2's vote and then 1's heartbeat + rejection, in which case the node 3
+  //    will enter candidate state but cannot proceed as node 2 will not cast
+  //    vote due to leader is available
+  if (helper::_role(a->raft()) == raft_role::leader) {
+    // case 1
+    ASSERT_EQ(helper::_role(c->raft()), raft_role::follower);
+  } else if (helper::_role(a->raft()) == raft_role::follower) {
+    // case 2
+    ASSERT_EQ(helper::_role(c->raft()), raft_role::candidate);
+  } else {
+    ADD_FAILURE();
+  }
+}
+
+RAFTER_TEST_F(raft_test, SKIP_free_stuck_candidate_with_check_quorum) {
+  // FIXME(jyc): TestFreeStuckCandidateWithCheckQuorum ensures that a candidate
+  //  with a higher term can disrupt the leader even if the leader still
+  //  "officially" holds the lease, The leader is expected to step down and
+  //  adopt the candidate's term.
+  //  However, since prevote is enabled by default, this test is invalid in
+  //  prevote mode.
 }
 
 }  // namespace
