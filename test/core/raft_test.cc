@@ -1627,6 +1627,159 @@ RAFTER_TEST_F(raft_test, SKIP_free_stuck_candidate_with_check_quorum) {
   //  adopt the candidate's term.
   //  However, since prevote is enabled by default, this test is invalid in
   //  prevote mode.
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, non_promotable_voter_with_check_quorum) {
+  auto* a = raft_sm::make(1, {1, 2}, 10, 1);
+  auto* b = raft_sm::make(2, {1}, 10, 1);
+  helper::_check_quorum(a->raft()) = true;
+  helper::_check_quorum(b->raft()) = true;
+  auto nt = network({a, b});
+  helper::_randomized_election_timeout(b->raft()) =
+      helper::_election_timeout(b->raft()) + 1;
+  helper::_remotes(b->raft()).erase(2);
+  ASSERT_TRUE(helper::is_self_removed(b->raft()));
+  for (uint64_t i = 0; i < helper::_election_timeout(b->raft()); ++i) {
+    co_await helper::tick(b->raft());
+  }
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  ASSERT_EQ(helper::_role(b->raft()), raft_role::follower);
+  ASSERT_EQ(helper::_leader_id(b->raft()), 1);
+}
+
+RAFTER_TEST_F(raft_test, readonly_option_safe) {
+  auto* a = raft_sm::make(1, {1, 2, 3}, 10, 1);
+  auto* b = raft_sm::make(2, {1, 2, 3}, 10, 1);
+  auto* c = raft_sm::make(3, {1, 2, 3}, 10, 1);
+  auto nt = network({a, b, c});
+  helper::_randomized_election_timeout(b->raft()) =
+      helper::_election_timeout(b->raft()) + 1;
+  for (uint64_t i = 0; i < helper::_election_timeout(b->raft()); ++i) {
+    co_await helper::tick(b->raft());
+  }
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(a->raft()), raft_role::leader);
+  struct {
+    raft_sm* r;
+    uint64_t proposals;
+    uint64_t exp_read_index;
+    hint exp_context;
+  } tests[] = {
+      {a, 10, 11, {10001, 10002}},
+      {b, 10, 21, {10002, 10003}},
+      {c, 10, 31, {10003, 10004}},
+      {a, 10, 41, {10004, 10005}},
+      {b, 10, 51, {10005, 10006}},
+      {c, 10, 61, {10006, 10007}},
+  };
+  for (auto& t : tests) {
+    for (uint64_t j = 0; j < t.proposals; ++j) {
+      co_await nt.send(naive_proposal(1, 1));
+    }
+    co_await nt.send(
+        {.type = message_type::read_index,
+         .from = t.r->cfg().node_id,
+         .to = t.r->cfg().node_id,
+         .hint = t.exp_context});
+    auto& reads = t.r->raft().ready_to_reads();
+    EXPECT_FALSE(reads.empty()) << CASE_INDEX(t, tests);
+    if (!reads.empty()) {
+      EXPECT_EQ(reads[0].index, t.exp_read_index) << CASE_INDEX(t, tests);
+      EXPECT_EQ(reads[0].context, t.exp_context) << CASE_INDEX(t, tests);
+    }
+    reads.clear();
+  }
+}
+
+RAFTER_TEST_F(raft_test, leader_append_resp) {
+  // initial progress: match = 0, next = 3
+  struct {
+    uint64_t index;
+    bool reject;
+    // progress
+    uint64_t exp_match;
+    uint64_t exp_next;
+    // message
+    uint64_t exp_msg_num;
+    uint64_t exp_index;
+    uint64_t exp_committed;
+  } tests[] = {
+      // stale resp, no replies
+      {3, true, 0, 3, 0, 0, 0},
+      // denied resp, leader does not commit, decrease next and send probe
+      {2, true, 0, 2, 1, 1, 0},
+      // accept resp, leader commits, broadcast with commit
+      {2, false, 2, 4, 2, 2, 2},
+      // ignore heartbeat replies
+      {0, false, 0, 3, 0, 0, 0},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{0, 1}, {1, 2}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(logdb))};
+    helper::become_candidate(r->raft());
+    co_await helper::become_leader(r->raft());
+    (void)r->read_messages();
+    co_await r->handle(
+        {.type = message_type::replicate_resp,
+         .from = 2,
+         .term = helper::_term(r->raft()),
+         .lid = {0, t.index},
+         .reject = t.reject,
+         .hint = {t.index, 0}});
+    auto& p = helper::_remotes(r->raft())[2];
+    EXPECT_EQ(p.match, t.exp_match) << CASE_INDEX(t, tests);
+    EXPECT_EQ(p.next, t.exp_next) << CASE_INDEX(t, tests);
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), t.exp_msg_num) << CASE_INDEX(t, tests);
+    for (auto& msg : msgs) {
+      EXPECT_EQ(msg.lid.index, t.exp_index);
+      EXPECT_EQ(msg.commit, t.exp_committed);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, broadcast_heartbeat) {
+  uint64_t offset = 1000;
+  auto snap = test::util::new_snapshot({1, offset});
+  snap->membership = make_lw_shared<membership>();
+  snap->membership->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  auto logdb = std::make_unique<db>();
+  logdb->lr().apply_snapshot(snap);
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {}, 10, 1, std::move(logdb))};
+  helper::_term(r->raft()) = 1;
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  for (uint64_t i = 0; i < 10; ++i) {
+    auto entries = test::util::new_entries({{0, i + 1}});
+    co_await helper::append_entries(r->raft(), entries);
+  }
+  // slow follower
+  helper::_remotes(r->raft())[2].match = 5;
+  helper::_remotes(r->raft())[2].next = 6;
+  // normal follower
+  auto index = helper::_log(r->raft()).last_index();
+  helper::_remotes(r->raft())[3].match = index;
+  helper::_remotes(r->raft())[3].next = index + 1;
+  co_await r->handle({.type = message_type::leader_heartbeat});
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 2);
+  auto commit = helper::_log(r->raft()).committed();
+  std::unordered_map<uint64_t, uint64_t> exp_commit{
+      {2, std::min(commit, helper::_remotes(r->raft())[2].match)},
+      {3, std::min(commit, helper::_remotes(r->raft())[3].match)},
+  };
+  for (auto& msg : msgs) {
+    EXPECT_EQ(msg.type, message_type::heartbeat);
+    EXPECT_EQ(msg.lid, log_id{});
+    EXPECT_EQ(msg.commit, exp_commit[msg.to]);
+    exp_commit.erase(msg.to);
+    EXPECT_TRUE(msg.entries.empty());
+  }
 }
 
 }  // namespace

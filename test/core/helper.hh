@@ -47,6 +47,7 @@ class core_helper {
   // core::raft
   PUBLISH_METHOD(core::raft, broadcast_replicate);
   PUBLISH_METHOD(core::raft, remove_node);
+  PUBLISH_METHOD(core::raft, is_self_removed);
   PUBLISH_METHOD(core::raft, become_leader);
   PUBLISH_METHOD(core::raft, become_candidate);
   PUBLISH_METHOD(core::raft, become_pre_candidate);
@@ -56,6 +57,7 @@ class core_helper {
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
   PUBLISH_METHOD(core::raft, try_commit);
+  PUBLISH_METHOD(core::raft, append_entries);
   PUBLISH_METHOD(core::raft, tick);
   PUBLISH_METHOD(core::raft, time_to_elect);
   PUBLISH_METHOD(core::raft, set_randomized_election_timeout);
