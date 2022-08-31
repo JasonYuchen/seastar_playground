@@ -1782,4 +1782,155 @@ RAFTER_TEST_F(raft_test, broadcast_heartbeat) {
   }
 }
 
+RAFTER_TEST_F(raft_test, receive_leader_heartbeat) {
+  struct {
+    raft_role role;
+    uint64_t exp_msg_num;
+  } tests[] = {
+      {raft_role::leader, 2},
+      {raft_role::pre_candidate, 0},
+      {raft_role::candidate, 0},
+      {raft_role::follower, 0},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{0, 1}, {1, 2}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(logdb))};
+    helper::_term(r->raft()) = 1;
+    helper::_role(r->raft()) = t.role;
+    co_await r->handle(
+        {.type = message_type::leader_heartbeat, .from = 1, .to = 1});
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), t.exp_msg_num) << CASE_INDEX(t, tests);
+    for (auto& msg : msgs) {
+      EXPECT_EQ(msg.type, message_type::heartbeat) << CASE_INDEX(t, tests);
+    }
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, leader_increase_next) {
+  auto previous_entries = test::util::new_entries({{1, 1}, {1, 2}, {1, 3}});
+  struct {
+    enum core::remote::state state;
+    uint64_t next;
+    uint64_t exp_next;
+  } tests[] = {
+      // state replicate, optimistically increase next
+      // previous entries + noop entry + propose + 1
+      {core::remote::state::replicate, 2, previous_entries.size() + 1 + 1 + 1},
+      // state probe, not optimistically increase next
+      {core::remote::state::retry, 2, 2},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{1, 1}, {1, 2}, {1, 3}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+    helper::become_candidate(r->raft());
+    co_await helper::become_leader(r->raft());
+    helper::_remotes(r->raft())[2].state = t.state;
+    helper::_remotes(r->raft())[2].next = t.next;
+    co_await r->handle(naive_proposal(1, 1, "some data"));
+    EXPECT_EQ(helper::_remotes(r->raft())[2].next, t.exp_next);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, send_append_for_remote_retry) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  (void)r->read_messages();
+  helper::_remotes(r->raft())[2].become_retry();
+  for (uint64_t i = 0; i < 3; ++i) {
+    if (i == 0) {
+      // we expect that raft will only send out one append on the first
+      // loop. After that, the follower is paused until a heartbeat response is
+      // received.
+      auto to_append = test::util::new_entries({{0, 0}});
+      co_await helper::append_entries(r->raft(), to_append);
+      co_await helper::send_replicate(
+          r->raft(), 2, helper::_remotes(r->raft())[2]);
+      auto msgs = r->read_messages();
+      ASSERT_EQ(msgs.size(), 1);
+      ASSERT_EQ(msgs[0].lid.index, 0);
+    }
+    ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+    for (uint64_t j = 0; j < 10; ++j) {
+      auto to_append = test::util::new_entries({{0, 0}});
+      co_await helper::append_entries(r->raft(), to_append);
+      co_await helper::send_replicate(
+          r->raft(), 2, helper::_remotes(r->raft())[2]);
+      ASSERT_TRUE(r->read_messages().empty());
+    }
+    // do a heartbeat
+    for (uint64_t j = 0; j < helper::_heartbeat_timeout(r->raft()); ++j) {
+      co_await r->handle(
+          {.type = message_type::leader_heartbeat, .from = 1, .to = 1});
+    }
+    ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+    auto msgs = r->read_messages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0].type, message_type::heartbeat);
+  }
+  // a heartbeat response will allow another message to be sent
+  co_await r->handle(
+      {.type = message_type::heartbeat_resp, .from = 2, .to = 1});
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].lid.index, 0);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+}
+
+RAFTER_TEST_F(raft_test, send_append_for_remote_replicate) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  (void)r->read_messages();
+  // optimistically send entries out
+  helper::_remotes(r->raft())[2].become_replicate();
+  for (uint64_t i = 0; i < 10; ++i) {
+    auto to_append = test::util::new_entries({{0, 0}});
+    co_await helper::send_replicate(
+        r->raft(), 2, helper::_remotes(r->raft())[2]);
+    ASSERT_EQ(r->read_messages().size(), 1);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, send_append_for_remote_snapshot) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  (void)r->read_messages();
+  // paused, no append when entries are locally appended
+  helper::_remotes(r->raft())[2].become_snapshot(10);
+  for (uint64_t i = 0; i < 10; ++i) {
+    auto to_append = test::util::new_entries({{0, 0}});
+    co_await helper::send_replicate(
+        r->raft(), 2, helper::_remotes(r->raft())[2]);
+    ASSERT_TRUE(r->read_messages().empty());
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, recv_unreachable) {
+  // unreachable puts remote peer into probe state.
+  auto logdb = std::make_unique<db>();
+  co_await logdb->append(test::util::new_entries({{1, 1}, {1, 2}, {1, 3}}));
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  (void)r->read_messages();
+  auto& p = helper::_remotes(r->raft())[2];
+  p.match = 3;
+  p.become_replicate();
+  p.try_update(5);
+  co_await r->handle({.type = message_type::unreachable, .from = 2, .to = 1});
+  ASSERT_EQ(p.state, core::remote::state::retry);
+  ASSERT_EQ(p.match + 1, p.next);
+}
+
 }  // namespace
