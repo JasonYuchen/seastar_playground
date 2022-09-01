@@ -316,6 +316,19 @@ class raft_test : public ::testing::Test {
     co_return std::move(entries);
   }
 
+  static std::unordered_set<uint64_t> get_all_nodes(core::raft& r) {
+    std::unordered_set<uint64_t> nodes;
+    auto collector = [&nodes](auto&& m) {
+      for (auto&& [id, _] : m) {
+        nodes.insert(id);
+      }
+    };
+    collector(helper::_remotes(r));
+    collector(helper::_observers(r));
+    collector(helper::_witnesses(r));
+    return nodes;
+  }
+
   static membership_ptr test_membership(sm* s) {
     auto members = make_lw_shared<membership>();
     auto& r = raft_cast(s);
@@ -327,6 +340,14 @@ class raft_test : public ::testing::Test {
     }
     for (auto& [id, _] : helper::_witnesses(r)) {
       members->witnesses.emplace(id, "");
+    }
+    return members;
+  }
+
+  static membership_ptr test_membership(const std::vector<uint64_t>& nodes) {
+    auto members = make_lw_shared<membership>();
+    for (auto id : nodes) {
+      members->addresses[id] = "";
     }
     return members;
   }
@@ -1746,8 +1767,7 @@ RAFTER_TEST_F(raft_test, leader_append_resp) {
 RAFTER_TEST_F(raft_test, broadcast_heartbeat) {
   uint64_t offset = 1000;
   auto snap = test::util::new_snapshot({1, offset});
-  snap->membership = make_lw_shared<membership>();
-  snap->membership->addresses = {{1, ""}, {2, ""}, {3, ""}};
+  snap->membership = test_membership({1, 2, 3});
   auto logdb = std::make_unique<db>();
   logdb->lr().apply_snapshot(snap);
   std::unique_ptr<raft_sm> r{raft_sm::make(1, {}, 10, 1, std::move(logdb))};
@@ -1931,6 +1951,130 @@ RAFTER_TEST_F(raft_test, recv_unreachable) {
   co_await r->handle({.type = message_type::unreachable, .from = 2, .to = 1});
   ASSERT_EQ(p.state, core::remote::state::retry);
   ASSERT_EQ(p.match + 1, p.next);
+}
+
+RAFTER_TEST_F(raft_test, restore) {
+  auto snap = test::util::new_snapshot({11, 11});
+  snap->membership = test_membership({1, 2, 3});
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  ASSERT_TRUE(co_await helper::restore(r->raft(), snap));
+  ASSERT_EQ(helper::_log(r->raft()).last_index(), snap->log_id.index);
+  ASSERT_TRUE(co_await helper::_log(r->raft()).term_index_match(snap->log_id));
+  std::unordered_set<uint64_t> exp_nodes{1, 2, 3};
+  ASSERT_NE(get_all_nodes(r->raft()), exp_nodes) << "nodes restored too early";
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  ASSERT_EQ(get_all_nodes(r->raft()), exp_nodes);
+  ASSERT_FALSE(co_await helper::restore(r->raft(), snap));
+}
+
+RAFTER_TEST_F(raft_test, restore_ignore_snapshot) {
+  auto logdb = std::make_unique<db>();
+  co_await logdb->append(test::util::new_entries({{1, 1}, {1, 2}, {1, 3}}));
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+  uint64_t commit = 1;
+  helper::_log(r->raft()).commit(commit);
+  auto snap = test::util::new_snapshot({1, commit});
+  snap->membership = test_membership({1, 2});
+  ASSERT_FALSE(co_await helper::restore(r->raft(), snap));
+  ASSERT_EQ(helper::_log(r->raft()).committed(), commit);
+  // snap.index, snap.term match the log. restore is not required.
+  // but it will fast forward the committed value.
+  // ignore snapshot and fast forward commit
+  snap = test::util::new_snapshot({1, commit + 1});
+  snap->membership = test_membership({1, 2});
+  ASSERT_FALSE(co_await helper::restore(r->raft(), snap));
+  ASSERT_EQ(helper::_log(r->raft()).committed(), commit + 1);
+}
+
+RAFTER_TEST_F(raft_test, provide_snapshot) {
+  // restore the state machine from a snapshot so it has a compacted log and a
+  // snapshot
+  auto snap = test::util::new_snapshot({11, 11});
+  snap->membership = test_membership({1, 2});
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1)};
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  // force set the next of node 2, so that node 2 needs a snapshot
+  helper::_remotes(r->raft())[2].next = helper::_log(r->raft()).first_index();
+  co_await r->handle(
+      {.type = message_type::replicate_resp,
+       .from = 2,
+       .to = 1,
+       .lid = {0, helper::_remotes(r->raft())[2].next - 1},
+       .reject = true});
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0].type, message_type::install_snapshot);
+}
+
+RAFTER_TEST_F(raft_test, ignore_providing_snapshot) {
+  // restore the state machine from a snapshot so it has a compacted log and a
+  // snapshot
+  auto snap = test::util::new_snapshot({11, 11});
+  snap->membership = test_membership({1, 2});
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 10, 1)};
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  // force set the next of node 2, so that node 2 needs a snapshot
+  // change node 2 to be inactive, expect node 1 ignore sending snapshot to 2
+  helper::_remotes(r->raft())[2].next =
+      helper::_log(r->raft()).first_index() - 1;
+  helper::_remotes(r->raft())[2].active = false;
+  co_await r->handle(naive_proposal(1, 1, "some data"));
+  auto msgs = r->read_messages();
+  ASSERT_TRUE(msgs.empty());
+}
+
+RAFTER_TEST_F(raft_test, restore_from_snapshot) {
+  auto snap = test::util::new_snapshot({11, 11});
+  snap->membership = test_membership({1, 2});
+  std::unique_ptr<raft_sm> r{raft_sm::make(2, {1, 2}, 10, 1)};
+  co_await r->handle(
+      {.type = message_type::install_snapshot,
+       .from = 1,
+       .term = 2,
+       .snapshot = snap});
+  ASSERT_EQ(helper::_leader_id(r->raft()), 1);
+}
+
+RAFTER_TEST_F(raft_test, slow_node_restore) {
+  auto nt = network({{null(), null(), null()}});
+  co_await nt.send({.type = message_type::election, .from = 1, .to = 1});
+  nt.isolate(3);
+  for (uint64_t i = 0; i <= 100; ++i) {
+    co_await nt.send(naive_proposal(1, 1, "some data"));
+  }
+  auto& lead = raft_cast(nt.sms[1].get());
+  co_await next_entries(nt.sms[1].get(), nt.dbs[1].get());
+  auto m = test_membership(nt.sms[1].get());
+  auto s = co_await test_snapshot(
+      nt.dbs[1].get(), helper::_log(lead).processed(), m);
+  nt.dbs[1]->lr().create_snapshot(s);
+  co_await nt.dbs[1]->lr().apply_compaction(helper::_log(lead).processed());
+  auto& follower = raft_cast(nt.sms[3].get());
+  nt.recover();
+  // send heartbeats so that the leader can learn everyone is active.
+  // node 3 will only be considered as active when node 1 receives a reply from
+  // it.
+  while (true) {
+    co_await nt.send(
+        {.type = message_type::leader_heartbeat, .from = 1, .to = 1});
+    if (helper::_remotes(lead)[3].active) {
+      break;
+    }
+  }
+  // trigger a snapshot
+  co_await nt.send(naive_proposal(1, 1, "some data"));
+  // trigger a commit
+  co_await nt.send(naive_proposal(1, 1, "some data"));
+  ASSERT_EQ(helper::_log(lead).committed(), helper::_log(follower).committed());
 }
 
 }  // namespace

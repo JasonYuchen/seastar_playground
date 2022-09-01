@@ -57,11 +57,13 @@ class core_helper {
   PUBLISH_METHOD(core::raft, become_witness);
   PUBLISH_METHOD(core::raft, abort_leader_transfer);
   PUBLISH_METHOD(core::raft, reset);
+  PUBLISH_METHOD(core::raft, restore);
   PUBLISH_METHOD(core::raft, try_commit);
   PUBLISH_METHOD(core::raft, append_entries);
   PUBLISH_METHOD(core::raft, tick);
   PUBLISH_METHOD(core::raft, time_to_elect);
   PUBLISH_METHOD(core::raft, set_randomized_election_timeout);
+  PUBLISH_METHOD(core::raft, node_restore_remote);
   PUBLISH_METHOD(core::raft, node_heartbeat);
   PUBLISH_METHOD(core::raft, node_replicate);
   PUBLISH_VARIABLE(core::raft, _gid);
