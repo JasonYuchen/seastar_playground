@@ -59,6 +59,7 @@ struct raft_config {
   bool quiesce = false;
 
   void validate() const;
+  static std::vector<raft_config> read_from(std::istream& input);
 };
 
 struct snapshot_option {
@@ -96,10 +97,10 @@ struct config {
   // rtt_ms defines the average RTT in milliseconds between two node_host.  It
   // is internally used as a logical clock tick, Raft heartbeat and election
   // intervals are both defined in terms of logical clock ticks (RTT intervals).
-  uint64_t rtt_ms = 0;
+  uint64_t rtt_ms = 100;
 
-  // the absolute path of a directory for data (WAL, snapshot, etc) storage
-  std::string data_dir;
+  // the path of a directory for data (WAL, snapshot, etc) storage
+  std::string data_dir = "/home/rafter/data";
 
   // the rolling threshold size in bytes for segment files
   uint64_t wal_rolling_size = 1UL * GB;
@@ -159,9 +160,9 @@ struct config {
   static void initialize();
   // initialize the config on shard 0 with given value
   static void initialize(const config& init);
+  static config read_from(std::istream& input);
   // broadcast the shard 0's config to all shards
   static seastar::future<> broadcast();
-  static seastar::future<> read_from(std::string_view file);
   static const config& shard();
   static config& mutable_shard();
 
@@ -169,6 +170,6 @@ struct config {
   static inline thread_local std::unique_ptr<config> _config;
 };
 
-std::ostream& operator<<(std::ostream& os, config cfg);
+std::ostream& operator<<(std::ostream& os, const config& cfg);
 
 }  // namespace rafter
