@@ -4,13 +4,17 @@
 
 #include "api_server.hh"
 
+#include "rafter/logger.hh"
 #include "rafter/nodehost.hh"
 
 namespace rafter {
 
 api_server::api_server(nodehost& nh) : _server("test"), _nodehost(nh) {}
 
-future<> api_server::stop() { return _server.stop(); }
+future<> api_server::stop() {
+  l.info("api_server stopping...");
+  return _server.stop();
+}
 
 void api_server::initialize_handlers() {
   // TODO(jyc): nodehost apis

@@ -194,7 +194,7 @@ future<> statemachine_manager::handle_save(protocol::rsm_task task) {
       co_return;
     }
     _node._log_reader.create_snapshot(snap.ss);
-    _node.compact_log(snap.ss->log_id.index);
+    co_await _node.compact_log(task, snap.ss->log_id.index);
     _node._snapshot_state.snapshot_index = snap.ss->log_id.index;
     index = snap.ss->log_id.index;
   } catch (util::snapshot_error& e) {
@@ -216,7 +216,7 @@ future<> statemachine_manager::handle_recover(protocol::rsm_task task) {
   try {
     index = co_await recover(task);
     l.info("{} recovered from snapshot with index:{}", _node.id(), index);
-    _node.compact_log(index);
+    co_await _node.compact_log(task, index);
   } catch (util::snapshot_error& e) {
     l.warn("failed to recover snapshot due to {}", e);
   }

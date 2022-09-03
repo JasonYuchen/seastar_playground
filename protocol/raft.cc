@@ -437,4 +437,20 @@ void utils::fill_metadata_entries(log_entry_vector& entries) {
   }
 }
 
+log_entry_vector utils::entries_to_apply(
+    log_entry_vector& entries, uint64_t applied) {
+  log_entry_vector to_apply;
+  // TODO(jyc): binary search
+  if (entries.empty() || entries.back().lid.index <= applied) {
+    return to_apply;
+  }
+  for (auto& ent : entries) {
+    if (ent.lid.index <= applied) {
+      continue;
+    }
+    to_apply.emplace_back(ent.share());
+  }
+  return to_apply;
+}
+
 }  // namespace rafter::protocol

@@ -186,6 +186,11 @@ future<> node::apply_config_change(
   _pending_config_change.apply(key, rejected);
 }
 
+future<> node::apply_snapshot(
+    uint64_t key, bool ignored, bool aborted, uint64_t index) {
+  _pending_snapshot.apply(key, ignored, aborted, index);
+}
+
 future<> node::restore_remotes(protocol::snapshot_ptr ss) {
   if (!ss || !ss->membership) [[unlikely]] {
     co_await coroutine::return_exception(
@@ -369,6 +374,15 @@ future<> node::remove_log() {
   co_await _logdb.remove(id(), compact_to);
   l.debug("{}: compact log up to index:{}", id(), compact_to);
   _snapshot_state.compacted_to = compact_to;
+}
+
+future<> node::compact_log(const rsm_task& task, uint64_t index) {
+  if (task.ss_request.compaction_overhead > 0 &&
+      index > task.ss_request.compaction_overhead) {
+    _snapshot_state.compact_log_to =
+        index - task.ss_request.compaction_overhead;
+  }
+  return _snapshotter->compact(index);
 }
 
 future<bool> node::handle_events() {

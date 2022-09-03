@@ -118,6 +118,11 @@ future<> express::sender::start(snapshot_ptr snapshot) {
 }
 
 future<> express::sender::stop() {
+  l.info(
+      "express::sender[{}:{}->{}] stopping...",
+      _pair.cluster,
+      _pair.from,
+      _pair.to);
   _close = true;
   if (_task) {
     return _task->handle_exception([](std::exception_ptr e) {
@@ -318,6 +323,11 @@ future<> express::receiver::start(
 }
 
 future<> express::receiver::stop() {
+  l.info(
+      "express::receiver[{}:{}->{}] stopping...",
+      _pair.cluster,
+      _pair.from,
+      _pair.to);
   _close = true;
   if (_task) {
     return _task->handle_exception([](std::exception_ptr e) {

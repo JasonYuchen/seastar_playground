@@ -104,26 +104,28 @@ set(SOURCES
     rsm/logger.cc
     rsm/logger.hh
     rsm/membership.cc
-    rsm/membership.hh
-    rsm/session.cc
-    rsm/session.hh
-    rsm/session_manager.cc
-    rsm/session_manager.hh
-    rsm/snapshotter.cc
-    rsm/snapshotter.hh
-    rsm/statemachine_manager.cc
-    rsm/statemachine_manager.hh
+        rsm/membership.hh
+        rsm/session.cc
+        rsm/session.hh
+        rsm/session_manager.cc
+        rsm/session_manager.hh
+        rsm/snapshotter.cc
+        rsm/snapshotter.hh
+        rsm/statemachine_manager.cc
+        rsm/statemachine_manager.hh
 
-    server/logger.cc
-    server/logger.hh
-    server/snapshot_context.cc
-    server/snapshot_context.hh
+        server/environment.cc
+        server/environment.hh
+        server/logger.cc
+        server/logger.hh
+        server/snapshot_context.cc
+        server/snapshot_context.hh
 
-    storage/index.cc
-    storage/index.hh
-    storage/logdb.cc
-    storage/logdb.hh
-    storage/logger.cc
+        storage/index.cc
+        storage/index.hh
+        storage/logdb.cc
+        storage/logdb.hh
+        storage/logger.cc
     storage/logger.hh
     storage/segment.cc
     storage/segment.hh
@@ -172,15 +174,16 @@ target_compile_options(${PROJECT_NAME}
     )
 
 target_link_options(${PROJECT_NAME}
-    PUBLIC ${RAFTER_LINKER_FLAGS}
-    )
+        PUBLIC ${RAFTER_LINKER_FLAGS}
+        )
 
 target_link_libraries(${PROJECT_NAME}
-    PUBLIC Seastar::seastar
-    #    PUBLIC simdjson
-    )
+        PUBLIC Seastar::seastar
+        #    PUBLIC simdjson
+        )
 
-#add_executable(${PROJECT_NAME} ${SOURCES})
-#
-#target_link_libraries(${PROJECT_NAME}
-#    PUBLIC Seastar::seastar)
+add_executable(${PROJECT_NAME}_main ${SOURCES} rafter/main.cc)
+
+target_link_libraries(${PROJECT_NAME}_main
+        PUBLIC ${PROJECT_NAME}
+        PUBLIC Seastar::seastar)

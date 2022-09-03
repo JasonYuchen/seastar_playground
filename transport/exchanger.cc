@@ -44,6 +44,7 @@ future<> exchanger::start_listen() {
 }
 
 future<> exchanger::shutdown() {
+  l.info("exchanger stopping...");
   if (_shutting_down) {
     co_return;
   }
@@ -56,7 +57,6 @@ future<> exchanger::shutdown() {
     co_await peer.second.rpc_client->stop();
   });
   co_await _express.stop();
-  l.info("exchanger::shutdown: done");
 }
 
 future<> exchanger::send_message(message m) {

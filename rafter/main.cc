@@ -25,11 +25,11 @@ static int rafter_main(int argc, char** argv, char** env) {
   app_template app{std::move(app_cfg)};
   // TODO(jyc): program options here
 
-  sharded<rafter::storage::segment_manager> logdb;
-  sharded<rafter::transport::registry> registry;
-  sharded<rafter::transport::exchanger> rpc;
-  sharded<rafter::nodehost> nodehost;
-  sharded<rafter::api_server> server;
+  static sharded<rafter::storage::segment_manager> logdb;
+  static sharded<rafter::transport::registry> registry;
+  static sharded<rafter::transport::exchanger> rpc;
+  static sharded<rafter::nodehost> nodehost;
+  static sharded<rafter::api_server> server;
 
   return app.run(argc, argv, [&]() -> future<int> {
     rafter::l.info("rafter initializing...");
@@ -37,6 +37,8 @@ static int rafter_main(int argc, char** argv, char** env) {
     rafter::util::stop_signal stop_signal;
     // TODO(jyc): construct nodehost config via yaml
     rafter::config config;
+    config.data_dir = "testdata";
+    config.listen_port = 40615;
     rafter::config::initialize(config);
     co_await rafter::config::broadcast();
 
@@ -52,22 +54,25 @@ static int rafter_main(int argc, char** argv, char** env) {
     using rafter::server::environment;
     auto partitioner = environment::get_partition_func();
     auto snapshot_dir = environment::get_snapshot_dir_func(config.data_dir);
-    co_await logdb.start(std::move(partitioner));
+
+    co_await logdb.start(partitioner);
     co_await registry.start();
     co_await rpc.start(std::ref(registry), std::move(snapshot_dir));
     co_await nodehost.start(
         std::move(config), std::ref(logdb), std::ref(registry), std::ref(rpc));
     co_await server.start(std::ref(nodehost));
+
     co_await logdb.invoke_on_all(&rafter::storage::segment_manager::start);
     co_await registry.invoke_on_all(&rafter::transport::registry::start);
-    co_await rpc.invoke_on_all(&rafter::transport::exchanger::start);
     // TODO(jyc): list and reload existing clusters in nodehost::start
     co_await nodehost.invoke_on_all(&rafter::nodehost::start);
+    co_await rpc.invoke_on_all(&rafter::transport::exchanger::start);
     co_await server.invoke_on_all(&rafter::api_server::initialize_handlers);
     socket_address l_addr{uint16_t{30615}};
     listen_options l_opt{.reuse_address = true};
     co_await server.invoke_on_all(&rafter::api_server::listen, l_addr, l_opt);
 
+    rafter::l.info("rafter is up now");
     auto signum = co_await stop_signal.wait();
     rafter::l.info("rafter exiting... with {}:{}", signum, ::strsignal(signum));
     // TODO(jyc): stop and close all existing clusters in nodehost::stop
@@ -76,6 +81,7 @@ static int rafter_main(int argc, char** argv, char** env) {
     co_await rpc.stop();
     co_await registry.stop();
     co_await logdb.stop();
+    co_return 0;
   });
 }
 

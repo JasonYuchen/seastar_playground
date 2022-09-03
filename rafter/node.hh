@@ -83,7 +83,7 @@ class node {
 
   future<bool> replay_log();
   future<> remove_log();
-  void compact_log(uint64_t index);
+  future<> compact_log(const protocol::rsm_task& task, uint64_t index);
 
   future<bool> handle_events();
   future<bool> handle_read_index();

@@ -34,6 +34,7 @@ nodehost::nodehost(
   , _partitioner(server::environment::get_partition_func()) {}
 
 future<> nodehost::start() {
+  l.info("nodehost:{} starting...", _id);
   _persister.start([&](std::vector<storage::update_pack>& packs, bool stopped) {
     return _logdb.save(packs);
   });
@@ -60,11 +61,11 @@ future<> nodehost::start() {
               new kv_statemachine(gid));
         });
   }
-  _ticker.set_callback([self = shared_from_this()] {
-    if (self->_stopped) [[unlikely]] {
+  _ticker.set_callback([this] {
+    if (_stopped) [[unlikely]] {
       return;
     }
-    for (auto [cluster_id, node] : self->_clusters) {
+    for (auto [cluster_id, node] : _clusters) {
       message m{
           .type = message_type::local_tick,
           .from = node->n->id().node,
@@ -74,14 +75,15 @@ future<> nodehost::start() {
       if (!pushed) {
         l.debug("{} missed a tick", node->n->id());
       }
-      self->node_ready(cluster_id);
+      node_ready(cluster_id);
     }
   });
   _ticker.arm_periodic(std::chrono::milliseconds(_config.rtt_ms));
-  throw util::panic("not implemented");
+  initialize_handlers();
 }
 
 future<> nodehost::stop() {
+  l.info("nodehost:{} stopping...", _id);
   _stopped = true;
   _ticker.cancel();
   auto it = _clusters.begin();
@@ -160,9 +162,6 @@ future<> nodehost::start_cluster(
 }
 
 future<> nodehost::stop_cluster(uint64_t cluster_id) {
-  if (_stopped) [[unlikely]] {
-    return make_exception_future<>(util::closed_error());
-  }
   auto shard = _partitioner(cluster_id);
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::stop_cluster, cluster_id);
@@ -544,14 +543,14 @@ future<request_result> nodehost::request_remove_data(group_id gid) {
 }
 
 void nodehost::initialize_handlers() {
-  _rpc.register_unreachable_handler([s = shared_from_this()](auto gid) {
-    return s->handle_unreachable(gid);
-  });
-  _rpc.register_message_handler([s = shared_from_this()](auto m) {
-    return s->handle_message(std::move(m));
-  });
-  _rpc.register_snapshot_handler([s = shared_from_this()](auto gid, auto from) {
-    return s->handle_snapshot(gid, from);
+  _rpc.register_unreachable_handler(
+      [this](auto gid) { return handle_unreachable(gid); });
+  _rpc.register_message_handler(
+      [this](auto m) { return handle_message(std::move(m)); });
+  _rpc.register_snapshot_handler(
+      [this](auto gid, auto from) { return handle_snapshot(gid, from); });
+  _rpc.register_snapshot_status_handler([this](auto gid, auto failed) {
+    return handle_snapshot_status(gid, failed);
   });
 }
 
@@ -561,6 +560,8 @@ void nodehost::uninitialize_handlers() {
   _rpc.register_message_handler([](auto m) { return make_ready_future<>(); });
   _rpc.register_snapshot_handler(
       [](auto gid, auto from) { return make_ready_future<>(); });
+  _rpc.register_snapshot_status_handler(
+      [](auto gid, auto failed) { return make_ready_future<>(); });
 }
 
 void nodehost::node_ready(uint64_t cluster_id) {
