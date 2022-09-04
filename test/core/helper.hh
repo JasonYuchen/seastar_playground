@@ -47,6 +47,9 @@ class core_helper {
   // core::raft
   PUBLISH_METHOD(core::raft, send_replicate);
   PUBLISH_METHOD(core::raft, broadcast_replicate);
+  PUBLISH_METHOD(core::raft, add_node);
+  PUBLISH_METHOD(core::raft, add_observer);
+  PUBLISH_METHOD(core::raft, add_witness);
   PUBLISH_METHOD(core::raft, remove_node);
   PUBLISH_METHOD(core::raft, is_self_removed);
   PUBLISH_METHOD(core::raft, become_leader);
@@ -72,6 +75,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft, _leader_transfer_target);
   PUBLISH_VARIABLE(core::raft, _term);
   PUBLISH_VARIABLE(core::raft, _vote);
+  PUBLISH_VARIABLE(core::raft, _pending_config_change);
   PUBLISH_VARIABLE(core::raft, _check_quorum);
   PUBLISH_VARIABLE(core::raft, _log);
   PUBLISH_VARIABLE(core::raft, _remotes);

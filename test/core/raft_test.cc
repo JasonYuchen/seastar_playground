@@ -11,6 +11,7 @@
 
 #include "core/raft_log.hh"
 #include "helper.hh"
+#include "protocol/serializer.hh"
 #include "test/base.hh"
 #include "test/test_logdb.hh"
 #include "test/util.hh"
@@ -128,6 +129,7 @@ class raft_sm final : public sm {
   raft_config& cfg() { return *_cfg; }
   core::raft& raft() { return *_r; }
 
+  db* logdb0() { return _db.get(); }
   std::unique_ptr<db> logdb() { return std::move(_db); }
 
  private:
@@ -320,6 +322,9 @@ class raft_test : public ::testing::Test {
     std::unordered_set<uint64_t> nodes;
     auto collector = [&nodes](auto&& m) {
       for (auto&& [id, _] : m) {
+        if (nodes.contains(id)) {
+          ADD_FAILURE() << "duplicate node " << id << " found";
+        }
         nodes.insert(id);
       }
     };
@@ -350,6 +355,13 @@ class raft_test : public ::testing::Test {
       members->addresses[id] = "";
     }
     return members;
+  }
+
+  static snapshot_ptr test_snapshot(const std::vector<uint64_t>& nodes) {
+    auto snap = make_lw_shared<snapshot>();
+    snap->log_id = {11, 11};
+    snap->membership = test_membership(nodes);
+    return snap;
   }
 
   static future<snapshot_ptr> test_snapshot(
@@ -2075,6 +2087,279 @@ RAFTER_TEST_F(raft_test, slow_node_restore) {
   // trigger a commit
   co_await nt.send(naive_proposal(1, 1, "some data"));
   ASSERT_EQ(helper::_log(lead).committed(), helper::_log(follower).committed());
+}
+
+RAFTER_TEST_F(raft_test, step_config) {
+  // when raft handle proposal with config_change type, it appends the entry to
+  // log and sets pending_config_change to be true.
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  auto index = helper::_log(r->raft()).last_index();
+  auto cc = naive_proposal(1, 1);
+  cc.entries[0].type = entry_type::config_change;
+  co_await r->handle(std::move(cc));
+  ASSERT_EQ(helper::_log(r->raft()).last_index(), index + 1);
+  ASSERT_TRUE(helper::_pending_config_change(r->raft()));
+}
+
+RAFTER_TEST_F(raft_test, step_ignore_config) {
+  // if raft step the second proposal with config_change type when the first one
+  // is uncommitted, the node will set the proposal to noop and keep its
+  // original state.
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  auto index = helper::_log(r->raft()).last_index();
+  auto cc = naive_proposal(1, 1);
+  cc.entries[0].type = entry_type::config_change;
+  co_await r->handle(std::move(cc));
+  ASSERT_EQ(helper::_log(r->raft()).last_index(), index + 1);
+  ASSERT_TRUE(helper::_pending_config_change(r->raft()));
+  // the second config change
+  cc = naive_proposal(1, 1);
+  cc.entries[0].type = entry_type::config_change;
+  co_await r->handle(std::move(cc));
+  ASSERT_EQ(helper::_log(r->raft()).last_index(), index + 2);
+  ASSERT_EQ(r->raft().dropped_entries().size(), 1);
+  ASSERT_EQ(r->raft().dropped_entries()[0].type, entry_type::config_change);
+  log_entry_vector queried;
+  co_await helper::_log(r->raft()).query(index + 2, queried, UINT64_MAX);
+  log_entry exp_entry{{1, 3}};
+  exp_entry.type = entry_type::application;
+  ASSERT_EQ(queried[0], exp_entry);
+  ASSERT_TRUE(helper::_pending_config_change(r->raft()));
+}
+
+RAFTER_TEST_F(raft_test, recover_pending_config) {
+  // new leader recovers its pending_config_change based on uncommitted entries.
+  struct {
+    entry_type type;
+    bool exp_pending;
+  } tests[] = {
+      {entry_type::application, false},
+      {entry_type::config_change, true},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+    auto entry = test::util::new_entries({{0, 0}});
+    entry[0].type = t.type;
+    co_await helper::append_entries(r->raft(), entry);
+    helper::become_candidate(r->raft());
+    co_await helper::become_leader(r->raft());
+    EXPECT_EQ(helper::_pending_config_change(r->raft()), t.exp_pending);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, recover_double_pending_config) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  auto entry = test::util::new_entries({{0, 0}});
+  entry[0].type = entry_type::config_change;
+  co_await helper::append_entries(r->raft(), entry);
+  co_await helper::append_entries(r->raft(), entry);
+  helper::become_candidate(r->raft());
+  ASSERT_THROW(
+      co_await helper::become_leader(r->raft()),
+      rafter::util::invalid_raft_state);
+}
+
+RAFTER_TEST_F(raft_test, add_node) {
+  // add_node could update pending_config_change and nodes correctly.
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::_pending_config_change(r->raft()) = true;
+  helper::add_node(r->raft(), 2);
+  ASSERT_FALSE(helper::_pending_config_change(r->raft()));
+  std::unordered_set<uint64_t> exp_nodes{1, 2};
+  ASSERT_EQ(get_all_nodes(r->raft()), exp_nodes);
+}
+
+RAFTER_TEST_F(raft_test, remove_node) {
+  // remove_node could update pending_config_change, nodes and removed list
+  // correctly.
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 10, 1)};
+  helper::_pending_config_change(r->raft()) = true;
+  co_await helper::remove_node(r->raft(), 2);
+  ASSERT_FALSE(helper::_pending_config_change(r->raft()));
+  std::unordered_set<uint64_t> exp_nodes{1};
+  ASSERT_EQ(get_all_nodes(r->raft()), exp_nodes);
+  co_await helper::remove_node(r->raft(), 1);
+  exp_nodes.erase(1);
+  ASSERT_EQ(get_all_nodes(r->raft()), exp_nodes);
+}
+
+RAFTER_TEST_F(raft_test, promotable) {
+  struct {
+    std::vector<uint64_t> peers;
+    bool exp;
+  } tests[] = {
+      {{1}, true},
+      {{1, 2, 3}, true},
+      {{}, false},
+      {{2, 3}, false},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, t.peers, 10, 1)};
+    EXPECT_EQ(!helper::is_self_removed(r->raft()), t.exp);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, nodes) {
+  struct {
+    std::vector<uint64_t> peers;
+    std::unordered_set<uint64_t> exp_peers;
+  } tests[] = {
+      {{1, 2, 3}, {1, 2, 3}},
+      {{3, 2, 1}, {1, 2, 3}},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, t.peers, 10, 1)};
+    EXPECT_EQ(get_all_nodes(r->raft()), t.exp_peers);
+  }
+  co_return;
+}
+
+RAFTER_TEST_F(raft_test, compaign_while_leader) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1}, 5, 1)};
+  ASSERT_EQ(helper::_role(r->raft()), raft_role::follower);
+  co_await r->handle({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(r->raft()), raft_role::leader);
+  auto term = helper::_term(r->raft());
+  co_await r->handle({.type = message_type::election, .from = 1, .to = 1});
+  ASSERT_EQ(helper::_role(r->raft()), raft_role::leader);
+  ASSERT_EQ(helper::_term(r->raft()), term);
+}
+
+RAFTER_TEST_F(raft_test, commit_after_remove_node) {
+  // pending commands can become committed when a config change reduces the
+  // quorum requirements.
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  config_change cc{.type = config_change_type::remove_node, .node = 2};
+  auto m = naive_proposal(1, 1);
+  m.entries[0].type = entry_type::config_change;
+  m.entries[0].payload = write_to_tmpbuf(cc);
+  co_await r->handle(std::move(m));
+  // Stabilize the log and make sure nothing is committed yet.
+  auto ents = co_await next_entries(r.get(), r->logdb0());
+  ASSERT_TRUE(ents.empty());
+  auto cc_index = helper::_log(r->raft()).last_index();
+  // While the config change is pending, make another proposal.
+  co_await r->handle(naive_proposal(1, 1, "hello"));
+  // Node 2 acknowledges the config change, committing it.
+  co_await r->handle(
+      {.type = message_type::replicate_resp,
+       .from = 2,
+       .to = 1,
+       .lid = {0, cc_index}});
+  ents = co_await next_entries(r.get(), r->logdb0());
+  ASSERT_EQ(ents.size(), 2);
+  ASSERT_EQ(ents[0].type, entry_type::application);
+  ASSERT_TRUE(ents[0].payload.empty());
+  ASSERT_EQ(ents[1].type, entry_type::config_change);
+  // Apply the config change. This reduces quorum requirements so the pending
+  // command can now be committed.
+  co_await helper::remove_node(r->raft(), 2);
+  ents = co_await next_entries(r.get(), r->logdb0());
+  ASSERT_EQ(ents.size(), 1);
+  ASSERT_EQ(ents[0].type, entry_type::application);
+  ASSERT_EQ(ents[0].payload, temporary_buffer<char>::copy_of("hello"));
+}
+
+RAFTER_TEST_F(raft_test, sending_snapshot_set_pending_snapshot) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  auto snap = test_snapshot({1, 2});
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  // force set the next of node 1 so that it needs a snapshot
+  auto index = helper::_log(r->raft()).first_index();
+  helper::_remotes(r->raft())[2].next = index;
+  co_await r->handle(
+      {.type = message_type::replicate_resp,
+       .from = 2,
+       .to = 1,
+       .lid = {0, index - 1},
+       .reject = true});
+  ASSERT_EQ(helper::_remotes(r->raft())[2].snapshot_index, 11);
+}
+
+RAFTER_TEST_F(raft_test, pending_snapshot_pause_replication) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  auto snap = test_snapshot({1, 2});
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_remotes(r->raft())[2].become_snapshot(11);
+  co_await r->handle(naive_proposal(1, 1));
+  ASSERT_TRUE(r->read_messages().empty());
+}
+
+RAFTER_TEST_F(raft_test, snapshot_failure) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  auto snap = test_snapshot({1, 2});
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_remotes(r->raft())[2].next = 1;
+  helper::_remotes(r->raft())[2].become_snapshot(11);
+  co_await r->handle(
+      {.type = message_type::snapshot_status,
+       .from = 2,
+       .to = 1,
+       .reject = true});
+  ASSERT_EQ(helper::_remotes(r->raft())[2].snapshot_index, 0);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].next, 1);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+}
+
+RAFTER_TEST_F(raft_test, snapshot_succeed) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  auto snap = test_snapshot({1, 2});
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_remotes(r->raft())[2].next = 1;
+  helper::_remotes(r->raft())[2].become_snapshot(11);
+  co_await r->handle(
+      {.type = message_type::snapshot_status,
+       .from = 2,
+       .to = 1,
+       .reject = false});
+  ASSERT_EQ(helper::_remotes(r->raft())[2].snapshot_index, 0);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].next, 12);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].state, core::remote::state::wait);
+}
+
+RAFTER_TEST_F(raft_test, snapshot_abort) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
+  auto snap = test_snapshot({1, 2});
+  co_await helper::restore(r->raft(), snap);
+  message m{.snapshot = snap};
+  co_await helper::node_restore_remote(r->raft(), m);
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  helper::_remotes(r->raft())[2].next = 1;
+  helper::_remotes(r->raft())[2].become_snapshot(11);
+  // A successful replicate_resp that has a higher/equal index than the pending
+  // snapshot should abort the pending snapshot.
+  co_await r->handle(
+      {.type = message_type::replicate_resp,
+       .from = 2,
+       .to = 1,
+       .lid = {0, 11}});
+  ASSERT_EQ(helper::_remotes(r->raft())[2].snapshot_index, 0);
+  ASSERT_EQ(helper::_remotes(r->raft())[2].next, 12);
 }
 
 }  // namespace
