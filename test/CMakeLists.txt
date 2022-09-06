@@ -5,8 +5,9 @@ set(SOURCES
     core/helper.hh
     core/peer_test.cc
     core/quiesce_test.cc
+    core/raft_etcd_test.cc
     core/raft_log_test.cc
-    core/raft_test.cc
+    core/raft_test.hh
     core/rate_limiter_test.cc
     core/read_index_test.cc
     core/remote_test.cc
