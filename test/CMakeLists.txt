@@ -1,12 +1,14 @@
 project(rafter_test)
 
-set(SOURCES
+set(TEST_SOURCES
 
     core/helper.hh
     core/peer_test.cc
     core/quiesce_test.cc
+    core/raft_etcd_paper_test.cc
     core/raft_etcd_test.cc
     core/raft_log_test.cc
+    core/raft_test.cc
     core/raft_test.hh
     core/rate_limiter_test.cc
     core/read_index_test.cc
@@ -60,7 +62,7 @@ set(SOURCES
     util.hh
     )
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(${PROJECT_NAME} ${TEST_SOURCES})
 
 target_compile_options(${PROJECT_NAME}
     PUBLIC ${RAFTER_CXX_FLAGS}

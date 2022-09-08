@@ -1,0 +1,37 @@
+{
+
+  rtt_ms: 50,
+
+  data_dir: './testdata',
+
+  wal_rolling_size: 0x40000000, # 1 GB
+
+  wal_gc_queue_capacity: 100,
+
+  listen_address: '::',
+
+  listen_port: 40615,
+
+  snapshot_chunk_size: 0x100000, # 1 MB
+
+  in_memory_gc_timeout: 10,
+
+  max_entry_bytes: 0x800000, # 8 MB
+
+  max_replicate_entry_bytes: 0x4000000, # 64 MB
+
+  max_apply_entry_bytes: 0x4000000, # 64 MB
+
+  incoming_proposal_queue_length: 2048,
+
+  incoming_read_index_queue_length: 4096,
+
+  task_queue_capacity: 64,
+
+  max_send_queue_bytes: 0,
+
+  max_receive_queue_bytes: 0,
+
+  lru_max_session_count: 4096
+
+}

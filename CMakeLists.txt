@@ -61,6 +61,9 @@ add_subdirectory(test)
 
 set(SOURCES
 
+    api/api.cc
+    api/api.hh
+
     core/logger.cc
     core/logger.hh
     core/peer.cc

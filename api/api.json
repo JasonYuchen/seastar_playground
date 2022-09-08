@@ -1,0 +1,252 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "Rafter KVS",
+    "description": "TODO",
+    "termsOfService": "https://github.com/jasonyuchen/seastar_playground",
+    "contact": {
+      "name": "Rafter",
+      "email": "jasonyuchen@foxmail.com",
+      "url": "https://github.com/jasonyuchen/seastar_playground"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+    }
+  },
+  "basePath": "/api",
+  "schemes": [
+    "http"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/clusters": {
+      "get": {
+        "description": "Returns all clusters from the system.",
+        "operationId": "listClusters",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "clusters response",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/KVCluster"
+              }
+            }
+          },
+          "default": {
+            "description": "unexpected error",
+            "schema": {
+              "$ref": "#/definitions/Error"
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "Start a new cluster in the store. Duplicates are not allowed.",
+        "operationId": "startCluster",
+        "parameters": [
+          {
+            "name": "cluster",
+            "in": "body",
+            "description": "cluster to add to the store",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/NewKVCluster"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "cluster response",
+            "schema": {
+              "$ref": "#/definitions/KVCluster"
+            }
+          },
+          "default": {
+            "description": "unexpected error",
+            "schema": {
+              "$ref": "#/definitions/Error"
+            }
+          }
+        }
+      }
+    },
+    "/cluster/{clusterId}": {
+      "get": {
+        "description": "Returns a value based on a single key.",
+        "operationId": "singleGet",
+        "parameters": [
+          {
+            "name": "clusterId",
+            "in": "path",
+            "description": "cluster to query",
+            "required": true,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "key of item to fetch",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "item response",
+            "schema": {
+              "$ref": "#/definitions/Item"
+            }
+          },
+          "default": {
+            "description": "unexpected error",
+            "schema": {
+              "$ref": "#/definitions/Error"
+            }
+          }
+        }
+      },
+      "put": {
+        "description": "Puts a single value under the key supplied. (FIXME)",
+        "operationId": "singlePut",
+        "parameters": [
+          {
+            "name": "clusterId",
+            "in": "path",
+            "description": "cluster to query",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "key of item to put",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "description": "value of item to put",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "item response",
+            "schema": {
+              "$ref": "#/definitions/Item"
+            }
+          },
+          "default": {
+            "description": "unexpected error",
+            "schema": {
+              "$ref": "#/definitions/Error"
+            }
+          }
+        }
+      },
+      "delete": {
+        "description": "Deletes a single value based on the key supplied.",
+        "operationId": "singleDelete",
+        "parameters": [
+          {
+            "name": "clusterId",
+            "in": "path",
+            "description": "cluster to query",
+            "required": true,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "key of item to delete",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "item deleted"
+          },
+          "default": {
+            "description": "unexpected error",
+            "schema": {
+              "$ref": "#/definitions/Error"
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "KVCluster": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "NewKVCluster": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      }
+    },
+    "Item": {
+      "type": "object",
+      "required": [
+        "key",
+        "value"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
