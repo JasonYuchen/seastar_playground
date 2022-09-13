@@ -105,8 +105,8 @@ future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
 
 future<> segment_manager::save(std::span<update_pack> updates) {
   return with_lock(_mtx, [=]() -> future<> {
-    // FIXME(jyc): must explicitly copy the span, compiler issue? clang++-12.0.1
-    std::span<update_pack> ups = updates;
+    // store updates in the coroutine frame
+    auto ups = updates;
     bool need_sync = false;
     for (const auto& up : ups) {
       bool sync = co_await append(up.update);
@@ -226,18 +226,18 @@ future<> segment_manager::remove(group_id id, uint64_t index) {
   return with_lock(
              _mtx,
              [=]() -> future<> {
-               _stats._remove++;
-               update comp{
-                   .gid = id,
-                   .state =
-                       {
-                           .commit = index,
-                       },
-               };
-               co_await append(comp);
-               co_await sync();
-             })
-      .then([=] { return compaction(id); });
+    _stats._remove++;
+    update comp{
+        .gid = id,
+        .state =
+            {
+                .commit = index,
+            },
+    };
+    co_await append(comp);
+    co_await sync();
+    co_await compaction(comp.gid);
+  });
 }
 
 future<> segment_manager::remove_node(protocol::group_id id) {
