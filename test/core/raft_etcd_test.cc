@@ -340,17 +340,17 @@ RAFTER_TEST_F(raft_etcd_test, leader_election) {
     uint64_t exp_term;
   } tests[] = {
       {network{{null(), null(), null()}}, raft_role::leader, 1},
-      {network{{null(), null(), noop()}}, raft_role::leader, 1},
+      {network{{null(), null(), hole()}}, raft_role::leader, 1},
 
       // FIXME(jyc): with prevote enabled, these tests will fail
       // {network{{null(), noop(), noop()}}, raft_role::candidate, 1},
       // {network{{null(), noop(), noop(), null()}}, raft_role::candidate, 1},
 
       // with prevote disabled, these tests will fail
-      {network{{null(), noop(), noop()}}, raft_role::pre_candidate, 0},
-      {network{{null(), noop(), noop(), null()}}, raft_role::pre_candidate, 0},
+      {network{{null(), hole(), hole()}}, raft_role::pre_candidate, 0},
+      {network{{null(), hole(), hole(), null()}}, raft_role::pre_candidate, 0},
 
-      {network{{null(), noop(), noop(), null(), null()}}, raft_role::leader, 1},
+      {network{{null(), hole(), hole(), null(), null()}}, raft_role::leader, 1},
 
       // logs not up to date, receive 3 rejections and become follower
       {network{
@@ -711,10 +711,10 @@ RAFTER_TEST_F(raft_etcd_test, proposal) {
     bool success;
   } tests[] = {
       {network{{null(), null(), null()}}, true},
-      {network{{null(), null(), noop()}}, true},
-      {network{{null(), noop(), noop()}}, false},
-      {network{{null(), noop(), noop(), null()}}, false},
-      {network{{null(), noop(), noop(), null(), null()}}, true},
+      {network{{null(), null(), hole()}}, true},
+      {network{{null(), hole(), hole()}}, false},
+      {network{{null(), hole(), hole(), null()}}, false},
+      {network{{null(), hole(), hole(), null(), null()}}, true},
   };
   for (auto& t : tests) {
     co_await t.nt.send({.type = message_type::election, .from = 1, .to = 1});
@@ -750,7 +750,7 @@ RAFTER_TEST_F(raft_etcd_test, proposal_by_proxy) {
     network nt;
   } tests[] = {
       {network{{null(), null(), null()}}},
-      {network{{null(), null(), noop()}}},
+      {network{{null(), null(), hole()}}},
   };
   auto ents = rafter::test::util::new_entries({{1, 1}, {1, 2}});
   ents.back().copy_of("some data");
@@ -1868,7 +1868,8 @@ RAFTER_TEST_F(raft_etcd_test, commit_after_remove_node) {
   std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2}, 5, 1)};
   helper::become_candidate(r->raft());
   co_await helper::become_leader(r->raft());
-  config_change cc{.type = config_change_type::remove_node, .node = 2};
+  protocol::config_change cc{
+      .type = config_change_type::remove_node, .node = 2};
   auto m = naive_proposal(1, 1);
   m.entries[0].type = entry_type::config_change;
   m.entries[0].payload = write_to_tmpbuf(cc);

@@ -13,6 +13,8 @@
 namespace rafter::test {
 
 using namespace rafter::protocol;
+using enum raft_role;
+using enum message_type;
 using helper = core_helper;
 
 inline std::unique_ptr<raft_config> new_test_config(
@@ -150,7 +152,7 @@ class black_hole final : public sm {
 };
 
 inline sm* null() { return nullptr; }
-inline sm* noop() { return new black_hole; }
+inline sm* hole() { return new black_hole; }
 inline core::raft& raft_cast(sm* s) {
   if (auto* rs = dynamic_cast<raft_sm*>(s); rs != nullptr) {
     return rs->raft();
@@ -376,6 +378,12 @@ inline message naive_proposal(
   message m{.type = message_type::propose, .from = from, .to = to};
   m.entries.emplace_back().copy_of(payload);
   return m;
+}
+
+inline std::vector<uint64_t> test_peers(uint64_t size) {
+  std::vector<uint64_t> peers(size);
+  std::iota(peers.begin(), peers.end(), 1);
+  return peers;
 }
 
 }  // namespace rafter::test
