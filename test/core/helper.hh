@@ -79,6 +79,7 @@ class core_helper {
   PUBLISH_VARIABLE(core::raft, _pending_config_change);
   PUBLISH_VARIABLE(core::raft, _check_quorum);
   PUBLISH_VARIABLE(core::raft, _log);
+  PUBLISH_VARIABLE(core::raft, _votes);
   PUBLISH_VARIABLE(core::raft, _remotes);
   PUBLISH_VARIABLE(core::raft, _observers);
   PUBLISH_VARIABLE(core::raft, _witnesses);
