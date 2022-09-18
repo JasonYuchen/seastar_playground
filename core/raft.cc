@@ -1004,7 +1004,7 @@ future<> raft::node_election(message& m) {
     // which can have no overlap with the committed quorum of 3. this violates
     // the safety requirement of raft. ignore the Election message when there is
     // membership configure change committed but not applied
-    if (_log.has_config_change_to_apply()) {
+    if (co_await _log.has_config_change_to_apply()) {
       l.warn("{}: election skipped due to not applied config change", *this);
       co_return;
     }

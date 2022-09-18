@@ -189,6 +189,7 @@ future<> node::apply_config_change(
 future<> node::apply_snapshot(
     uint64_t key, bool ignored, bool aborted, uint64_t index) {
   _pending_snapshot.apply(key, ignored, aborted, index);
+  return make_ready_future<>();
 }
 
 future<> node::restore_remotes(protocol::snapshot_ptr ss) {

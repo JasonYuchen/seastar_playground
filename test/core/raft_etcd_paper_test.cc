@@ -394,4 +394,252 @@ RAFTER_TEST_F(raft_etcd_paper_test, leader_acknowledge_commit) {
   }
 }
 
+RAFTER_TEST_F(raft_etcd_paper_test, leader_commit_preceding_entries) {
+  // When leader commits a log entry, it also commits all preceding entries in
+  // the leader’s log, including entries created by previous leaders. Also, it
+  // applies the entry to its local state machine (in log order).
+  // Reference: section 5.3
+  struct {
+    std::vector<log_id> entries;
+  } tests[] = {
+      {{}},
+      {{{2, 1}}},
+      {{{1, 1}, {2, 2}}},
+      {{{1, 1}}},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries(t.entries));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(logdb))};
+    hard_state st{.term = 2};
+    helper::set_state(r->raft(), st);
+    helper::become_candidate(r->raft());
+    co_await helper::become_leader(r->raft());
+    co_await r->handle(naive_proposal(1, 1, "some data"));
+    auto msgs = r->read_messages();
+    for (auto& m : msgs) {
+      co_await r->handle(accept_and_reply(m));
+    }
+    auto exp = test::util::new_entries(t.entries);
+    exp.emplace_back(3, t.entries.size() + 1);
+    exp.emplace_back(3, t.entries.size() + 2).copy_of("some data");
+    log_entry_vector to_apply;
+    co_await helper::_log(r->raft()).get_entries_to_apply(to_apply);
+    EXPECT_EQ(to_apply, exp) << CASE_INDEX(t, tests);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, follower_commit_entry) {
+  struct {
+    std::vector<log_id> entries;
+    std::vector<std::string> payloads;
+    uint64_t commit;
+  } tests[] = {
+      {{{1, 1}}, {"some data"}, 1},
+      {{{1, 1}, {1, 2}}, {"some data", "some data2"}, 2},
+      {{{1, 1}, {1, 2}}, {"some data2", "some data"}, 2},
+      {{{1, 1}, {1, 2}}, {"some data", "some data2"}, 1},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 10, 1)};
+    helper::become_follower(r->raft(), 1, 2, true);
+    log_entry_vector entries;
+    for (size_t i = 0; i < t.entries.size(); ++i) {
+      entries.emplace_back(t.entries[i]).copy_of(t.payloads[i]);
+    }
+    co_await r->handle(
+        {.type = replicate,
+         .from = 2,
+         .to = 1,
+         .term = 1,
+         .commit = t.commit,
+         .entries = std::move(entries)});
+    EXPECT_EQ(helper::_log(r->raft()).committed(), t.commit);
+    for (size_t i = 0; i < t.commit; ++i) {
+      entries.emplace_back(t.entries[i]).copy_of(t.payloads[i]);
+    }
+    log_entry_vector to_apply;
+    co_await helper::_log(r->raft()).get_entries_to_apply(to_apply);
+    EXPECT_EQ(to_apply, entries) << CASE_INDEX(t, tests);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, follower_check_replicate) {
+  // If the follower does not find an entry in its log with the same index and
+  // term as the one in append_entries RPC, then it refuses the new entries.
+  // Otherwise, it replies that it accepts the append_entries.
+  // Reference: section 5.3
+  std::vector<log_id> lids{{1, 1}, {2, 2}};
+  struct {
+    log_id lid;
+    uint64_t exp_index;
+    bool exp_reject;
+    uint64_t exp_reject_hint;
+  } tests[] = {
+      {{0, 0}, 1, false, 0},
+      {lids[0], 1, false, 0},
+      {lids[1], 2, false, 0},
+      {{lids[0].term, lids[1].index}, lids[1].index, true, 2},
+      {{lids[1].term + 1, lids[1].index + 1}, lids[1].index + 1, true, 2},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries(lids));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(logdb))};
+    hard_state st{.commit = 1};
+    helper::set_state(r->raft(), st);
+    helper::become_follower(r->raft(), 2, 2, true);
+    co_await r->handle(
+        {.type = replicate, .from = 2, .to = 1, .term = 2, .lid = t.lid});
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 1);
+    EXPECT_EQ(msgs[0].lid.index, t.exp_index);
+    EXPECT_EQ(msgs[0].reject, t.exp_reject);
+    EXPECT_EQ(msgs[0].hint.low, t.exp_reject_hint);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, follower_append_entries) {
+  // When append_entries RPC is valid, the follower will delete the existing
+  // conflict entry and all that follow it, and append any new entries not
+  // already in the log. Also, it writes the new entry into stable storage.
+  // Reference: section 5.3
+  struct {
+    log_id lid;
+    std::vector<log_id> entries;
+    std::vector<log_id> exp_entries;
+    std::vector<log_id> exp_unstable;
+  } tests[] = {
+      {{2, 2}, {{3, 3}}, {{1, 1}, {2, 2}, {3, 3}}, {{3, 3}}},
+      {{1, 1}, {{3, 2}, {4, 3}}, {{1, 1}, {3, 2}, {4, 3}}, {{3, 2}, {4, 3}}},
+      {{0, 0}, {{1, 1}}, {{1, 1}, {2, 2}}},
+      {{0, 0}, {{3, 1}}, {{3, 1}}, {{3, 1}}},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries({{1, 1}, {2, 2}}));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(logdb))};
+    helper::become_follower(r->raft(), 2, 2, true);
+    co_await r->handle(
+        {.type = replicate,
+         .from = 2,
+         .to = 1,
+         .term = 2,
+         .lid = t.lid,
+         .entries = test::util::new_entries(t.entries)});
+    auto all_entries = co_await get_all_entries(helper::_log(r->raft()));
+    EXPECT_EQ(all_entries, test::util::new_entries(t.exp_entries))
+        << CASE_INDEX(t, tests);
+    log_entry_vector to_save;
+    helper::_log(r->raft()).get_entries_to_save(to_save);
+    EXPECT_EQ(to_save, test::util::new_entries(t.exp_unstable))
+        << CASE_INDEX(t, tests);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, leader_sync_follower_log) {
+  // The leader could bring a follower's log into consistency with its own.
+  // Reference: section 5.3, figure 7
+  std::vector<log_id> entries{
+      {},
+      {1, 1},
+      {1, 2},
+      {1, 3},
+      {4, 4},
+      {4, 5},
+      {5, 6},
+      {5, 7},
+      {6, 8},
+      {6, 9},
+      {6, 10}};
+  uint64_t term = 8;
+  struct {
+    std::vector<log_id> entries;
+  } tests[] = {
+      {{{},
+        {1, 1},
+        {1, 2},
+        {1, 3},
+        {4, 4},
+        {4, 5},
+        {5, 6},
+        {5, 7},
+        {6, 8},
+        {6, 9}}},
+      {{{}, {1, 1}, {1, 2}, {1, 3}, {4, 4}}},
+      {{{},
+        {1, 1},
+        {1, 2},
+        {1, 3},
+        {4, 4},
+        {4, 5},
+        {5, 6},
+        {5, 7},
+        {6, 8},
+        {6, 9},
+        {6, 10},
+        {6, 11}}},
+      {{{},
+        {1, 1},
+        {1, 2},
+        {1, 3},
+        {4, 4},
+        {4, 5},
+        {5, 6},
+        {5, 7},
+        {6, 8},
+        {6, 9},
+        {6, 10},
+        {7, 11},
+        {7, 12}}},
+      {{{}, {1, 1}, {1, 2}, {1, 3}, {4, 4}, {4, 5}, {4, 6}, {4, 7}}},
+      {{{},
+        {1, 1},
+        {1, 2},
+        {1, 3},
+        {2, 4},
+        {2, 5},
+        {2, 6},
+        {3, 7},
+        {3, 8},
+        {3, 9},
+        {3, 10},
+        {3, 11}}},
+  };
+  for (auto& t : tests) {
+    auto leader_logdb = std::make_unique<db>();
+    co_await leader_logdb->append(test::util::new_entries(entries));
+    auto* leader = raft_sm::make(1, {1, 2, 3}, 10, 1, std::move(leader_logdb));
+    auto st = hard_state{
+        .term = term, .commit = helper::_log(leader->raft()).last_index()};
+    helper::set_state(leader->raft(), st);
+
+    auto follower_logdb = std::make_unique<db>();
+    co_await follower_logdb->append(test::util::new_entries(t.entries));
+    auto* follower =
+        raft_sm::make(2, {1, 2, 3}, 10, 1, std::move(follower_logdb));
+    st = hard_state{.term = term - 1};
+    helper::set_state(follower->raft(), st);
+    auto nt = network({leader, follower, hole()});
+    co_await nt.send({.type = election, .from = 1, .to = 1});
+    co_await nt.send(
+        {.type = request_prevote_resp, .from = 3, .to = 1, .term = term + 1});
+    co_await nt.send(
+        {.type = request_vote_resp, .from = 3, .to = 1, .term = term + 1});
+    co_await nt.send(naive_proposal(1, 1));
+    auto& leader_log = helper::_log(leader->raft());
+    auto& follower_log = helper::_log(follower->raft());
+    auto leader_entries = co_await get_all_entries(leader_log);
+    auto follower_entries = co_await get_all_entries(follower_log);
+    EXPECT_EQ(leader_log.committed(), follower_log.committed())
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(leader_log.processed(), follower_log.processed())
+        << CASE_INDEX(t, tests);
+    EXPECT_EQ(leader_entries, follower_entries) << CASE_INDEX(t, tests);
+  }
+}
+
 }  // namespace

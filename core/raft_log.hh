@@ -117,7 +117,7 @@ class raft_log {
   uint64_t apply_index_limit() const noexcept;
   bool has_entries_to_apply() const noexcept;
   bool has_more_entries_to_apply(uint64_t applied_to) const noexcept;
-  bool has_config_change_to_apply() noexcept;
+  future<bool> has_config_change_to_apply() noexcept;
   bool has_entries_to_save() noexcept;
   void get_entries_to_save(protocol::log_entry_vector& entries);
   void get_uncommitted_entries(protocol::log_entry_vector& entries);

@@ -452,22 +452,24 @@ bool raft_log::has_more_entries_to_apply(uint64_t applied_to) const noexcept {
   return _committed > applied_to;
 }
 
-bool raft_log::has_config_change_to_apply() noexcept {
+future<bool> raft_log::has_config_change_to_apply() noexcept {
   // TODO(jyc): avoid entry vector
   if (!has_entries_to_apply()) {
-    return false;
+    co_return false;
   }
   log_entry_vector entries;
-  _in_memory.query(
+  // if the node is restarted, config change entry may not stay in memory, we
+  // still need to check on-disk log.
+  co_await query(
       {.low = first_not_applied_index(), .high = apply_index_limit()},
       entries,
       UINT64_MAX);
   for (const auto& ent : entries) {
     if (ent.type == entry_type::config_change) {
-      return true;
+      co_return true;
     }
   }
-  return false;
+  co_return false;
 }
 
 bool raft_log::has_entries_to_save() noexcept {
@@ -483,6 +485,7 @@ void raft_log::get_entries_to_save(log_entry_vector& entries) {
 }
 
 void raft_log::get_uncommitted_entries(log_entry_vector& entries) {
+  // FIXME(jyc): incorrect query approach
   (void)_in_memory.query(
       {.low = _committed + 1,
        .high = _in_memory._marker + _in_memory._entries.size()},
