@@ -642,4 +642,156 @@ RAFTER_TEST_F(raft_etcd_paper_test, leader_sync_follower_log) {
   }
 }
 
+RAFTER_TEST_F(raft_etcd_paper_test, vote_request) {
+  // The vote request includes information about the (pre)candidate’s log and
+  // are sent to all of the other nodes.
+  // Reference: section 5.4.1
+  struct {
+    std::vector<log_id> entries;
+    uint64_t exp_term;
+  } tests[] = {
+      {{{1, 1}}, 2},
+      {{{1, 1}, {2, 2}}, 3},
+  };
+  for (auto& t : tests) {
+    std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 10, 1)};
+    co_await r->handle(
+        {.type = replicate,
+         .term = t.exp_term - 1,
+         .entries = test::util::new_entries(t.entries)});
+    (void)r->read_messages();
+    // pre_campaign
+    for (uint64_t i = 1; i < helper::_election_timeout(r->raft()) * 2; ++i) {
+      co_await helper::tick(r->raft());
+    }
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 2);
+    auto to = std::set<uint64_t>{2, 3};
+    for (auto& msg : msgs) {
+      EXPECT_TRUE(to.contains(msg.to));
+      to.erase(msg.to);
+      EXPECT_EQ(msg.from, 1);
+      EXPECT_EQ(msg.lid, t.entries.back());
+      EXPECT_EQ(msg.type, request_prevote);
+    }
+    EXPECT_TRUE(to.empty());
+    // campaign
+    co_await r->handle(
+        {.type = request_prevote_resp,
+         .from = 2,
+         .to = 1,
+         .term = t.exp_term,
+         .reject = false});
+    msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 2);
+    to = std::set<uint64_t>{2, 3};
+    for (auto& msg : msgs) {
+      EXPECT_TRUE(to.contains(msg.to));
+      to.erase(msg.to);
+      EXPECT_EQ(msg.from, 1);
+      EXPECT_EQ(msg.lid, t.entries.back());
+      EXPECT_EQ(msg.type, request_vote);
+    }
+    EXPECT_TRUE(to.empty());
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, voter) {
+  // The voter denies its vote if its own log is more up-to-date than that of
+  // the candidate.
+  // Reference: section 5.4.1
+  struct {
+    std::vector<log_id> entries;
+    log_id lid;
+    bool exp_reject;
+  } tests[] = {
+      // same log term
+      {{{1, 1}}, {1, 1}, false},
+      {{{1, 1}}, {1, 2}, false},
+      {{{1, 1}, {1, 2}}, {1, 1}, true},
+      // candidate higher log term
+      {{{1, 1}}, {2, 1}, false},
+      {{{1, 1}}, {2, 2}, false},
+      {{{1, 1}, {1, 2}}, {2, 1}, false},
+      // voter higher log term
+      {{{2, 1}}, {1, 1}, true},
+      {{{2, 1}}, {1, 2}, true},
+      {{{2, 1}, {1, 2}}, {1, 1}, true},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries(t.entries));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+    co_await r->handle(
+        {.type = request_vote, .from = 2, .to = 1, .term = 3, .lid = t.lid});
+    auto msgs = r->read_messages();
+    EXPECT_EQ(msgs.size(), 1);
+    EXPECT_EQ(msgs[0].type, request_vote_resp);
+    EXPECT_EQ(msgs[0].reject, t.exp_reject);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, leader_only_commits_log_from_current_term) {
+  // Only log entries from the leader’s current term are committed by counting
+  // replicas.
+  // Reference: section 5.4.2
+  std::vector<log_id> entries{{1, 1}, {2, 2}};
+  struct {
+    uint64_t index;
+    uint64_t exp_commit;
+  } tests[] = {
+      {1, 0},
+      {2, 0},
+      {3, 3},
+  };
+  for (auto& t : tests) {
+    auto logdb = std::make_unique<db>();
+    co_await logdb->append(test::util::new_entries(entries));
+    std::unique_ptr<raft_sm> r{
+        raft_sm::make(1, {1, 2}, 10, 1, std::move(logdb))};
+    hard_state st{.term = 2};
+    helper::set_state(r->raft(), st);
+    helper::become_candidate(r->raft());
+    co_await helper::become_leader(r->raft());
+    (void)r->read_messages();
+    co_await r->handle(naive_proposal(1, 1));
+    co_await r->handle(
+        {.type = replicate_resp,
+         .from = 2,
+         .to = 1,
+         .term = helper::_term(r->raft()),
+         .lid = {0, t.index}});
+    EXPECT_EQ(helper::_log(r->raft()).committed(), t.exp_commit);
+  }
+}
+
+RAFTER_TEST_F(raft_etcd_paper_test, leader_start_replication) {
+  std::unique_ptr<raft_sm> r{raft_sm::make(1, {1, 2, 3}, 10, 1)};
+  helper::become_candidate(r->raft());
+  co_await helper::become_leader(r->raft());
+  co_await commit_noop_entry(r.get(), r->logdb0());
+  auto li = helper::_log(r->raft()).last_index();
+  co_await r->handle(naive_proposal(1, 1, "some data"));
+  ASSERT_EQ(helper::_log(r->raft()).last_index(), li + 1);
+  ASSERT_EQ(helper::_log(r->raft()).committed(), li);
+  log_entry_vector exp_entries;
+  exp_entries.emplace_back(1, li + 1).copy_of("some data");
+  auto msgs = r->read_messages();
+  ASSERT_EQ(msgs.size(), 2);
+  auto to = std::set<uint64_t>{2, 3};
+  for (auto& msg : msgs) {
+    EXPECT_TRUE(to.contains(msg.to));
+    to.erase(msg.to);
+    EXPECT_EQ(msg.from, 1);
+    EXPECT_EQ(msg.lid.term, 1);
+    EXPECT_EQ(msg.lid.index, li);
+    EXPECT_EQ(msg.type, replicate);
+    EXPECT_EQ(msg.term, 1);
+    EXPECT_EQ(msg.commit, li);
+    EXPECT_EQ(msg.entries, exp_entries);
+  }
+  ASSERT_TRUE(to.empty());
+}
+
 }  // namespace
