@@ -23,6 +23,7 @@ class api_server
   void initialize_handlers();
 
  private:
+  friend class echo_handler;
   nodehost& _nodehost;
   socket_address _address;
   listen_options _options;

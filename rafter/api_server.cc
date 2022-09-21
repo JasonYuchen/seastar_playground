@@ -7,32 +7,114 @@
 #include "api/api.hh"
 #include "rafter/logger.hh"
 #include "rafter/nodehost.hh"
+#include "simdjson.h"
 #include "util/seastarx.hh"
 
-namespace {
+namespace rafter {
 
 using namespace seastar;
 using namespace httpd;
 
 class echo_handler : public handler_base {
  public:
-  explicit echo_handler(std::string_view tag) : tag_(tag) {}
+  explicit echo_handler(std::string_view tag, api_server* server)
+    : _tag(tag), _server(server) {}
   future<std::unique_ptr<reply>> handle(
       const sstring& path,
       std::unique_ptr<request> req,
       std::unique_ptr<reply> resp) override {
-    resp->_content = fmt::format("{}, echo:\n{}", tag_, req->content);
+    resp->_content = fmt::format("{}, echo:\n{}", _tag, req->content);
     resp->done("html");
     return make_ready_future<std::unique_ptr<reply>>(std::move(resp));
   }
 
- private:
-  std::string tag_;
+ protected:
+  nodehost& nh() { return _server->_nodehost; }
+
+  std::string _tag;
+  api_server* _server;
 };
 
-}  // namespace
+class list_cluster_handler : public echo_handler {
+ public:
+  using echo_handler::echo_handler;
 
-namespace rafter {
+ private:
+};
+
+class start_cluster_handler : public echo_handler {
+ public:
+  using echo_handler::echo_handler;
+  future<std::unique_ptr<reply>> handle(
+      const sstring& path,
+      std::unique_ptr<request> req,
+      std::unique_ptr<reply> resp) override {
+    simdjson::ondemand::parser parser;
+    auto j = simdjson::padded_string(std::string_view{req->content});
+    simdjson::ondemand::document doc = parser.iterate(j);
+    raft_config cfg;
+    protocol::member_map peers;
+    try {
+      cfg.cluster_id = doc["clusterId"].get_uint64().value();
+      cfg.node_id = doc["nodeId"].get_uint64()..value();
+      cfg.election_rtt = doc["electionRTT"].get_uint64().value();
+      cfg.heartbeat_rtt = doc["heartbeatRTT"].get_uint64().value();
+      cfg.snapshot_interval = doc["snapshotInterval"].get_uint64().value();
+      cfg.compaction_overhead = doc["compactionOverhead"].get_uint64().value();
+      for (auto&& item : doc["peers"].get_array()) {
+        peers.emplace(
+            item["nodeId"].get_uint64().value(),
+            item["address"].get_string().value());
+      }
+      // TODO(jyc): omit other parameters
+    } catch (const simdjson::simdjson_error& ex) {
+      resp->set_status(
+              httpd::reply::status_type::bad_request,
+              fmt::format("Error: {}", ex.what()))
+          .done("html");
+      co_return std::move(resp);
+    }
+    std::stringstream ss;
+    ss << cfg;
+    auto factory = [](protocol::group_id gid) {
+      l.info("creating statemachine on {}", gid);
+      return make_ready_future<std::unique_ptr<statemachine>>(
+          new kv_statemachine(gid));
+    };
+    co_await nh().start_cluster(
+        std::move(cfg),
+        std::move(peers),
+        false,
+        protocol::state_machine_type::regular,
+        factory);
+    resp->set_status(httpd::reply::status_type::ok, ss.str()).done("html");
+
+    co_return std::move(resp);
+  }
+
+ private:
+};
+
+class single_get_handler : public echo_handler {
+ public:
+  using echo_handler::echo_handler;
+
+ private:
+};
+
+class single_put_handler : public echo_handler {
+ public:
+  using echo_handler::echo_handler;
+
+ private:
+};
+
+class single_delete_handler : public echo_handler {
+ public:
+  using echo_handler::echo_handler;
+
+ private:
+};
 
 api_server::api_server(nodehost& nh, socket_address addr, listen_options lo)
   : _nodehost(nh), _address(addr), _options(lo), _server("rafter") {
@@ -52,15 +134,15 @@ future<> api_server::stop() {
 void api_server::initialize_handlers() {
   // TODO(jyc): nodehost apis
   httpd::api_json::listClusters.set(
-      _server._routes, new echo_handler{"listClusters"});
+      _server._routes, new list_cluster_handler{"listClusters", this});
   httpd::api_json::startCluster.set(
-      _server._routes, new echo_handler{"startCluster"});
+      _server._routes, new start_cluster_handler{"startCluster", this});
   httpd::api_json::singleGet.set(
-      _server._routes, new echo_handler{"singleGet"});
+      _server._routes, new single_get_handler{"singleGet", this});
   httpd::api_json::singlePut.set(
-      _server._routes, new echo_handler{"singlePut"});
+      _server._routes, new single_put_handler{"singlePut", this});
   httpd::api_json::singleDelete.set(
-      _server._routes, new echo_handler{"singleDelete"});
+      _server._routes, new single_delete_handler{"singleDelete", this});
 }
 
 }  // namespace rafter

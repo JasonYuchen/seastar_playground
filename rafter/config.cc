@@ -132,14 +132,23 @@ void raft_config::validate() const {
     throw util::configuration_error("witness", "observer cannot be an witness");
   }
 }
+raft_config raft_config::read_from(std::istream& input) {
+  return YAML::Load(input).as<raft_config>();
+}
 
-std::vector<raft_config> raft_config::read_from(std::istream& input) {
-  std::vector<raft_config> cfgs;
-  auto doc = YAML::Load(input);
-  for (auto&& item : doc) {
-    cfgs.emplace_back() = item.as<raft_config>();
-  }
-  return cfgs;
+std::ostream& operator<<(std::ostream& os, const raft_config& cfg) {
+  os << "cluster_id: " << cfg.cluster_id << ", "
+     << "node_id: " << cfg.node_id << ", "
+     << "election_rtt: " << cfg.election_rtt << ", "
+     << "heartbeat_rtt: " << cfg.heartbeat_rtt << ", "
+     << "snapshot_interval: " << cfg.snapshot_interval << ", "
+     << "compaction_overhead: " << cfg.compaction_overhead << ", "
+     << "max_in_memory_log_bytes: " << cfg.max_in_memory_log_bytes << ", "
+     << "check_quorum: " << cfg.check_quorum << ", "
+     << "observer: " << cfg.observer << ", "
+     << "witness: " << cfg.witness << ", "
+     << "quiesce: " << cfg.quiesce;
+  return os;
 }
 
 void config::validate() const {

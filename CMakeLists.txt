@@ -182,7 +182,7 @@ target_link_options(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC Seastar::seastar
-    #    PUBLIC simdjson
+    PUBLIC simdjson
     )
 
 add_executable(${PROJECT_NAME}_main ${SOURCES} rafter/main.cc)

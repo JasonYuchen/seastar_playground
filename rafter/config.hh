@@ -59,8 +59,10 @@ struct raft_config {
   bool quiesce = false;
 
   void validate() const;
-  static std::vector<raft_config> read_from(std::istream& input);
+  static raft_config read_from(std::istream& input);
 };
+
+std::ostream& operator<<(std::ostream& os, const raft_config& cfg);
 
 struct snapshot_option {
   // export_path is the path where the exported snapshot should be stored, it
