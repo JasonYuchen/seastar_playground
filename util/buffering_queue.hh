@@ -41,8 +41,10 @@ class buffering_queue {
       _task_cnt += q().size();
       // switch q()
       _curr_idx++;
-      co_await seastar::futurize_invoke(
-          std::move(func), _q[(_curr_idx - 1) % 2], _open);
+      co_await std::invoke(
+          std::forward<Func>(func),
+          std::ref(_q[(_curr_idx - 1) % 2]),
+          std::ref(_open));
       _q[(_curr_idx - 1) % 2].clear();
     }
     try_release_waiter();
@@ -50,7 +52,7 @@ class buffering_queue {
 
   seastar::future<> close() {
     _open = false;
-    _ex = std::make_exception_ptr(util::closed_error(_name));
+    _ex = std::make_exception_ptr(util::closed_error{_name});
     notify_not_empty();
     try_release_waiter();
     co_return;

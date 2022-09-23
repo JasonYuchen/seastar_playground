@@ -23,9 +23,9 @@ class worker {
     requires requires(Func f, std::vector<T>& data, bool& open) {
                { f(data, open) } -> std::same_as<seastar::future<>>;
              }
-  void start(Func func) {
+  void start(Func&& func) {
     if (_q.is_open() && !_service) {
-      _service = run(std::move(func));
+      _service = run(std::forward<Func>(func));
     }
   }
 
@@ -60,7 +60,7 @@ class worker {
   template <typename Func>
   seastar::future<> run(Func func) {
     while (_q.is_open()) {
-      co_await _q.consume(func);
+      co_await _q.consume(std::ref(func));
     }
   }
 
