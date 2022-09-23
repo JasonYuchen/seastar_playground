@@ -29,7 +29,7 @@ class node {
       transport::registry& registry,
       storage::logdb& logdb,
       std::unique_ptr<rsm::snapshotter> snapshotter,
-      statemachine::factory&& sm_factory,
+      std::unique_ptr<statemachine_factory> factory,
       std::function<future<>(protocol::message)>&& sender,
       std::function<future<>(protocol::group_id, bool)>&& snapshot_notifier);
   protocol::group_id id() const noexcept {

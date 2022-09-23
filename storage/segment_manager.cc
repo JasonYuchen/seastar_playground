@@ -24,8 +24,12 @@ segment_manager::segment_manager(function<unsigned(uint64_t)> func)
   , _gc_worker("segment_gc", config::shard().wal_gc_queue_capacity, l) {}
 
 future<> segment_manager::start() {
+  // TODO(jyc): make it member
+  std::string config_dir =
+      filesystem::path(config::shard().data_dir).append("config");
   _log_dir = filesystem::path(config::shard().data_dir).append("wal");
   _boot_dir = filesystem::path(config::shard().data_dir).append("bootstrap");
+  co_await recursive_touch_directory(config_dir);
   co_await recursive_touch_directory(_log_dir);
   co_await recursive_touch_directory(_boot_dir);
   l.info(
@@ -43,8 +47,9 @@ future<> segment_manager::start() {
   // TODO(jyc): run obsolete segments deleter on shard 0 only, shard X passes
   // the
   //  path to shard 0's deleter
-  _gc_worker.start(
-      [this](auto& t, bool& open) { return this->gc_service(t, open); });
+  _gc_worker.start([this](std::vector<uint64_t>& t, bool& open) {
+    return this->gc_service(t, open);
+  });
 }
 
 future<> segment_manager::stop() {
@@ -104,7 +109,7 @@ future<std::optional<bootstrap>> segment_manager::load_bootstrap(group_id id) {
 }
 
 future<> segment_manager::save(std::span<update_pack> updates) {
-  return with_lock(_mtx, [=]() -> future<> {
+  co_await with_lock(_mtx, [=]() -> future<> {
     // store updates in the coroutine frame
     auto ups = updates;
     bool need_sync = false;
@@ -115,10 +120,10 @@ future<> segment_manager::save(std::span<update_pack> updates) {
     if (need_sync) {
       co_await sync();
     }
-    for (auto& up : ups) {
-      up.done.set_value();
-    }
   });
+  for (auto& up : updates) {
+    up.done.set_value();
+  }
 }
 
 future<size_t> segment_manager::query_entries(

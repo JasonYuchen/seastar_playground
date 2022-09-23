@@ -78,6 +78,9 @@ disk(s)           |                        |                        |
              +-----------+            +-----------+            +-----------+
 
 rafter @ disk0                                     <- root dir of a shard
+  ├── config
+  |    ├── {cluster_id:020d}_{node_id:020d}.yaml   <- raft config
+  |    └── ...
   ├── bootstrap
   │    ├── {cluster_id:020d}_{node_id:020d}        <- bootstrap info of a cluster
   │    ├── {cluster_id:020d}_{node_id:020d}.tmp    <- tmp bootstrap info of a cluster
@@ -102,6 +105,7 @@ rafter @ disk0                                     <- root dir of a shard
        └── ...
 
 rafter @ disk1                                     <- different shards can be stored in different dirs/disks 
+  ├── config
   ├── bootstrap
   ├── wal
   └── snapshot

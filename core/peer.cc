@@ -21,7 +21,11 @@ peer::peer(
     bool initial,
     bool new_node)
   : _raft(c, lr) {
-  l.info("{} created, initial:{}, new_node:{}", initial, new_node);
+  l.info(
+      "{} created, initial:{}, new_node:{}",
+      group_id{c.cluster_id, c.node_id},
+      initial,
+      new_node);
   _prev_state = _raft.state();
   if (initial && new_node) {
     _raft.become_follower(1, group_id::INVALID_NODE, true);
@@ -198,7 +202,7 @@ void peer::bootstrap(const member_map& addresses) {
   for (const auto& [id, address] : addresses) {
     l.info("{}: added bootstrap node {} {}", _raft, id, address);
     auto& e = entries.emplace_back();
-    e.lid = {.term = 1, .index = entries.size() + 1};
+    e.lid = {.term = 1, .index = entries.size()};
     e.type = entry_type::config_change;
     e.payload = write_to_tmpbuf(config_change{
         .type = config_change_type::add_node,

@@ -21,7 +21,7 @@ node::node(
     transport::registry& registry,
     storage::logdb& logdb,
     std::unique_ptr<rsm::snapshotter> snapshotter,
-    statemachine::factory&& sm_factory,
+    std::unique_ptr<statemachine_factory> factory,
     std::function<future<>(protocol::message)>&& sender,
     std::function<future<>(protocol::group_id, bool)>&& snapshot_notifier)
   : _config(std::move(cfg))
@@ -40,7 +40,7 @@ node::node(
   , _quiesce(id(), _config.quiesce, _config.election_rtt * 2)
   , _snapshotter(std::move(snapshotter))
   , _sm(std::make_unique<rsm::statemachine_manager>(
-        *this, *_snapshotter, std::move(sm_factory))) {}
+        *this, *_snapshotter, std::move(factory))) {}
 
 future<> node::start(const member_map& peers, bool initial) {
   co_await _sm->start();
@@ -49,6 +49,7 @@ future<> node::start(const member_map& peers, bool initial) {
       _config, _log_reader, peers, initial, new_node);
   _stopped = false;
   _new_node = new_node;
+  _initialized = true;
 }
 
 future<> node::stop() {
@@ -56,6 +57,7 @@ future<> node::stop() {
     co_return;
   }
   _stopped = true;
+  _initialized = false;
   // request_removal();
   co_await _received_messages.close();
   _pending_proposal.close();
@@ -348,12 +350,14 @@ future<bool> node::replay_log() {
   if (snapshot && !snapshot->empty()) {
     _log_reader.apply_snapshot(snapshot);
   }
-  auto state = co_await _logdb.query_raft_state(id(), snapshot->log_id.index);
+  auto state = co_await _logdb.query_raft_state(
+      id(), snapshot ? snapshot->log_id.index : 0);
   if (state.empty()) {
     co_return true;
   }
   l.info(
       "{}: {}, first index:{}, length:{}",
+      id(),
       state.hard_state,
       state.first_index,
       state.entry_count);

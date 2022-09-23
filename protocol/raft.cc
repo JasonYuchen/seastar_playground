@@ -382,7 +382,7 @@ void update::set_fast_apply() noexcept {
   if (snapshot && !snapshot->empty()) {
     fast_apply = false;
   }
-  if (fast_apply) {
+  if (fast_apply && !committed_entries.empty() && !entries_to_save.empty()) {
     auto last_apply = committed_entries.back().lid.index;
     auto last_save = entries_to_save.back().lid.index;
     auto first_save = entries_to_save.front().lid.index;
