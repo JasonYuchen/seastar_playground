@@ -39,7 +39,7 @@ class nodehost
       protocol::member_map initial_members,
       bool join,
       protocol::state_machine_type type,
-      statemachine::factory&& factory);
+      std::unique_ptr<statemachine_factory> factory);
 
   future<> stop_cluster(uint64_t cluster_id);
 

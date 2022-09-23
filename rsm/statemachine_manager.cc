@@ -18,7 +18,9 @@ namespace rafter::rsm {
 using namespace protocol;
 
 statemachine_manager::statemachine_manager(
-    node& node, snapshotter& snapshotter, statemachine::factory factory)
+    node& node,
+    snapshotter& snapshotter,
+    std::unique_ptr<statemachine_factory> factory)
   : _node(node)
   , _snapshotter(snapshotter)
   , _factory(std::move(factory))
@@ -31,10 +33,12 @@ statemachine_manager::statemachine_manager(
   , _snapshot_index(log_id::INVALID_INDEX) {}
 
 future<> statemachine_manager::start() {
-  auto sm = co_await _factory(_node.id());
+  l.info("{} creating statemachine", _node.id());
+  auto sm = co_await _factory->make(_node.id());
   _managed = make_unique<managed>(_stopped, _node.is_witness(), std::move(sm));
-  _applier.start(
-      [this](auto& tasks, bool& open) { return handle(tasks, open); });
+  _applier.start([this](std::vector<protocol::rsm_task>& tasks, bool& open) {
+    return handle(tasks, open);
+  });
   _stopped = false;
 }
 

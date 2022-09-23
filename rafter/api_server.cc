@@ -56,7 +56,7 @@ class start_cluster_handler : public echo_handler {
     protocol::member_map peers;
     try {
       cfg.cluster_id = doc["clusterId"].get_uint64().value();
-      cfg.node_id = doc["nodeId"].get_uint64()..value();
+      cfg.node_id = doc["nodeId"].get_uint64().value();
       cfg.election_rtt = doc["electionRTT"].get_uint64().value();
       cfg.heartbeat_rtt = doc["heartbeatRTT"].get_uint64().value();
       cfg.snapshot_interval = doc["snapshotInterval"].get_uint64().value();
@@ -76,17 +76,12 @@ class start_cluster_handler : public echo_handler {
     }
     std::stringstream ss;
     ss << cfg;
-    auto factory = [](protocol::group_id gid) {
-      l.info("creating statemachine on {}", gid);
-      return make_ready_future<std::unique_ptr<statemachine>>(
-          new kv_statemachine(gid));
-    };
     co_await nh().start_cluster(
         std::move(cfg),
         std::move(peers),
         false,
         protocol::state_machine_type::regular,
-        factory);
+        std::make_unique<kv_statemachine_factory>());
     resp->set_status(httpd::reply::status_type::ok, ss.str()).done("html");
 
     co_return std::move(resp);

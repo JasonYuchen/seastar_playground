@@ -30,7 +30,9 @@ class statemachine_manager {
   using rsm_result = protocol::rsm_result;
 
   statemachine_manager(
-      node& node, snapshotter& snapshotter, statemachine::factory factory);
+      node& node,
+      snapshotter& snapshotter,
+      std::unique_ptr<statemachine_factory> factory);
   future<> start();
   future<> stop();
   future<> push(protocol::rsm_task task);
@@ -92,7 +94,7 @@ class statemachine_manager {
   snapshotter& _snapshotter;
   bool _stopped = true;
   shared_mutex _mtx;
-  statemachine::factory _factory;
+  std::unique_ptr<statemachine_factory> _factory;
   std::unique_ptr<managed> _managed;
   std::unique_ptr<session_manager> _sessions;
   util::worker<protocol::rsm_task> _applier;

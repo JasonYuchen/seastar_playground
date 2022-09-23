@@ -12,6 +12,7 @@
 #include "rsm/snapshotter.hh"
 #include "server/environment.hh"
 #include "util/error.hh"
+#include "util/file.hh"
 
 namespace rafter {
 
@@ -35,31 +36,33 @@ nodehost::nodehost(
 
 future<> nodehost::start() {
   l.info("nodehost:{} starting...", _id);
-  _persister.start([&](std::vector<storage::update_pack>& packs, bool stopped) {
-    return _logdb.save(packs);
-  });
+  _persister.start(
+      [&](std::vector<storage::update_pack>& packs, bool stopped) -> future<> {
+        co_await _logdb.save(packs);
+      });
   // FIXME(jyc): this starting procedure is just for demo
   auto groups = co_await _logdb.list_nodes();
   for (auto gid : groups) {
     l.info("restarting {}", gid);
+    // TODO(jyc): optimize
+    std::stringstream is;
+    auto dir = std::filesystem::path(_config.data_dir).append("config");
+    auto name = fmt::format("{:020d}_{:020d}.yaml", gid.cluster, gid.node);
+    if (!co_await rafter::util::exist_file(dir.string(), name)) {
+      l.warn("{} config file {}/{} not found", gid, dir.string(), name);
+      continue;
+    }
+    auto content = co_await rafter::util::read_file(dir.string(), name);
+    is << std::string_view{content.get(), content.size()};
+    auto cfg = raft_config::read_from(is);
+    l.info("{}", cfg);
     co_await start_cluster(
-        /* TODO(jyc): save the raft config somewhere ? say bootstrap, hard code
-         *  for now */
-        raft_config{
-            .cluster_id = gid.cluster,
-            .node_id = gid.node,
-            .election_rtt = 50,
-            .heartbeat_rtt = 5,
-            .snapshot_interval = 10,
-        },
+        cfg,
         {},
         false,
         state_machine_type::regular,
         /* TODO(jyc): different statemachine */
-        [](group_id gid) {
-          return make_ready_future<std::unique_ptr<statemachine>>(
-              new kv_statemachine(gid));
-        });
+        std::make_unique<kv_statemachine_factory>());
   }
   _ticker.set_callback([this] {
     if (_stopped) [[unlikely]] {
@@ -100,7 +103,7 @@ future<> nodehost::start_cluster(
     member_map initial_members,
     bool join,
     state_machine_type type,
-    statemachine::factory&& factory) {
+    std::unique_ptr<statemachine_factory> factory) {
   if (_stopped) [[unlikely]] {
     co_await coroutine::return_exception(util::closed_error());
   }
@@ -110,7 +113,7 @@ future<> nodehost::start_cluster(
     co_return co_await container().invoke_on(
         shard,
         &nodehost::start_cluster,
-        std::move(cfg),
+        cfg,
         std::move(initial_members),
         join,
         type,
@@ -144,7 +147,7 @@ future<> nodehost::start_cluster(
     return s->handle_snapshot_status(gid, failed);
   };
   auto n = make_lw_shared<node>(
-      std::move(cfg),
+      cfg,
       container().local(),
       _registry,
       _logdb,
@@ -154,11 +157,16 @@ future<> nodehost::start_cluster(
       std::move(snapshot_notifier));
   co_await n->start(peers, im);
   auto r = make_lw_shared<ready>();
+  _clusters[gid.cluster] = r;
   r->n = std::move(n);
   r->main = node_main(r->n);
-  _clusters[gid.cluster] = std::move(r);
   // TODO(jyc): cluster change ready
   node_ready(gid.cluster);
+  auto dir = std::filesystem::path(_config.data_dir).append("config");
+  auto name = fmt::format("{:020d}_{:020d}.yaml", gid.cluster, gid.node);
+  std::stringstream os;
+  cfg.write_to(os);
+  co_await rafter::util::create_file(dir.string(), name, os.str());
 }
 
 future<> nodehost::stop_cluster(uint64_t cluster_id) {

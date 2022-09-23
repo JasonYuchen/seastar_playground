@@ -38,8 +38,6 @@ class statemachine {
   };
 
   using result = protocol::rsm_result;
-  using factory =
-      std::function<future<std::unique_ptr<statemachine>>(protocol::group_id)>;
 
   virtual ~statemachine() = default;
 
@@ -142,6 +140,13 @@ class statemachine {
   virtual protocol::state_machine_type type() const = 0;
 };
 
+class statemachine_factory {
+ public:
+  virtual future<std::unique_ptr<statemachine>> make(
+      protocol::group_id gid) = 0;
+  virtual ~statemachine_factory() = default;
+};
+
 class kv_statemachine final : public statemachine {
  public:
   explicit kv_statemachine(protocol::group_id gid) : _gid(gid) {}
@@ -193,6 +198,14 @@ class kv_statemachine final : public statemachine {
  private:
   protocol::group_id _gid;
   std::unordered_map<std::string, std::string> _data;
+};
+
+class kv_statemachine_factory : public statemachine_factory {
+ public:
+  future<std::unique_ptr<statemachine>> make(protocol::group_id gid) override {
+    return make_ready_future<std::unique_ptr<statemachine>>(
+        new kv_statemachine(gid));
+  }
 };
 
 /// @}
