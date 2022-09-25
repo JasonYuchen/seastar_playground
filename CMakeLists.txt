@@ -100,6 +100,7 @@ set(SOURCES
     rafter/nodehost.hh
     rafter/request.cc
     rafter/request.hh
+    rafter/statemachine.cc
     rafter/statemachine.hh
 
     rsm/files.cc
