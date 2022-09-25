@@ -78,6 +78,21 @@ struct convert<rafter::config> {
 
 template <>
 struct convert<rafter::raft_config> {
+  static Node encode(const rafter::raft_config& cfg) {
+    Node node;
+    node["cluster_id"] = cfg.cluster_id;
+    node["node_id"] = cfg.node_id;
+    node["election_rtt"] = cfg.election_rtt;
+    node["heartbeat_rtt"] = cfg.heartbeat_rtt;
+    node["snapshot_interval"] = cfg.snapshot_interval;
+    node["compaction_overhead"] = cfg.compaction_overhead;
+    node["max_in_memory_log_bytes"] = cfg.max_in_memory_log_bytes;
+    node["check_quorum"] = cfg.check_quorum;
+    node["observer"] = cfg.observer;
+    node["witness"] = cfg.witness;
+    node["quiesce"] = cfg.quiesce;
+    return node;
+  }
   static bool decode(const Node& node, rafter::raft_config& cfg) {
     if (node["cluster_id"]) {
       cfg.cluster_id = node["cluster_id"].as<uint64_t>();
@@ -100,6 +115,18 @@ struct convert<rafter::raft_config> {
     if (node["max_in_memory_log_bytes"]) {
       cfg.max_in_memory_log_bytes =
           node["max_in_memory_log_bytes"].as<uint64_t>();
+    }
+    if (node["check_quorum"]) {
+      cfg.check_quorum = node["check_quorum"].as<bool>();
+    }
+    if (node["observer"]) {
+      cfg.observer = node["observer"].as<bool>();
+    }
+    if (node["witness"]) {
+      cfg.witness = node["witness"].as<bool>();
+    }
+    if (node["quiesce"]) {
+      cfg.quiesce = node["quiesce"].as<bool>();
     }
     return true;
   }
@@ -132,8 +159,15 @@ void raft_config::validate() const {
     throw util::configuration_error("witness", "observer cannot be an witness");
   }
 }
+
 raft_config raft_config::read_from(std::istream& input) {
   return YAML::Load(input).as<raft_config>();
+}
+
+void raft_config::write_to(std::ostream& output) {
+  YAML::Node node;
+  node = *this;
+  output << YAML::Dump(node);
 }
 
 std::ostream& operator<<(std::ostream& os, const raft_config& cfg) {

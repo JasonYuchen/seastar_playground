@@ -34,6 +34,10 @@ static int rafter_main(int argc, char** argv, char** env) {
       bpo::value<uint16_t>()->default_value(30615),
       "rafter HTTP server port");
   app.add_options()(
+      "trace",
+      bpo::value<bool>()->default_value(false),
+      "enable trace log in all modules");
+  app.add_options()(
       "config_file",
       bpo::value<sstring>()->default_value(""),
       "rafter nodehost config file path");
@@ -46,9 +50,16 @@ static int rafter_main(int argc, char** argv, char** env) {
   static sharded<rafter::api_server> server;
 
   return app.run(argc, argv, [&]() -> future<int> {
-    rafter::l.info("rafter initializing...");
-    auto&& opts = app.configuration();
     rafter::util::stop_signal stop_signal;
+    auto&& opts = app.configuration();
+    auto&& trace = opts["trace"].as<bool>();
+    if (trace) {
+      std::vector<std::string> modules{
+          "core", "rafter", "rsm", "server", "storage", "transport"};
+      for (const auto& module : modules) {
+        global_logger_registry().set_logger_level(module, log_level::trace);
+      }
+    }
     // TODO(jyc): construct nodehost config via yaml
     rafter::config config;
     auto&& config_file = opts["config_file"].as<sstring>();
@@ -77,6 +88,7 @@ static int rafter_main(int argc, char** argv, char** env) {
     auto partitioner = environment::get_partition_func();
     auto snapshot_dir = environment::get_snapshot_dir_func(config.data_dir);
 
+    rafter::l.info("rafter initializing...");
     co_await logdb.start(partitioner);
     co_await registry.start();
     co_await rpc.start(std::ref(registry), std::move(snapshot_dir));

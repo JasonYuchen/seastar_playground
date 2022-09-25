@@ -168,8 +168,8 @@ future<> statemachine_manager::handle_update(
       co_return co_await _node.apply_entry(
           entry, std::move(response.value()), false, false, last);
     }
-    auto result = co_await _managed->update(
-        entry.lid.index, {entry.payload.get(), entry.payload.size()});
+    auto payload = std::string_view{entry.payload.get(), entry.payload.size()};
+    auto result = co_await _managed->update(entry.lid.index, payload);
     s->response(entry.series_id, result);
     co_await _node.apply_entry(entry, std::move(result), false, false, last);
   }

@@ -60,6 +60,7 @@ struct raft_config {
 
   void validate() const;
   static raft_config read_from(std::istream& input);
+  void write_to(std::ostream& output);
 };
 
 std::ostream& operator<<(std::ostream& os, const raft_config& cfg);

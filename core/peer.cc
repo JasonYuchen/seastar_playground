@@ -46,6 +46,7 @@ future<> peer::quiesced_tick() {
 }
 
 future<> peer::request_leader_transfer(uint64_t target) {
+  l.trace("peer::request_leader_transfer: target:{}", target);
   return _raft.handle(message{
       .type = message_type::leader_transfer,
       .to = _raft._gid.node,
@@ -53,10 +54,12 @@ future<> peer::request_leader_transfer(uint64_t target) {
 }
 
 future<> peer::read_index(hint ctx) {
+  l.trace("peer::read_index: {}", ctx);
   return _raft.handle(message{.type = message_type::read_index, .hint = ctx});
 }
 
 future<> peer::propose_entries(log_entry_vector entries) {
+  l.trace("peer::propose_entries: size:{}", entries.size());
   return _raft.handle(message{
       .type = message_type::propose,
       .from = _raft._gid.node,
@@ -65,6 +68,7 @@ future<> peer::propose_entries(log_entry_vector entries) {
 
 future<> peer::propose_config_change(
     const config_change& change, uint64_t key) {
+  l.trace("peer::propose_config_change: key:{}", key);
   log_entry_vector e;
   e.emplace_back();
   e.back().type = entry_type::config_change;
@@ -75,6 +79,7 @@ future<> peer::propose_config_change(
 }
 
 future<> peer::apply_config_change(const config_change& change) {
+  l.trace("peer::apply_config_change: node:{}", change.node);
   if (change.node == group_id::INVALID_NODE) {
     _raft._pending_config_change = false;
     return make_ready_future<>();
@@ -200,7 +205,7 @@ void peer::bootstrap(const member_map& addresses) {
   log_entry_vector entries;
   entries.reserve(addresses.size());
   for (const auto& [id, address] : addresses) {
-    l.info("{}: added bootstrap node {} {}", _raft, id, address);
+    l.trace("{}: added bootstrap node {} {}", _raft, id, address);
     auto& e = entries.emplace_back();
     e.lid = {.term = 1, .index = entries.size()};
     e.type = entry_type::config_change;

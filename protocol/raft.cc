@@ -203,6 +203,7 @@ log_entry log_entry::clone() {
   log_entry e;
   e.lid = lid;
   e.type = type;
+  e.key = key;
   e.client_id = client_id;
   e.series_id = series_id;
   e.responded_to = responded_to;
@@ -214,6 +215,7 @@ log_entry log_entry::share() {
   log_entry e;
   e.lid = lid;
   e.type = type;
+  e.key = key;
   e.client_id = client_id;
   e.series_id = series_id;
   e.responded_to = responded_to;
