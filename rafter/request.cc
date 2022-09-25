@@ -5,6 +5,7 @@
 #include "request.hh"
 
 #include "rafter/config.hh"
+#include "rafter/logger.hh"
 #include "util/error.hh"
 
 namespace rafter {
@@ -58,12 +59,12 @@ future<request_result> pending_proposal::propose(
   }
   auto& e = _proposal_queue.emplace_back();
   e.type = cmd.empty() ? entry_type::application : entry_type::encoded;
-  e.key = _next_key++;
+  e.key = ++_next_key;
   e.client_id = session.client_id;
   e.series_id = session.series_id;
   e.responded_to = session.responded_to;
   // TODO(jyc): add compression support
-  e.payload = {cmd.data(), cmd.size()};
+  e.copy_of(cmd);
   auto deadline = _clock.tick + timeout;
   auto [it, inserted] = _pending.emplace(e.key, request_state{deadline});
   assert(inserted);
@@ -148,7 +149,6 @@ future<request_result> pending_read_index::read(uint64_t timeout) {
   }
   auto deadline = _clock.tick + timeout;
   auto& st = _read_queue.emplace_back(request_state{deadline});
-  st->deadline = 0;
   return st->result.get_future();
 }
 
@@ -253,13 +253,13 @@ void pending_read_index::apply(uint64_t applied_index) {
   auto now = _clock.tick;
   for (auto it = _pending.begin(); it != _pending.end();) {
     if (it->second.index != log_id::INVALID_INDEX &&
-        it->second.index < applied_index) {
+        it->second.index <= applied_index) {
       for (auto& st : it->second.requests) {
         if (st.has_value()) {
-          if (st->deadline > now) {
-            request_result::complete(st->result, {});
-          } else {
+          if (st->deadline < now) {
             request_result::timeout(st->result);
+          } else {
+            request_result::complete(st->result, {});
           }
           st.reset();
         }

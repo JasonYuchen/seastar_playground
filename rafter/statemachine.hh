@@ -149,55 +149,41 @@ class statemachine_factory {
 
 class kv_statemachine final : public statemachine {
  public:
-  explicit kv_statemachine(protocol::group_id gid) : _gid(gid) {}
-
-  future<result> open() override {
-    // TODO(jyc): protocol
-    return make_ready_future<result>();
-  }
-  // TODO(jyc): support batch lookup and batch update
-  future<result> update(uint64_t index, std::string_view cmd) override {
-    // TODO(jyc): protocol
-    return make_ready_future<result>();
-  }
-  future<result> lookup(std::string_view cmd) override {
-    // TODO(jyc): protocol
-    return make_ready_future<result>();
-  }
-  future<> sync() override {
-    // TODO(jyc): protocol
-    return make_ready_future<>();
-  }
-  future<std::any> prepare() override {
-    // TODO(jyc): protocol
-    return make_ready_future<std::any>();
-  }
+  explicit kv_statemachine(protocol::group_id gid);
+  future<result> open() override;
+  future<result> update(uint64_t index, std::string_view cmd) override;
+  future<result> lookup(std::string_view cmd) override;
+  future<> sync() override;
+  future<std::any> prepare() override;
   future<snapshot_status> save_snapshot(
       std::any ctx,
       output_stream<char>& writer,
       rsm::files& fs,
-      bool& abort) override {
-    // TODO(jyc): protocol
-    return make_ready_future<snapshot_status>(snapshot_status::done);
-  }
+      bool& abort) override;
   future<snapshot_status> recover_from_snapshot(
       input_stream<char>& reader,
       const protocol::snapshot_files& fs,
-      bool& abort) override {
-    // TODO(jyc): protocol
-    return make_ready_future<snapshot_status>(snapshot_status::done);
-  }
-  future<> close() override {
-    // TODO(jyc): protocol
-    return make_ready_future<>();
-  }
-  protocol::state_machine_type type() const override {
-    return protocol::state_machine_type::regular;
-  }
+      bool& abort) override;
+  future<> close() override;
+  protocol::state_machine_type type() const override;
 
  private:
+  struct string_hash {
+    using is_transparent = void;
+    [[nodiscard]] size_t operator()(const char* key) const {
+      return std::hash<std::string_view>{}(key);
+    }
+    [[nodiscard]] size_t operator()(std::string_view key) const {
+      return std::hash<std::string_view>{}(key);
+    }
+    [[nodiscard]] size_t operator()(const std::string& key) const {
+      return std::hash<std::string>{}(key);
+    }
+  };
+
   protocol::group_id _gid;
-  std::unordered_map<std::string, std::string> _data;
+  std::unordered_map<std::string, std::string, string_hash, std::equal_to<>>
+      _data;
 };
 
 class kv_statemachine_factory : public statemachine_factory {
