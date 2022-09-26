@@ -83,7 +83,6 @@ class start_cluster_handler : public echo_handler {
         protocol::state_machine_type::regular,
         std::make_unique<kv_statemachine_factory>());
     resp->set_status(httpd::reply::status_type::ok, ss.str()).done("html");
-
     co_return std::move(resp);
   }
 
@@ -93,6 +92,28 @@ class start_cluster_handler : public echo_handler {
 class single_get_handler : public echo_handler {
  public:
   using echo_handler::echo_handler;
+  future<std::unique_ptr<reply>> handle(
+      const sstring& path,
+      std::unique_ptr<request> req,
+      std::unique_ptr<reply> resp) override {
+    const auto& cid = req->param.at("clusterId");
+    uint64_t cluster_id = 0;
+    auto ec = std::from_chars(cid.begin() + 1, cid.end(), cluster_id);
+    if (ec.ec != std::errc{}) {
+      resp->set_status(
+              httpd::reply::status_type::bad_request,
+              fmt::format("invalid cluster id: {}", cid))
+          .done("html");
+    } else {
+      auto result = co_await nh().linearizable_read(
+          cluster_id, req->query_parameters.at("key"));
+      resp->set_status(
+              httpd::reply::status_type::ok,
+              fmt::format("{}:{}", result.code, result.result.data))
+          .done("html");
+    }
+    co_return std::move(resp);
+  }
 
  private:
 };
@@ -100,6 +121,32 @@ class single_get_handler : public echo_handler {
 class single_put_handler : public echo_handler {
  public:
   using echo_handler::echo_handler;
+  future<std::unique_ptr<reply>> handle(
+      const sstring& path,
+      std::unique_ptr<request> req,
+      std::unique_ptr<reply> resp) override {
+    const auto& cid = req->param.at("clusterId");
+    uint64_t cluster_id = 0;
+    auto ec = std::from_chars(cid.begin() + 1, cid.end(), cluster_id);
+    if (ec.ec != std::errc{}) {
+      resp->set_status(
+              httpd::reply::status_type::bad_request,
+              fmt::format("invalid cluster id: {}", cid))
+          .done("html");
+    } else {
+      auto session = co_await nh().get_noop_session(cluster_id);
+      auto cmd = fmt::format(
+          "{}={}",
+          req->query_parameters.at("key"),
+          req->query_parameters.at("value"));
+      auto result = co_await nh().propose(session, cmd);
+      resp->set_status(
+              httpd::reply::status_type::ok,
+              fmt::format("{}:{}", result.code, result.result.data))
+          .done("html");
+    }
+    co_return std::move(resp);
+  }
 
  private:
 };

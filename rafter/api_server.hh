@@ -28,6 +28,7 @@ class api_server
   socket_address _address;
   listen_options _options;
   http_server _server;
+  // TODO(jyc): add binary protocol server
 };
 
 }  // namespace rafter

@@ -35,10 +35,10 @@ nodehost::nodehost(
   , _partitioner(server::environment::get_partition_func()) {}
 
 future<> nodehost::start() {
-  l.info("nodehost:{} starting...", _id);
+  l.info("nodehost starting...");
   _persister.start(
-      [&](std::vector<storage::update_pack>& packs, bool stopped) -> future<> {
-        co_await _logdb.save(packs);
+      [this](std::vector<storage::update_pack>& packs, bool& stopped) {
+        return _logdb.save(packs);
       });
   // FIXME(jyc): this starting procedure is just for demo
   auto groups = co_await _logdb.list_nodes();
@@ -127,6 +127,7 @@ future<> nodehost::start_cluster(
     co_await coroutine::return_exception(
         util::invalid_argument("join", "initial_members not empty"));
   }
+  l.trace("nodehost::start_cluster: {}", group_id{cfg.cluster_id, cfg.node_id});
   auto [peers, im] =
       co_await bootstrap_cluster(cfg, initial_members, join, type);
   for (const auto& [id, address] : peers) {
@@ -174,6 +175,7 @@ future<> nodehost::stop_cluster(uint64_t cluster_id) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::stop_cluster, cluster_id);
   }
+  l.trace("nodehost::stop_cluster: cluster_id:{}", cluster_id);
   return stop_node({cluster_id, group_id::INVALID_NODE});
 }
 
@@ -185,6 +187,7 @@ future<membership> nodehost::get_membership(uint64_t cluster_id) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::get_membership, cluster_id);
   }
+  l.trace("nodehost::get_membership: cluster_id:{}", cluster_id);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<membership>(
@@ -204,6 +207,7 @@ future<uint64_t> nodehost::get_leader(uint64_t cluster_id) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::get_leader, cluster_id);
   }
+  l.trace("nodehost::get_leader: cluster_id:{}", cluster_id);
   // TODO(jyc): add raft event
   return make_exception_future<uint64_t>(util::panic("not implemented"));
 }
@@ -217,6 +221,7 @@ future<session> nodehost::get_session(uint64_t cluster_id) {
     co_return co_await container().invoke_on(
         shard, &nodehost::get_session, cluster_id);
   }
+  l.trace("nodehost::get_session: cluster_id:{}", cluster_id);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     co_await coroutine::return_exception(
@@ -241,6 +246,7 @@ future<session> nodehost::get_noop_session(uint64_t cluster_id) {
     return container().invoke_on(
         shard, &nodehost::get_noop_session, cluster_id);
   }
+  l.trace("nodehost::get_noop_session: cluster_id:{}", cluster_id);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<session>(
@@ -258,6 +264,7 @@ future<> nodehost::close_session(session& s) {
     co_return co_await container().invoke_on(
         shard, &nodehost::close_session, std::ref(s));
   }
+  l.trace("nodehost::close_session: cluster_id:{}", s.cluster_id);
   auto it = _clusters.find(s.cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     co_await coroutine::return_exception(
@@ -281,12 +288,13 @@ future<request_result> nodehost::propose(session& s, std::string_view cmd) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::propose, std::ref(s), cmd);
   }
+  l.trace("nodehost::propose: cluster_id:{} cmd:{}", s.cluster_id, cmd);
   auto it = _clusters.find(s.cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto r = it->second->n->propose(s, cmd, UINT64_MAX);
+  auto r = it->second->n->propose(s, cmd, 86400000);
   node_ready(s.cluster_id);
   return r;
 }
@@ -300,6 +308,7 @@ future<request_result> nodehost::propose_session(session& s) {
     return container().invoke_on(
         shard, &nodehost::propose_session, std::ref(s));
   }
+  l.trace("nodehost::propose_session: cluster_id:{}", s.cluster_id);
   auto it = _clusters.find(s.cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -322,12 +331,13 @@ future<request_result> nodehost::read_index(uint64_t cluster_id) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::read_index, cluster_id);
   }
+  l.trace("nodehost::read_index: cluster_id:{}", cluster_id);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
         util::invalid_argument("cluster_id", "not_found"));
   }
-  auto ret = it->second->n->read(UINT64_MAX);
+  auto ret = it->second->n->read(86400000);
   node_ready(cluster_id);
   return ret;
 }
@@ -342,6 +352,8 @@ future<request_result> nodehost::linearizable_read(
     return container().invoke_on(
         shard, &nodehost::linearizable_read, cluster_id, query);
   }
+  l.trace(
+      "nodehost::linearizable_read: cluster_id:{} query:{}", cluster_id, query);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -368,6 +380,7 @@ future<request_result> nodehost::stale_read(
     return container().invoke_on(
         shard, &nodehost::stale_read, cluster_id, query);
   }
+  l.trace("nodehost::stale_read: cluster_id:{} query:{}", cluster_id, query);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -393,6 +406,7 @@ future<request_result> nodehost::request_snapshot(
     return container().invoke_on(
         shard, &nodehost::request_snapshot, cluster_id, std::cref(option));
   }
+  l.trace("nodehost::reqeust_snapshot: cluster_id:{}", cluster_id);
   auto it = _clusters.find(cluster_id);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -408,6 +422,7 @@ future<request_result> nodehost::request_compaction(group_id gid) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::request_compaction, gid);
   }
+  l.trace("nodehost::request_compaction: {}", gid);
   return make_exception_future<request_result>(util::panic("not implemented"));
 }
 
@@ -421,6 +436,7 @@ future<request_result> nodehost::request_add_node(
     return container().invoke_on(
         shard, &nodehost::request_add_node, gid, target, config_change_index);
   }
+  l.trace("nodehost::request_add_node: {}", gid);
   auto it = _clusters.find(gid.cluster);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -451,6 +467,7 @@ future<request_result> nodehost::request_add_observer(
         target,
         config_change_index);
   }
+  l.trace("nodehost::request_add_observer: {}", gid);
   auto it = _clusters.find(gid.cluster);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -481,6 +498,7 @@ future<request_result> nodehost::request_add_witness(
         target,
         config_change_index);
   }
+  l.trace("nodehost::request_add_witness: {}", gid);
   auto it = _clusters.find(gid.cluster);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -507,6 +525,7 @@ future<request_result> nodehost::request_delete_node(
     return container().invoke_on(
         shard, &nodehost::request_delete_node, gid, config_change_index);
   }
+  l.trace("nodehost::request_delete_node: {}", gid);
   auto it = _clusters.find(gid.cluster);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -531,6 +550,7 @@ future<request_result> nodehost::request_leader_transfer(group_id gid) {
     return container().invoke_on(
         shard, &nodehost::request_leader_transfer, gid);
   }
+  l.trace("nodehost::request_leader_transfer: {}", gid);
   auto it = _clusters.find(gid.cluster);
   if (it == _clusters.end()) [[unlikely]] {
     return make_exception_future<request_result>(
@@ -547,6 +567,7 @@ future<request_result> nodehost::request_remove_data(group_id gid) {
   if (shard != this_shard_id()) {
     return container().invoke_on(shard, &nodehost::request_remove_data, gid);
   }
+  l.trace("nodehost::request_remove_data: {}", gid);
   return make_exception_future<request_result>(util::panic("not implemented"));
 }
 
@@ -625,10 +646,13 @@ future<> nodehost::node_main(lw_shared_ptr<node> n) {
     co_await n->process_ready_to_read(*up);
     co_await n->process_dropped_entries(*up);
     co_await n->process_dropped_read_indexes(*up);
-    storage::update_pack pack{*up};
-    auto fut = pack.done.get_future();
-    co_await _persister.push_eventually(std::move(pack));
-    co_await fut.discard_result();
+    // TODO(jyc): add `bool update::need_persistent() const;`
+    if (up->snapshot || !up->entries_to_save.empty() || !up->state.empty()) {
+      storage::update_pack pack{*up};
+      auto fut = pack.done.get_future();
+      co_await _persister.push_eventually(std::move(pack));
+      co_await fut.discard_result();
+    }
     // TODO(jyc): co_await engine.onSnapshotSaved
     if (!up->fast_apply) {
       co_await n->process_snapshot(*up);
