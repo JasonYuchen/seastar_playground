@@ -22,25 +22,89 @@ rafter is deeply inspired by
 ## Build & Setup
 
 - prerequisite
-  - Compiler with C++20 support, tested with clang-12
+  - Compiler with C++20 support, tested with clang-15
   - Seastar, taken care of by submodule (the installation of Seastar is not trivial, please refer to
     this [post](https://github.com/JasonYuchen/notes/blob/master/seastar/Setup.md))
   - GoogleTest, taken care of by rafter's cmake configuration
+  - Simdjson, taken care of by rafter's cmake configuration
 
-```shell
-# ubuntu 22.04
-git submodule update --init --recursive
-sudo ./install-dependencies.sh clang++-12
-mkdir build
-cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-12 -B build -S .
-ninja -C build -j $(nproc)
-
-# run tests
-./build/test/rafter_test
-```
+  ```shell
+  # ubuntu 22.04
+  git submodule update --init --recursive
+  sudo ./install-dependencies.sh clang++-15
+  mkdir build
+  cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-15 -B build -S .
+  ninja -C build -j $(nproc)
+  
+  # run tests
+  ./build/test/rafter_test
+  ```
 
 *it is recommended to use [ninja](https://github.com/ninja-build/ninja), [mold](https://github.com/rui314/mold) (
 and [ccache](https://github.com/ccache/ccache) if you want to play with the source code) to accelerate build.*
+
+- single node quorum demo
+
+  ```shell
+  > ./build/rafter_main --smp 2 --memory 1G --trace true --config_file rafter-template.yaml &&
+  
+  # initiating a new cluster with single node quorum
+  > curl --location --request POST 'http://127.0.0.1:30615/clusters' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+      "clusterId": 1,
+      "nodeId": 1,
+      "electionRTT": 50,
+      "heartbeatRTT": 5,
+      "snapshotInterval": 0,
+      "compactionOverhead": 0,
+      "peers": [
+          {"nodeId" : 1, "address": "127.0.0.1:30615"}
+      ]
+  }'
+  
+  cluster_id: 1, node_id: 1, election_rtt: 50, heartbeat_rtt: 5, snapshot_interval: 0, compaction_overhead: 0, max_in_memory_log_bytes: 18446744073709551615, check_quorum: 0, observer: 0, witness: 0, quiesce: 0
+  
+  # propose a key-value pair to default kv statemachine
+  > curl --location --request PUT 'http://127.0.0.1:30615/cluster/1?key=hello&value=world'
+  
+  completed:OK
+  
+  # query a key
+  > curl --location --request GET 'http://127.0.0.1:30615/cluster/1?key=hello'
+  
+  completed:world
+  
+  # query a non-existent key
+  > curl --location --request GET 'http://127.0.0.1:30615/cluster/1?key=not_set'
+  
+  completed:NOT FOUND
+  ```
+
+  ```log
+  ...
+  # intiating (the cluster_id = 1 is hosted in shard 1 since we have 2 shards)
+  INFO  2022-09-25 11:36:35,103 [shard 1] core - raft[gid[00001,00001],r:follower,fi:1,li:0,t:1]: become follower
+  INFO  2022-09-25 11:36:35,113 [shard 1] rsm - gid[00001,00001] applied: type:add_node, ccid:0, index:1, node_id:1, address:127.0.0.1:30615
+  INFO  2022-09-25 11:36:39,219 [shard 1] core - raft[gid[00001,00001],r:pre_candidate,fi:1,li:1,t:1]: become pre_candidate
+  WARN  2022-09-25 11:36:39,220 [shard 1] core - raft[gid[00001,00001],r:pre_candidate,fi:1,li:1,t:1]: received request_prevote from 1
+  INFO  2022-09-25 11:36:39,220 [shard 1] core - raft[gid[00001,00001],r:candidate,fi:1,li:1,t:2]: become candidate
+  WARN  2022-09-25 11:36:39,220 [shard 1] core - raft[gid[00001,00001],r:candidate,fi:1,li:1,t:2]: received request_vote from 1
+  INFO  2022-09-25 11:36:39,220 [shard 1] core - raft[gid[00001,00001],r:leader,fi:1,li:1,t:2]: become leader with 0 pending config change
+  ...
+  # propose (use noop session for simplicity)
+  TRACE 2022-09-25 11:37:01,476 [shard 1] rafter - nodehost::get_noop_session: cluster_id:1
+  TRACE 2022-09-25 11:37:01,476 [shard 1] rafter - nodehost::propose: cluster_id:1 cmd:hello=world
+  TRACE 2022-09-25 11:37:01,506 [shard 1] core - peer::propose_entries: size:1
+  TRACE 2022-09-25 11:37:01,507 [shard 1] rafter - gid[00001,00001] kv_statemachine::update: index:3, cmd:hello=world
+  ...
+  # query
+  TRACE 2022-09-25 11:37:11,907 [shard 1] rafter - nodehost::linearizable_read: cluster_id:1 query:hello
+  TRACE 2022-09-25 11:37:11,907 [shard 1] rafter - nodehost::read_index: cluster_id:1
+  TRACE 2022-09-25 11:37:11,924 [shard 1] core - peer::read_index: [2714918299034996758,0]
+  TRACE 2022-09-25 11:37:11,975 [shard 1] rafter - gid[00001,00001] kv_statemachine::lookup: cmd:hello
+  ...
+  ```
 
 ## Roadmap
 
