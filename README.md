@@ -46,7 +46,7 @@ and [ccache](https://github.com/ccache/ccache) if you want to play with the sour
 - single node quorum demo
 
   ```shell
-  > ./build/rafter_main --smp 2 --memory 1G --trace true --config_file rafter-template.yaml &&
+  > ./build/rafter_main --smp 2 --memory 1G --trace true --config_file rafter-template.yaml &
   
   # initiating a new cluster with single node quorum
   > curl --location --request POST 'http://127.0.0.1:30615/clusters' \

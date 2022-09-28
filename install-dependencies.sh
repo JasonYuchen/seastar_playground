@@ -1,7 +1,11 @@
 #!/bin/bash
 
 echo "installing $1"
-sudo apt-get install -y $1
+wget https://apt.llvm.org/llvm.sh
+chmod +x llvm.sh
+# avoid user input prompt
+sed -i 's/add-apt-repository "${REPO_NAME}"/add-apt-repository -y "${REPO_NAME}"/g' llvm.sh
+sudo ./llvm.sh "${1:0-2}"
 
 echo "installing mold"
 git clone https://github.com/rui314/mold.git
@@ -14,9 +18,4 @@ popd || return 255
 echo "installing seastar dependencies..."
 pushd seastar || return 255
 sudo ./install-dependencies.sh
-#echo "configuring and compiling seastar..."
-#./configure.py --compiler $1 --c++-standard $2 --mode $3
-#sudo ninja -C build/$3 install
-#echo "testing seastar unit tests..."
-#./test.py --mode=$3
 popd || return 255
