@@ -6,7 +6,7 @@ FetchContent_Declare(
 
 FetchContent_Declare(
     simdjson
-    URL https://github.com/simdjson/simdjson/archive/refs/tags/v2.2.2.zip
+    URL https://github.com/simdjson/simdjson/archive/refs/tags/v3.0.1.zip
 )
 
 FetchContent_MakeAvailable(googletest)
